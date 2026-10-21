@@ -6,6 +6,11 @@
 - *PSS Workshop Examples, DVCon 2025* — 11 `.pss` files and 6 `.psf` project files
 
 **Date:** 21 October 2026
+**Revision:** 2 — refreshed for Satya 0.2.0. The verification below was performed
+on 0.1.0; the findings are unchanged, but several limitations recorded at the
+time have since been closed (name resolution, arbitration, pool capacity,
+`match`, `select` guards, arithmetic, `exec` translation). Those rows are
+updated here and marked *closed in 0.2.0*.
 
 ---
 
@@ -229,19 +234,27 @@ compiles). The distinction matters and is stated plainly.
 These parse (so a real file still compiles) but Satya does not act on them.
 Each is stated in the README and the design document.
 
+Closed in 0.2.0 (previously in this list):
+
+| Construct | Clause | Behaviour now |
+|-----------|--------|---------------|
+| `match` statement | 12, Annex B.9 | **executed** — `[lo..hi]`, `[v, lo..hi, …]` lists and `default` |
+| pool allocation and `lock`/`share` arbitration | 14, 15 | **executed** — objects allocated/consumed; contention enforced by serialising |
+| `select` branch guards `(expr) : …` | 12.4 | **guards evaluated**; first satisfiable branch taken |
+| `foreach` over a pool | 12.4 | **iterates the pool's allocated objects** |
+| raw `exec` bodies | 10 | **parsed into statements** and translated into the C and UVM backends |
+
+Still accepted but not executed:
+
 | Construct | Clause | Behaviour |
 |-----------|--------|-----------|
-| `match` statement | 12, Annex B.9 | parsed, **not scheduled** (verified: 0 steps) |
 | `function` / `task` bodies | — | skipped |
 | `covergroup` / `coverpoint` | 18, 19 | skipped |
 | `typedef` | 7.11 | skipped |
 | `symbol` declarations | 12.7 | skipped |
 | `super` in an activity | Annex B.9 | accepted, no-op |
 | `solve x before y` | 16.2 | accepted inside a constraint block but not honoured |
-| pool allocation and `lock`/`share` arbitration | 14, 15 | recorded, not enforced by the scheduler |
-| `select` branch guards `(expr) : …` | 12.4 | parsed; the first branch is always taken |
-| `foreach` over a pool | 12.4 | body executed once (pool sizes not modelled) |
-| raw `exec` bodies (SystemVerilog) | 10 | not interpreted |
+| foreign calls inside `exec` (`make_handle_from_claim`, …) | 10 | translated as comments in C, passed through in SV — not implemented |
 
 ---
 
@@ -259,6 +272,20 @@ Each is stated in the README and the design document.
   with an action constraint, the inline constraint wins and the conflict is
   reported in the satisfied/total count rather than silently dropped.
 * **Determinism of the default action** was verified across repeated runs.
+* **Flow objects and pools (0.2.0).** On `2.psf` the eight `hammer_row` steps
+  each allocate a `data_buf` object from `data_buf_p` (objects #0–#7), and the
+  pool summary reports seven allocated. `input` fields consume the next object.
+* **Address allocation (0.2.0).** Regions declared in `exec init_up` are
+  discovered (`mem_region@0x400+0x1000` in `1.psf`) and allocated objects
+  receive 64-byte-aligned addresses from the region base.
+* **Arbitration (0.2.0).** Two exclusive claims on a single-instance resource in
+  one parallel group are detected and the conflicting steps are serialised.
+* **Arithmetic (0.2.0).** `x + y == 100` with `x >= 20` solves for all seeds
+  tested; where the required value falls outside the declared domain the
+  relation is reported unsatisfied rather than silently accepted.
+* **Realizations (0.2.0).** The generated C was compiled with a C compiler and
+  executed; the generated bench driver was executed under Python. Both replay
+  the scenario and print the solved values.
 
 ---
 
@@ -275,10 +302,16 @@ Each is stated in the README and the design document.
 * **Unresolved external packages.** The workshop models import packages not
   present in the archive (`addr_reg_pkg`, `executor_pkg`, `std_pkg`). Satya
   treats their types as opaque, so constraints over their fields are not solved.
-* **Pools and resource arbitration** are not executed, so multi-executor
-  coordination is scheduled but not enforced.
-* **Arithmetic coupling** between two variables (`a + b == 10`) is recognised and
-  reported as unsupported rather than solved.
+* **Resource arbitration is resolved by serialising.** Contention is detected and
+  the conflicting steps are moved out of the parallel group, but there is no
+  queuing, priority or blocking model.
+* **Arithmetic is heuristic.** Relations are solved by single-unknown inversion;
+  there is no interval-consistency or linear-programming solver, so relations
+  coupling several unknowns are still reported.
+* **Name resolution is not scope-checked.** `pkg::name` and `Component::action`
+  resolve, and colliding leaf types stay distinct, but `import` statements are
+  not used to disambiguate an unqualified leaf reference — such a name is
+  flagged and the first declaration wins.
 
 ---
 
@@ -286,7 +319,7 @@ Each is stated in the README and the design document.
 
 ```bash
 cargo build --release
-cargo test                                  # 14 tests, incl. LRM-grammar cases
+cargo test                                  # 26 tests, incl. LRM-grammar cases
 
 WS=<path-to>/pss_workshop_examples_dvcon_2025
 for f in $(find $WS -name '*.pss'); do satya parse "$f"; done      # 11 / 11
@@ -301,6 +334,11 @@ New regression tests added for this verification:
 * `ranged_bit_width_is_parsed` — `bit[3:0]` yields 4 bits
 * `repeat_index_binds_into_inline_constraints` — index binding yields 0,10,20,30
 * `nested_template_defaults_parse` — the `…<TRAIT>>` closing case
+
+Added for 0.2.0: `qualified_names_resolve_to_distinct_types`,
+`extend_struct_in_another_package_merges`, `contention_is_enforced_by_serialising`,
+`pool_capacity_is_enforced`, `match_open_range_list_matches_values_and_ranges`,
+plus the pool/address/arbitration/arithmetic/backend/`exec` tests (26 total).
 
 ---
 
