@@ -32,10 +32,9 @@ impl Backend for FwBackend {
         // ---- Interface / register map ----
         s.push_str("## Interface map\n\n");
         s.push_str("Memory-mapped interface described by the model.\n\n");
-        let mut names: Vec<&String> = model.types.keys().collect();
-        names.sort();
+        let names = super::ordered_type_keys(model);
         for name in &names {
-            let t = &model.types[*name];
+            let t = &model.types[name];
             s.push_str(&format!("### `{}`\n\n", name));
             s.push_str("| Field | Type | Width | Access |\n|---|---|---|---|\n");
             for f in &t.fields {
@@ -113,7 +112,7 @@ impl Backend for FwBackend {
         s.push_str("#ifndef SATYA_FW_INTERFACE_H\n#define SATYA_FW_INTERFACE_H\n\n");
         s.push_str("#include <stdint.h>\n\n");
         for name in &names {
-            let t = &model.types[*name];
+            let t = &model.types[name];
             s.push_str(&format!("typedef struct {{\n"));
             for f in &t.fields {
                 s.push_str(&format!("    {} {};\n", c_type(model, f), sanitize(&f.name)));

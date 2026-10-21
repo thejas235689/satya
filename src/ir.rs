@@ -587,13 +587,30 @@ impl Lowerer {
             if let Some(base) = &rt.base {
                 if let Some(b) = self.raw_types.get(base) {
                     for m in &b.members {
-                        fields.push(self.lower_member(m));
+                        let f = self.lower_member(m);
+                        // An inline range on a field (`rand int in [0..7] x;`)
+                        // is a constraint on the type, like any other.
+                        if let Some(inline) = &f.inline_constraint {
+                            constraints.push(Constraint {
+                                name: None,
+                                expr: inline.clone(),
+                                is_default: false,
+                            });
+                        }
+                        fields.push(f);
                     }
                     constraints.extend(self.lower_constraints(&b.constraints));
                 }
             }
             for m in &rt.members {
                 let f = self.lower_member(m);
+                if let Some(inline) = &f.inline_constraint {
+                    constraints.push(Constraint {
+                        name: None,
+                        expr: inline.clone(),
+                        is_default: false,
+                    });
+                }
                 if let Some(existing) = fields.iter_mut().find(|x| x.name == f.name) {
                     *existing = f;
                 } else {

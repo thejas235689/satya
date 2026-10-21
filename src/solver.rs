@@ -356,6 +356,12 @@ pub fn solve_with(
                     let ok = cons.iter().all(|c| check_atom(c, &check_values, &env));
                     if ok {
                         satisfied += 1;
+                    } else {
+                        unsupported.push(format!(
+                            "{} -> {}",
+                            render_expr(ante),
+                            cons.iter().map(render_atom).collect::<Vec<_>>().join(" && ")
+                        ));
                     }
                 }
             }
@@ -374,6 +380,8 @@ pub fn solve_with(
                 total += 1;
                 if check_atom(other, &check_values, &env) {
                     satisfied += 1;
+                } else {
+                    unsupported.push(render_atom(other));
                 }
             }
         }
@@ -418,6 +426,25 @@ fn repair(
         let mut changed = false;
         for atom in atoms {
             match atom {
+                Atom::Implies(ante, cons) => {
+                    // If the antecedent holds, the consequent must too.
+                    if eval(ante, values, env).unwrap_or(0) != 0 {
+                        for c in cons {
+                            if check_atom(c, values, env) {
+                                continue;
+                            }
+                            if let Atom::Rel(v, Op::Eq, rhs) = c {
+                                if let Some(t) = eval(rhs, values, env) {
+                                    let nv = clamp(v, t);
+                                    if values.get(v).copied() != Some(nv) {
+                                        values.insert(v.clone(), nv);
+                                        changed = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 Atom::Rel(var, op, rhs) => {
                     let x = match values.get(var) {
                         Some(v) => *v,
@@ -647,6 +674,29 @@ fn collect_unknowns(
     }
     walk(e, values, env, &mut out);
     out
+}
+
+/// Render an atom as a constraint string, for diagnostics.
+fn render_atom(a: &Atom) -> String {
+    match a {
+        Atom::Rel(v, op, e) => format!("{} {} {}", v, op_str(*op), render_expr(e)),
+        Atom::General(l, op, e) => format!("{} {} {}", render_expr(l), op_str(*op), render_expr(e)),
+        Atom::InRange(v, lo, hi) => format!("{} in [{}..{}]", v, lo, hi),
+        Atom::InSet(v, items) => format!("{} in {{{}}}", v, items.len()),
+        Atom::Implies(e, _) => render_expr(e),
+        Atom::Unsupported(e) => render_expr(e),
+    }
+}
+
+fn op_str(op: Op) -> &'static str {
+    match op {
+        Op::Eq => "==",
+        Op::Ne => "!=",
+        Op::Le => "<=",
+        Op::Ge => ">=",
+        Op::Lt => "<",
+        Op::Gt => ">",
+    }
 }
 
 /// Known variables (present in `values`) referenced by an expression, in

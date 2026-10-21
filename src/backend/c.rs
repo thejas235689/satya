@@ -38,10 +38,9 @@ impl Backend for CBackend {
 
         // Data types.
         s.push_str("/* ---- data types ---- */\n");
-        let mut names: Vec<&String> = model.types.keys().collect();
-        names.sort();
+        let names = super::ordered_type_keys(model);
         for name in &names {
-            let t = &model.types[*name];
+            let t = &model.types[name];
             s.push_str(&format!("typedef struct {{\n"));
             for f in &t.fields {
                 s.push_str(&format!("    {} {};\n", c_type(model, f), c_name(&f.name)));

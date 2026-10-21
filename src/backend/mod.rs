@@ -136,3 +136,40 @@ pub fn json_escape(s: &str) -> String {
     }
     out
 }
+
+/// Type keys ordered so that a struct is emitted only after the structs it
+/// contains (C and the firmware header need this; C has no forward decls here).
+pub fn ordered_type_keys(model: &crate::ir::Model) -> Vec<String> {
+    use crate::ir::TypeCategory;
+    use std::collections::HashSet;
+    let mut keys: Vec<String> = model.types.keys().cloned().collect();
+    keys.sort();
+    let mut done: HashSet<String> = HashSet::new();
+    let mut out: Vec<String> = Vec::new();
+    while out.len() < keys.len() {
+        let mut progressed = false;
+        for k in &keys {
+            if done.contains(k) {
+                continue;
+            }
+            let ready = model.types[k].fields.iter().all(|f| match &f.category {
+                TypeCategory::Struct(dep) => done.contains(dep) || dep == k,
+                _ => true,
+            });
+            if ready {
+                out.push(k.clone());
+                done.insert(k.clone());
+                progressed = true;
+            }
+        }
+        if !progressed {
+            for k in &keys {
+                if !done.contains(k) {
+                    out.push(k.clone());
+                    done.insert(k.clone());
+                }
+            }
+        }
+    }
+    out
+}

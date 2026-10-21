@@ -1,0 +1,158 @@
+//////////////////////////////////////////////////////////////////////////////////
+// OpenTitan UART — a PSS model of the lowRISC/opentitan `uart` IP.
+//
+// The register map, field names and bit positions below are taken from
+//   hw/ip/uart/data/uart.hjson   (OpenTitan, Apache-2.0)
+// with the byte offsets assigned by reggen in declaration order (4-byte stride).
+//
+// Registers modelled: CTRL, RDATA, WDATA, FIFO_CTRL, FIFO_STATUS, OVRD, VAL,
+// TIMEOUT_CTRL.
+//
+// This is not part of OpenTitan; it is a Satya model written against
+// OpenTitan's published register interface, to exercise the tool on a
+// real-world IP.
+//////////////////////////////////////////////////////////////////////////////////
+
+package ot_uart_pkg {
+
+   // UART0 base address in the OpenTitan top level (top_earlgrey).
+   static const int UART0_BASE = 0x40000000;
+
+   // Register offsets (reggen assigns these in declaration order).
+   static const int CTRL_OFF         = 0x00;
+   static const int RDATA_OFF        = 0x04;
+   static const int WDATA_OFF        = 0x08;
+   static const int FIFO_CTRL_OFF    = 0x0C;
+   static const int FIFO_STATUS_OFF  = 0x10;
+   static const int OVRD_OFF         = 0x14;
+   static const int VAL_OFF          = 0x18;
+   static const int TIMEOUT_CTRL_OFF = 0x1C;
+
+   // CTRL.NCO holds the baud-rate divisor; the field is 16 bits wide.
+   static const int NCO_MAX = 65535;
+
+   enum parity_mode_e { PARITY_NONE, PARITY_ODD, PARITY_EVEN };
+
+   // CTRL — UART control register (swaccess rw).
+   struct uart_ctrl_s {
+      rand bit[1] tx_enable;      // CTRL.TX
+      rand bit[1] rx_enable;      // CTRL.RX
+      rand bit[1] nf;             // CTRL.NF   (RX noise filter)
+      rand bit[1] slpbk;          // CTRL.SLPBK
+      rand bit[1] llpbk;          // CTRL.LLPBK
+      rand bit[1] parity_enable;  // CTRL.PARITY_EN
+      rand bit[1] parity_odd;     // CTRL.PARITY_ODD
+      rand bit[16] nco;           // CTRL.NCO[31:16] — baud-rate divisor
+
+      // A usable divisor, and a sane line configuration.
+      constraint nco >= 1;
+      constraint nco <= NCO_MAX;
+      constraint tx_enable == 1;
+      constraint rx_enable == 1;
+      // Parity odd is only meaningful with parity enabled.
+      constraint parity_odd == 1 -> parity_enable == 1;
+   };
+
+   // FIFO_CTRL — RXILVL[4:2] and TXILVL[7:5] interrupt watermarks.
+   struct uart_fifo_ctrl_s {
+      rand bit[3] rxilvl;
+      rand bit[3] txilvl;
+      constraint rxilvl >= 1;
+      constraint txilvl >= 1;
+   };
+
+   // FIFO_STATUS — read-only levels (TXLVL[7:0], RXLVL[15:8]).
+   struct uart_fifo_status_s {
+      rand bit[8] txlvl;
+      rand bit[8] rxlvl;
+   };
+
+   // The configuration produced by `configure` and consumed by the data actions.
+   buffer uart_config_b {
+      rand uart_ctrl_s ctrl;
+      rand uart_fifo_ctrl_s fifo;
+      constraint ctrl.nco == 1085;   // 24 MHz / 115200 baud, rounded
+   };
+
+   // A data frame written to WDATA.
+   buffer uart_frame_b {
+      rand bit[8] data;
+      rand int in [0..7] stop_bits;   // framing choice for the harness
+   };
+}
+
+component uart_c {
+
+   // --- register-level actions -------------------------------------------
+
+   // Program CTRL and FIFO_CTRL, then hand the configuration downstream.
+   action configure {
+      output uart_config_b cfg;
+      constraint cfg.fifo.txilvl <= 3;
+   };
+
+   // Push a byte into the TX FIFO (WDATA, swaccess wo).
+   action write_byte {
+      input uart_config_b cfg;
+      output uart_frame_b frame;
+   };
+
+   // Pop a byte from the RX FIFO (RDATA, swaccess ro).
+   action read_byte {
+      input uart_config_b cfg;
+   };
+
+   // Poll FIFO_STATUS for the TX/RX levels.
+   action poll_status {
+      input uart_config_b cfg;
+   };
+
+   // Software override of the serial lines (OVRD).
+   action set_override {
+      rand bit[1] tx_enable;
+      rand bit[1] rx_enable;
+   };
+};
+
+component ot_uart_top {
+
+   uart_c uart;
+
+   // Flow objects are recycled through a pool, as the workshop models do.
+   pool uart_config_b config_pool;
+   bind config_pool *;
+
+   // The UART address window, as the firmware reference and bench backends
+   // report it.
+   exec init_up {
+      uart_region.addr = 0x40000000;
+      uart_region.size = 0x20;
+   };
+
+   action uart_smoke_test {
+      rand int in [1..16] num_bytes;
+
+      activity {
+         do uart_c::configure;
+         parallel {
+            repeat (num_bytes) {
+               do uart_c::write_byte;
+            };
+            do uart_c::poll_status;
+         };
+         do uart_c::read_byte;
+         do uart_c::set_override;
+      };
+   };
+
+   // A longer soak: interleave configuration with data movement.
+   action uart_soak_test {
+      activity {
+         repeat (3) {
+            do uart_c::configure;
+            do uart_c::write_byte;
+            do uart_c::read_byte;
+         };
+      };
+   };
+};

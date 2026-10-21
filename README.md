@@ -138,7 +138,9 @@ See [`docs/DESIGN.md`](docs/DESIGN.md) for the detailed design,
 [`docs/VERIFICATION.md`](docs/VERIFICATION.md) for the verification report
 (checked against the PSS v3.0 standard and the DVCon 2025 workshop examples) and
 [`docs/LRM-EXAMPLES.md`](docs/LRM-EXAMPLES.md) for the conformance run over
-every code example in the standard itself.
+every code example in the standard itself, and
+[`docs/OPENTITAN.md`](docs/OPENTITAN.md) for modelling a real IP (OpenTitan's
+UART) with Satya.
 
 ---
 
@@ -328,6 +330,7 @@ satya/
     demo.json        the same model in JSON
     pss_mini.rs      single-file library walkthrough
     lrm/             197 code examples extracted from the PSS v3.0 standard
+    opentitan/       a PSS model of OpenTitan's UART IP
   tools/
     lrm_extract.py   extract examples from the LRM PDF text
     lrm_examples.py  run Satya over every extracted example

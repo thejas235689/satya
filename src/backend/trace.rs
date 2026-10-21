@@ -74,6 +74,9 @@ impl Backend for TraceBackend {
                     "{}     constraints: {}/{} satisfied\n",
                     indent, step.satisfied, step.total
                 ));
+                for u in &step.unsatisfied {
+                    s.push_str(&format!("{}       not satisfied: {}\n", indent, u));
+                }
             }
             for fr in &step.flow {
                 let obj = match fr.obj_id {

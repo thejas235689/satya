@@ -583,3 +583,64 @@ fn triple_quoted_strings_lex() {
     let m = compile_pss(src).unwrap();
     assert!(m.actions.contains_key("a"));
 }
+
+// ---------------------------------------------------------------------------
+// Found by modelling a real IP (OpenTitan UART).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn inline_range_on_a_struct_field_is_a_constraint() {
+    // `rand int in [0..7] stop_bits;` inside a buffer must bound the field.
+    let src = r#"
+package p {
+  buffer frame_b { rand bit[8] data; rand int in [0..7] stop_bits; };
+};
+component C { action write { output frame_b f; }; };
+"#;
+    let m = compile_pss(src).unwrap();
+    for seed in [1u64, 4, 9, 17] {
+        let s = engine::run_scenario(&m, "write", seed);
+        let sb = s.steps[0].fields.iter().find(|(k, _)| k == "f.stop_bits").map(|(_, v)| *v).unwrap();
+        assert!((0..=7).contains(&sb), "stop_bits must be in [0..7], got {}", sb);
+    }
+}
+
+#[test]
+fn implications_are_enforced_not_just_checked() {
+    let src = r#"
+component C {
+  action a {
+    rand bit[1] p_enable;
+    rand bit[1] p_odd;
+    constraint p_odd == 1;
+    constraint p_odd == 1 -> p_enable == 1;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    for seed in [1u64, 3, 8, 21] {
+        let s = engine::run_scenario(&m, "a", seed);
+        let en = s.steps[0].fields.iter().find(|(k, _)| k == "p_enable").map(|(_, v)| *v).unwrap();
+        assert_eq!(en, 1, "the implication must force p_enable to 1");
+        assert_eq!(s.steps[0].satisfied, s.steps[0].total);
+    }
+}
+
+#[test]
+fn generated_c_orders_dependent_types() {
+    // A struct containing another struct must emit the inner typedef first,
+    // or the generated C will not compile.
+    let src = r#"
+package p {
+  struct inner_s { rand bit[8] x; };
+  buffer outer_b { rand inner_s i; rand int in [0..3] n; };
+};
+component C { action a { output outer_b o; }; };
+"#;
+    let m = compile_pss(src).unwrap();
+    let sc = engine::run_scenario(&m, "a", 1);
+    let out = get("c").unwrap().emit(&m, &sc, &BackendOptions::default()).unwrap();
+    let inner = out.find("} inner_s_t;").expect("inner typedef emitted");
+    let outer = out.find("} outer_b_t;").expect("outer typedef emitted");
+    assert!(inner < outer, "inner_s_t must be defined before outer_b_t");
+}
