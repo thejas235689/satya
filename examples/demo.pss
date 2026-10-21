@@ -1,0 +1,57 @@
+//////////////////////////////////////////////////////////////////////////////////
+// Satya example model — producer/consumer interoperability with a parallel burst.
+//
+// Usage:
+//   satya parse examples/demo.pss
+//   satya solve examples/demo.pss --action test
+//   satya gen   examples/demo.pss --backend uvm -o demo_sequences.sv
+//////////////////////////////////////////////////////////////////////////////////
+
+package demo_pkg {
+
+   static const int CACHELINE = 64;
+
+   enum mem_block_e { SYS_MEM, LOCAL };
+
+   buffer data_buf {
+      rand bit[16] size;
+      rand mem_block_e mem_block;
+      constraint size >= 1;
+   };
+};
+
+component Producer_c {
+
+   action produce {
+      output data_buf data_buf_out;
+      rand int in [1..1024] size;
+
+      constraint data_buf_out.size == size;
+      constraint data_buf_out.size <= CACHELINE * 8;
+   };
+};
+
+component Consumer_c {
+
+   action consume {
+      input data_buf data_buf_in;
+      rand int in [1..64] num_trans;
+      constraint num_trans <= 16;
+   };
+};
+
+component pss_top {
+
+   Producer_c P;
+   Consumer_c C;
+
+   action test {
+      activity {
+         do Producer_c::produce;
+         parallel {
+            do Consumer_c::consume;
+            repeat (2) { do Consumer_c::consume; };
+         };
+      };
+   };
+};

@@ -1,0 +1,24 @@
+[package]
+name = "satya"
+version = "0.2.0"
+edition = "2021"
+description = "Satya — a portable test-stimulus engine in Rust. One PSS model, six realizations: UVM/SystemVerilog, native C, firmware reference, post-silicon bench, JSON and trace."
+license = "MIT"
+authors = ["Thejas KG"]
+
+[lib]
+name = "satya"
+path = "src/lib.rs"
+
+[[bin]]
+name = "satya"
+path = "src/bin/satya.rs"
+
+[[example]]
+name = "pss_mini"
+path = "examples/pss_mini.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

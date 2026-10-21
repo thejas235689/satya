@@ -1,0 +1,118 @@
+{
+  "packages": [
+    "demo_pkg"
+  ],
+  "constants": {
+    "CACHELINE": 64
+  },
+  "enums": {
+    "mem_block_e": [
+      "SYS_MEM",
+      "LOCAL"
+    ]
+  },
+  "types": {
+    "data_buf": {
+      "fields": [
+        {
+          "name": "size",
+          "kind": "rand",
+          "type": "bit",
+          "bits": 16
+        },
+        {
+          "name": "mem_block",
+          "kind": "rand",
+          "type": "mem_block_e"
+        }
+      ],
+      "constraints": [
+        "size >= 1"
+      ]
+    }
+  },
+  "components": {
+    "Producer_c": {
+      "actions": {
+        "produce": {
+          "fields": [
+            {
+              "name": "data_buf_out",
+              "kind": "output",
+              "type": "data_buf"
+            },
+            {
+              "name": "size",
+              "kind": "rand",
+              "type": "int",
+              "in": [
+                1,
+                1024
+              ]
+            }
+          ],
+          "constraints": [
+            "data_buf_out.size == size",
+            "data_buf_out.size <= 512"
+          ]
+        }
+      }
+    },
+    "Consumer_c": {
+      "actions": {
+        "consume": {
+          "fields": [
+            {
+              "name": "data_buf_in",
+              "kind": "input",
+              "type": "data_buf"
+            },
+            {
+              "name": "num_trans",
+              "kind": "rand",
+              "type": "int",
+              "in": [
+                1,
+                64
+              ]
+            }
+          ],
+          "constraints": [
+            "num_trans <= 16"
+          ]
+        }
+      }
+    },
+    "pss_top": {
+      "subcomponents": {
+        "P": "Producer_c",
+        "C": "Consumer_c"
+      },
+      "actions": {
+        "test": {
+          "activity": [
+            {
+              "do": "Producer_c::produce"
+            },
+            {
+              "parallel": [
+                {
+                  "do": "Consumer_c::consume"
+                },
+                {
+                  "repeat": [
+                    {
+                      "do": "Consumer_c::consume"
+                    }
+                  ],
+                  "count": 2
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  "top": "pss_top"
+}
