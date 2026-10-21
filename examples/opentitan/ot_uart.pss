@@ -1,16 +1,24 @@
 //////////////////////////////////////////////////////////////////////////////////
 // OpenTitan UART — a PSS model of the lowRISC/opentitan `uart` IP.
 //
-// The register map, field names and bit positions below are taken from
-//   hw/ip/uart/data/uart.hjson   (OpenTitan, Apache-2.0)
-// with the byte offsets assigned by reggen in declaration order (4-byte stride).
+// Every register, field name, bit range and software-access attribute below is
+// taken from  hw/ip/uart/data/uart.hjson  (OpenTitan, Apache-2.0); the byte
+// offsets are the ones reggen assigns in declaration order (4-byte stride).
+// Field identifiers are the HJSON names lower-cased, so the model can be
+// diffed mechanically against the spec — see tools/ot_regmap_check.py.
 //
-// Registers modelled: CTRL, RDATA, WDATA, FIFO_CTRL, FIFO_STATUS, OVRD, VAL,
-// TIMEOUT_CTRL.
+//   CTRL          0x00  rw   TX[0] RX[1] NF[2] SLPBK[4] LLPBK[5]
+//                            PARITY_EN[6] PARITY_ODD[7] RXBLVL[9:8] NCO[31:16]
+//   RDATA         0x04  ro   (whole register)
+//   WDATA         0x08  wo   (whole register)
+//   FIFO_CTRL     0x0C  rw   RXILVL[4:2] TXILVL[7:5]
+//   FIFO_STATUS   0x10  ro   TXLVL[7:0] RXLVL[23:16]
+//   OVRD          0x14  rw   TXEN[0] TXVAL[1]
+//   VAL           0x18  ro   RX[15:0]
+//   TIMEOUT_CTRL  0x1C  rw   VAL[23:0] EN[31]
 //
 // This is not part of OpenTitan; it is a Satya model written against
-// OpenTitan's published register interface, to exercise the tool on a
-// real-world IP.
+// OpenTitan's published register interface.
 //////////////////////////////////////////////////////////////////////////////////
 
 package ot_uart_pkg {
@@ -18,7 +26,7 @@ package ot_uart_pkg {
    // UART0 base address in the OpenTitan top level (top_earlgrey).
    static const int UART0_BASE = 0x40000000;
 
-   // Register offsets (reggen assigns these in declaration order).
+   // Register offsets, in reggen declaration order.
    static const int CTRL_OFF         = 0x00;
    static const int RDATA_OFF        = 0x04;
    static const int WDATA_OFF        = 0x08;
@@ -28,56 +36,71 @@ package ot_uart_pkg {
    static const int VAL_OFF          = 0x18;
    static const int TIMEOUT_CTRL_OFF = 0x1C;
 
-   // CTRL.NCO holds the baud-rate divisor; the field is 16 bits wide.
+   // CTRL.NCO[31:16] holds the baud-rate divisor.
    static const int NCO_MAX = 65535;
 
-   enum parity_mode_e { PARITY_NONE, PARITY_ODD, PARITY_EVEN };
-
-   // CTRL — UART control register (swaccess rw).
+   // CTRL — UART control register (rw).
    struct uart_ctrl_s {
-      rand bit[1] tx_enable;      // CTRL.TX
-      rand bit[1] rx_enable;      // CTRL.RX
-      rand bit[1] nf;             // CTRL.NF   (RX noise filter)
-      rand bit[1] slpbk;          // CTRL.SLPBK
-      rand bit[1] llpbk;          // CTRL.LLPBK
-      rand bit[1] parity_enable;  // CTRL.PARITY_EN
-      rand bit[1] parity_odd;     // CTRL.PARITY_ODD
-      rand bit[16] nco;           // CTRL.NCO[31:16] — baud-rate divisor
+      rand bit[1] tx;          // CTRL.TX[0]          TX enable
+      rand bit[1] rx;          // CTRL.RX[1]          RX enable
+      rand bit[1] nf;          // CTRL.NF[2]          RX noise filter
+      rand bit[1] slpbk;       // CTRL.SLPBK[4]       system loopback
+      rand bit[1] llpbk;       // CTRL.LLPBK[5]       line loopback
+      rand bit[1] parity_en;   // CTRL.PARITY_EN[6]
+      rand bit[1] parity_odd;  // CTRL.PARITY_ODD[7]
+      rand bit[2] rxblvl;      // CTRL.RXBLVL[9:8]    break-error detection level
+      rand bit[16] nco;        // CTRL.NCO[31:16]     baud-rate divisor
 
-      // A usable divisor, and a sane line configuration.
       constraint nco >= 1;
       constraint nco <= NCO_MAX;
-      constraint tx_enable == 1;
-      constraint rx_enable == 1;
-      // Parity odd is only meaningful with parity enabled.
-      constraint parity_odd == 1 -> parity_enable == 1;
+      constraint tx == 1;
+      constraint rx == 1;
+      // Odd parity is only meaningful when parity is enabled.
+      constraint parity_odd == 1 -> parity_en == 1;
    };
 
-   // FIFO_CTRL — RXILVL[4:2] and TXILVL[7:5] interrupt watermarks.
+   // FIFO_CTRL — interrupt watermarks (rw).
    struct uart_fifo_ctrl_s {
-      rand bit[3] rxilvl;
-      rand bit[3] txilvl;
+      rand bit[3] rxilvl;      // FIFO_CTRL.RXILVL[4:2]
+      rand bit[3] txilvl;      // FIFO_CTRL.TXILVL[7:5]
       constraint rxilvl >= 1;
       constraint txilvl >= 1;
    };
 
-   // FIFO_STATUS — read-only levels (TXLVL[7:0], RXLVL[15:8]).
+   // FIFO_STATUS — FIFO levels (ro).
    struct uart_fifo_status_s {
-      rand bit[8] txlvl;
-      rand bit[8] rxlvl;
+      rand bit[8] txlvl;       // FIFO_STATUS.TXLVL[7:0]
+      rand bit[8] rxlvl;       // FIFO_STATUS.RXLVL[23:16]
    };
 
-   // The configuration produced by `configure` and consumed by the data actions.
+   // OVRD — software override of the serial lines (rw).
+   struct uart_ovrd_s {
+      rand bit[1] txen;        // OVRD.TXEN[0]
+      rand bit[1] txval;       // OVRD.TXVAL[1]
+   };
+
+   // VAL — sampled RX value (ro).
+   struct uart_val_s {
+      rand bit[16] rx;         // VAL.RX[15:0]
+   };
+
+   // TIMEOUT_CTRL — RX timeout (rw).
+   struct uart_timeout_ctrl_s {
+      rand bit[24] val;        // TIMEOUT_CTRL.VAL[23:0]
+      rand bit[1] en;          // TIMEOUT_CTRL.EN[31]
+   };
+
+   // The configuration produced by `configure` and consumed downstream.
    buffer uart_config_b {
       rand uart_ctrl_s ctrl;
       rand uart_fifo_ctrl_s fifo;
-      constraint ctrl.nco == 1085;   // 24 MHz / 115200 baud, rounded
+      constraint ctrl.nco == 1085;      // 24 MHz / 115200 baud, rounded
    };
 
-   // A data frame written to WDATA.
+   // A byte written to WDATA, with the framing choice for the harness.
    buffer uart_frame_b {
       rand bit[8] data;
-      rand int in [0..7] stop_bits;   // framing choice for the harness
+      rand int in [0..7] stop_bits;
    };
 }
 
@@ -85,32 +108,35 @@ component uart_c {
 
    // --- register-level actions -------------------------------------------
 
-   // Program CTRL and FIFO_CTRL, then hand the configuration downstream.
-   action configure {
+   action configure {          // writes CTRL and FIFO_CTRL
       output uart_config_b cfg;
       constraint cfg.fifo.txilvl <= 3;
    };
 
-   // Push a byte into the TX FIFO (WDATA, swaccess wo).
-   action write_byte {
+   action write_byte {         // WDATA (swaccess wo)
       input uart_config_b cfg;
       output uart_frame_b frame;
    };
 
-   // Pop a byte from the RX FIFO (RDATA, swaccess ro).
-   action read_byte {
+   action read_byte {          // RDATA (swaccess ro)
       input uart_config_b cfg;
    };
 
-   // Poll FIFO_STATUS for the TX/RX levels.
-   action poll_status {
+   action poll_status {        // FIFO_STATUS (swaccess ro)
       input uart_config_b cfg;
    };
 
-   // Software override of the serial lines (OVRD).
-   action set_override {
-      rand bit[1] tx_enable;
-      rand bit[1] rx_enable;
+   action set_override {       // OVRD (swaccess rw)
+      rand uart_ovrd_s ovrd;
+   };
+
+   action read_value {         // VAL (swaccess ro)
+      rand uart_val_s val;
+   };
+
+   action set_timeout {        // TIMEOUT_CTRL (swaccess rw)
+      rand uart_timeout_ctrl_s timeout;
+      constraint timeout.val >= 1;
    };
 };
 
@@ -141,6 +167,8 @@ component ot_uart_top {
             do uart_c::poll_status;
          };
          do uart_c::read_byte;
+         do uart_c::read_value;
+         do uart_c::set_timeout;
          do uart_c::set_override;
       };
    };
