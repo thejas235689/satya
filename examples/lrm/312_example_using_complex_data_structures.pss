@@ -1,0 +1,29 @@
+// PSS v3.0 LRM — Example 312: Example using complex data structures (page 429)
+buffer data_buff {
+   rand addr_claim_s<> mem_seg;
+};
+component dma_c {
+   struct descriptor_s : packed_s<> {
+      sized_addr_handle_s<32> src_addr;
+      sized_addr_handle_s<32> dst_addr;
+      int size;
+      sized_addr_handle_s<32> next_descr;
+   };
+
+   state descr_chain_state {
+      list<addr_handle_t> handle_list;
+   };
+   pool descr_chain_state descr_chain_statevar;
+   bind descr_chain_statevar *;
+
+   action alloc_first_descr {
+      output descr_chain_state out_chain;
+
+      rand addr_claim_s<> next_descr_mem;
+       constraint next_descr_mem.size == sizeof_s<descriptor_s>::nbytes;
+
+      exec post_solve {
+         out_chain.handle_list.push_back(
+                               make_handle_from_claim(next_descr_mem));
+      }
+   };

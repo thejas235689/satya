@@ -1,0 +1,10 @@
+// PSS v3.0 LRM — Example 122: Inheriting and shadowing constraints (page 197)
+buffer data_buff {
+rand int size;
+constraint size in [1..1024];
+constraint size_align { size%4 == 0; }       // 4-byte aligned
+}
+buffer corrupt_data_buff : data_buff {
+constraint size_align { size%4 == 1; }       // alignment 1 byte off
+constraint corrupt_data_size { size > 256; } // additional constraint
+}

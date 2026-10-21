@@ -1,0 +1,8 @@
+// PSS v3.0 LRM — Example 69: join_branch with scheduling dependency (page 145)
+activity {
+  L1 : parallel join_branch(L2) {
+    L2: do A;
+    L3: do B;
+  }
+  L4: do C;
+}

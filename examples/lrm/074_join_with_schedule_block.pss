@@ -1,0 +1,26 @@
+// PSS v3.0 LRM — Example 74: join with schedule block (page 150)
+activity {
+  L1 : schedule join_branch(L2) {
+    L2: do A;
+    L3: do B;
+  }
+  L4: do C;
+}
+
+block and the rest of the scenario. The following section defines which scheduling dependencies are ruled
+out and which remain legal.
+An atomic block is analogous to an atomic action from a scheduling point of view, meaning that it can be
+substituted by an atomic action without change to the outside scheduling relations. All actions explicitly
+traversed in an atomic block are part of a single scheduling “cluster” (a nested subgraph of the scheduling
+dependency graph). In a transitive-reduced scheduling graph, the atomic block would have exactly one
+incoming edge and one outgoing edge. The incoming edge would represent “upward” dependencies,
+scheduling dependencies of an action traversed in the atomic block on outside actions. These outside actions
+become scheduling dependencies of the block as a whole (i.e., of all other actions in the cluster). The
+outgoing edge would represent “downward” dependencies, scheduling dependencies of an action within the
+cluster to an action outside the cluster. The outside action has a scheduling dependency on the block as a
+whole (i.e., on all other actions within the cluster).
+12.3.7.1 Syntax
+Syntax 35—Atomic block
+An atomic set is the set of all action executions corresponding to action traversal statements under the scope
+of an atomic block.
+—

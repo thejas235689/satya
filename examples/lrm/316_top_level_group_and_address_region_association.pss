@@ -1,0 +1,26 @@
+// PSS v3.0 LRM — Example 316: Top-level group and address region association (page 437)
+component my_component_c
+{
+   my_reg_grp0_c  grp0; // Top-level group
+   transparent_addr_space_c<> sys_mem;
+   exec init_up {
+     transparent_addr_region_s<> mmio_region;
+     addr_handle_t h;
+     mmio_region.size = 1024;
+     mmio_region.addr = 0xA0000000;
+     h = sys_mem.add_nonallocatable_region(mmio_region);
+     grp0.set_handle(h);
+   }
+};
+
+
+offset = comp.a.get_offset_of_instance("b") +
+            comp.a.b.get_offset_of_instance("c") +
+           comp.a.b.c.get_offset_of_path(path)
+where path is the list [ {"d", 4}, {"reg", 0} ].
+c)
+The handle for the access is calculated as make_handle_from_handle(h, offset), where
+h is the handle set using set_handle() on the top-level register group.
+24.11.5 Recommended packaging
+It is recommended that all the register (and register group) definitions of a device be placed in a separate file
+and in a separate package by themselves, as shown in Example 317.

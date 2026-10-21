@@ -1,0 +1,22 @@
+// PSS v3.0 LRM — Example 42: Using the comp attribute in constraints (page 115)
+component vid_pipe_c { ... };
+component codec_c {
+  vid_pipe_c pipeA, pipeB;
+  bit mode1_enable;
+  action decode {
+    rand bit mode;
+    constraint set_mode {
+      comp.mode1_enable==0 -> mode == 0;
+    }
+    activity {
+      do vid_pipe_c::program with { comp == this.comp.pipeA; };
+    }
+  };
+};
+component multimedia_ss_c {
+  codec_c codecs[2];
+  exec init_up {
+    codecs[0].mode1_enable = 0;
+    codecs[1].mode1_enable = 1;
+  }
+};

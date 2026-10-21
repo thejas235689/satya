@@ -1,0 +1,19 @@
+// PSS v3.0 LRM — Example 132: unique constraint (page 205)
+struct S {
+  rand bit[8] x;
+};
+action A {
+  rand S s1, s2;
+};
+action B {
+  dynamic constraint c1 {
+    forall (it: S) { it.x != 0xff; }
+  }
+  activity { do A; }
+};
+action entry {
+  activity {
+    do B;
+    do B with { c1; };
+  }
+};

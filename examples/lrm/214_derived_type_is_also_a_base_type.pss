@@ -1,0 +1,27 @@
+// PSS v3.0 LRM — Example 214: Derived type is also a base type (page 298)
+component dma_base_c {
+ action xfer_a {
+ }
+}
+component dma_der_c : dma_base_c {
+ action mult_xfer_a {
+   activity {
+      repeat(3) {
+        do xfer_a; // dma_base_c::xfer_a
+      }
+    }
+ }
+}
+component dma_test_c {
+  dma_der_c dma;
+  action test_a {
+    activity {
+      do dma_der_c::mult_xfer_a;
+      do dma_base_c::xfer_a;
+      do dma_der_c::xfer_a; // dma_base_c::xfer_a
+    }
+  }
+}
+
+instance of a context component, we can constrain the fields of xfer_a even though xfer_a may not
+have visibility otherwise to the dma_der_c fields that control the constraints.

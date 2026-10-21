@@ -1,0 +1,38 @@
+// PSS v3.0 LRM — Example 92: Hand-coded action traversal (page 167)
+component pss_top {
+    action A { };
+    action B { };
+    action C { };
+    action entry {
+        activity {
+            do A;
+        }
+    }
+    extend action entry {
+        activity {
+            do B;
+        }
+    }
+    extend action entry {
+        activity {
+            do C;
+        }
+    }
+}
+component pss_top {
+    action A { };
+    action B { };
+    action C { };
+    action entry {
+        activity {
+            schedule {
+                do A;
+                do B;
+                do C;
+            }
+        }
+    }
+}
+
+inherits from base and replaces the activity declared in base with an activity that first traverses the
+activity declared in base, then traverses action type C.

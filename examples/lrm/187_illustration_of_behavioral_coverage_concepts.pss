@@ -1,0 +1,42 @@
+// PSS v3.0 LRM — Example 187: Illustration of behavioral coverage concepts (page 258)
+action read {}
+action write {}
+action idle {}
+action send {}
+action receive {}
+monitor m1 {
+  write w;
+  read r;
+  activity {
+    w;
+    r;
+  }
+}
+monitor m2 {
+  activity {
+    do write;
+    select {
+      do read;
+      do send;
+    };
+    do receive;
+  }
+}
+
+monitor m3 {
+  activity {
+    select {
+      do write;
+      do read;
+    };
+    select {
+      do send;
+      do receive;
+    };
+  }
+}
+c1: cover m1;
+c2: cover m3;
+
+The monitors m1, m2, and m3 define the following scenarios:
+—

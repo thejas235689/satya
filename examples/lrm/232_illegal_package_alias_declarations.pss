@@ -1,0 +1,28 @@
+// PSS v3.0 LRM — Example 232: Illegal package alias declarations (page 317)
+package pkg1::a::b::c {
+struct my_s {}
+}
+package pkg2::d::e::f {
+struct my_s {}
+}
+package consumer_pkg {
+import pkg1::a::b::c as p1;
+import pkg2::d::e::f as p2;
+struct s {
+p1::my_s            v1_1; // Refers to pkg1::a::b::c::my_s
+pkg1::a::b::c::my_s v1_2; // v1_1 and v1_2 have the same type
+p2::my_s            v2;   // Refers to pkg2::d::e::f::my_s
+}
+}
+package P {
+    package foo {}
+    package bar {}
+}
+package P {
+    import bar as foo;       // Error: P already has a package named 'foo'
+    import foo as my_alias;
+    import bar as my_alias;  // Error: cannot define two aliases named
+                             // 'my_alias' in the same scope
+}
+
+21.2.1 Examples

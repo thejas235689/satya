@@ -1,0 +1,28 @@
+// PSS v3.0 LRM — Example 199: Degenerate scenario (page 279)
+scenario spans.
+In the scheduling scenario, the subscenarios are matched from the checkpoint of the scheduling scenario or
+after it. The checkpoints of individual subscenarios are independent of each other. The realizations of
+scenario schedule { s1,…,sn } consist of member-wise realization unions of subscenarios s1,..., and
+sn, provided that these realizations of different scenarios are pairwise disjoint. For example, if set
+{a,b} is a realization of s1, set {c} is a realization of s2 and set {d,e,f} is a realization of s3, then set
+{a,b,c,d,e,f} is a realization of schedule { s1,s2,s3 }; here, a, b, c, d, e, and f are action executions.
+Now consider monitors m defined in Example 200, the action traces shown in Figure 43, and the checkpoint
+t0.
+c1: cover {
+  activity {
+    select {
+      do a;
+      {}
+    }
+  }
+}
+c2: cover {
+  activity {
+    sequence {
+      select {
+        do a;
+        {}
+      }
+    do b;
+  }
+}

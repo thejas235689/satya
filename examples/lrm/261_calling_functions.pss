@@ -1,0 +1,32 @@
+// PSS v3.0 LRM — Example 261: Calling functions (page 344)
+package external_functions_pkg {
+  function bit[31:0] alloc_addr(bit[31:0] size);
+
+  function void transfer_mem(
+    bit[31:0] src, bit[31:0] dst, bit[31:0] size
+  );
+
+  buffer mem_segment_s {
+    rand bit[31:0]        size;
+    bit[31:0]             addr;
+
+    constraint size in [8..4096];
+
+    exec post_solve {
+      addr = alloc_addr(size);
+    }
+  }
+}
+component mem_xfer {
+  import external_functions_pkg::*;
+  action xfer_a {
+    input  mem_segment_s     in_buff;
+    output mem_segment_s    out_buff;
+
+    constraint in_buff.size == out_buff.size;
+
+    exec body {
+      transfer_mem(in_buff.addr, out_buff.addr, in_buff.size);
+    }
+  }
+}

@@ -1,0 +1,32 @@
+// PSS v3.0 LRM — Example 121: Referencing a dynamic constraint inside a static constraint (page 196)
+action B {
+  action bit[31:0]    addr;
+
+  dynamic constraint dyn_addr1_c {
+    addr in [0x1000..0x1FFF];
+  }
+
+  dynamic constraint dyn_addr2_c {
+    addr in [0x2000..0x2FFF];
+  }
+}
+  action send_pkt {
+    rand bit[16] pkt_sz;
+    constraint pkt_sz_c {pkt_sz > 0;}
+    constraint interesting_sz_c {small_pkt_c || jumbo_pkt_c;}
+    dynamic constraint small_pkt_c {pkt_sz <= 100;}
+    dynamic constraint jumbo_pkt_c {pkt_sz > 1500;}
+  }
+  action scenario {
+    activity {
+      // Send a packet with size in [1..100, 1501..65535]
+      do send_pkt;
+      // Send a small packet with a directly-specified in-line constraint
+      do send_pkt with {pkt_sz <= 100;};
+      // Send a small packet by referencing a dynamic constraint
+      do send_pkt with {small_pkt_c;};
+    }
+  }
+
+range 1 to 1024. Additionally, size is greater than 256, as specified in the subtype. Finally, per constraint
+size_align as specified in the subtype, size divided by 4 has a reminder of 1.

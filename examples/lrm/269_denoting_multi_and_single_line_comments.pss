@@ -1,0 +1,16 @@
+// PSS v3.0 LRM — Example 269: Denoting multi- and single-line comments (page 355)
+enum op_mode_e {rx,tx,copy};
+component transactor {
+  list <op_mode_e> op_mode_l;
+  exec init_up {
+    op_mode_l = {rx, tx};
+  }
+  action read_a {
+    rand op_mode_e opmode;
+    rand int trans_size;
+    constraint opmode in comp.op_mode_l;
+
+    exec declaration C = """
+      //This comment will appear in the target code.
+      //{{opmode}} - Solved value will appear in the target code.
+      {#

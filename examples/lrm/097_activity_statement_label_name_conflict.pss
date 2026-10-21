@@ -1,0 +1,26 @@
+// PSS v3.0 LRM — Example 97: Activity statement label name conflict (page 171)
+action top-level scope, and from outside the action scope.
+A hierarchical activity path uses labels in a way similar to variables of struct and array types. The dot
+operator (.) in the case of simple labels, or the indexing operator ([]) and other array operators in the case of
+label arrays (introduced by replicate statements), may be used to reference named sub-activity blocks.
+Only action handles declared directly under a labeled activity statement can be accessed outside their direct
+lexical scope. Action handles declared in an unnamed activity scope cannot be accessed from outside that
+scope.
+Note that the top activity scope is unnamed. For an action handle to be directly accessible in the top-level
+action scope, or from outside the current scope, it shall be declared at the top-level action scope.
+In Example 98, action B declares action-handle variables in labeled activity statement scopes, thus making
+them accessible from outside by using hierarchical paths. action C uses hierarchical paths to constrain the
+sub-actions of its sub-actions b1 and b2.
+action A {
+  activity {
+    L: schedule {
+         A a;
+         B b;
+         a: { // illegal label!
+           do C;
+           do D;
+         }
+       }
+  }
+  constraint parallel {L.a, L.b};
+}

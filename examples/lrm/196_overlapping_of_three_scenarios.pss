@@ -1,0 +1,30 @@
+// PSS v3.0 LRM — Example 196: Overlapping of three scenarios (page 276)
+scenario
+has
+one
+realization:
+{write, read, send} because the three action executions are simultaneously active (on the time interval from
+t3 to t4). On the other hand, this scenario does not have any realization on the trace shown in Figure 41
+because the three action executions do not overlap, though “write” and “read” overlap, and “read” and
+“send” also overlap.
+Figure 40—Overlapping of three scenarios
+Figure 41—Three scenarios. No overlap
+19.3.6 Selection scenario
+The selection scenario is specified by the monitor activity select statement (see Syntax 75):
+action read {}
+action write {}
+action send {}
+monitor m {
+  activity {
+    overlap {
+      do read;
+      do write;
+      do send;
+    }
+  }
+}
+
+Syntax 75—Select monitor activity statement
+The selection scenario defines a selection between several alternative subscenarios. The set of realizations of
+the selection scenario consists of all realizations of its subscenarios. Consider Example 197 and the trace
+shown in Figure 42.

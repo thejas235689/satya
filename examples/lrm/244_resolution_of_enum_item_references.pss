@@ -1,0 +1,36 @@
+// PSS v3.0 LRM — Example 244: Resolution of enum item references (page 323)
+package a_pkg {
+  struct S1 { }
+}
+package b_pkg {
+  import a_pkg::*;
+  struct S2 : S1 { }
+}
+component pss_top {
+  import b_pkg::*;
+  S2         s2_i0; // (1) OK
+  S1         s1_i1; // (2) Error: S1 is not made visible
+                    //            by importing b_pkg
+  a_pkg::S1  s1_i2; // (3) OK: S1 is declared in a_pkg
+  b_pkg::S1  s1_i3; // (4) Error: import of a_pkg in b_pkg
+                    //            does not make S1 a b_pkg member
+};
+component my_ip_c {
+ enum mode_e {A, B, C, D};
+ action my_op {
+ rand mode_e mode;
+ }
+}
+component pss_top {
+  my_ip_c my_ip;
+ action test {
+
+my_ip_c::my_op op;
+ constraint op.mode == my_ip_c::mode_e::A;
+ constraint op.mode == A;
+ constraint op.mode in [A, C, D];
+ activity {
+ op;
+ }
+ }
+}

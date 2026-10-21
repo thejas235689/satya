@@ -1,0 +1,13 @@
+// PSS v3.0 LRM — Example 9: Struct with rand qualifiers (page 69)
+struct axi4_trans_req {
+rand bit[31:0]
+axi_addr;
+rand bit[31:0]
+axi_write_data;
+bit
+is_write;
+rand bit[3:0]
+prot;
+rand bit[1:0]
+sema4;
+}

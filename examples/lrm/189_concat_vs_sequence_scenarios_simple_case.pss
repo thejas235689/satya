@@ -1,0 +1,30 @@
+// PSS v3.0 LRM — Example 189: Concat vs sequence scenarios. Simple case (page 266)
+level scenarios have the only realization {write, read}.
+Figure 28—Action trace with two consecutive actions
+In the action trace shown in Figure 29, the attempt of the cover statement c1 with the checkpoint t1 has a
+realization {write, read1} because the match point of the first sub-scenario “do write” is t2, and this time
+instant serves the checkpoint of the second sub-scenario do read. The attempt of the cover statement c2
+has two realizations: {write, read1} and {write, read2}. However, because all attempts of both of these cover
+statements are either simultaneously successful or simultaneously failing, there is no difference between
+sequence and concat in this case as well.
+c1: cover {
+  activity {
+    concat {
+      do write;
+      do read;
+    }
+  }
+}
+
+c2: cover {
+  activity {
+    sequence {
+      do write;
+      do read;
+    }
+  }
+}
+
+Figure 29—Action trace with two repeated actions at the end
+Example 190 illustrates the minor difference between the concatenation and sequential scenarios in the
+presence of covergroups.

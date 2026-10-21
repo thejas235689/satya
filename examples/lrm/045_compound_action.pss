@@ -1,0 +1,22 @@
+// PSS v3.0 LRM — Example 45: compound action (page 119)
+action write {
+  output data_buf data;
+  rand int size;
+  //implementation details
+};
+action sub_a {...};
+action compound_a {
+  sub_a a1, a2;
+  activity {
+    a1;
+    a2;
+  }
+}
+
+10.2.3 Abstract actions
+Abstract action types are used to capture common features of different actions, including actions of different
+components. Abstract actions may not be traversed directly. Rather, they are used through inheritance, as
+base types for non-abstract action types. Abstract action types may be declared outside the scope of a
+component, unlike non-abstract actions, which may only be declared in a component scope.
+An example of abstract action usage is shown in Example 46. In this example, abstract action base is
+declared outside a component scope, in package mypkg, and subsequently extended in the same package.

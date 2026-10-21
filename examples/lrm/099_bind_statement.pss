@@ -1,0 +1,36 @@
+// PSS v3.0 LRM — Example 99: bind statement (page 174)
+action simply delegates the object reference to the sub-action.
+In the case of a buffer object input to the compound action, the action that produces the buffer object must
+complete before the activity of the compound action begins, regardless of where within the activity the sub-
+action to which the input buffer is bound begins. Similarly, the compound action’s activity shall complete
+before the compound action’s output buffer is available, regardless of where in the compound action’s
+activity the sub-action that produces the buffer object executes. The corollary to this statement is that no
+other sub-action in the compound action’s activity may have an input explicitly hierarchically bound to the
+compound action’s buffer output object. Similarly, no sub-action in the compound action’s activity may
+have an output that is explicitly hierarchically bound to the compound action’s input object. Consider
+Example 100.
+component top{
+    buffer B {rand int a;};
+    action P1 {
+        output B out;
+    };
+    action P2 {
+        output B out;
+    };
+    action C {
+        input B inp;
+    };
+    pool B B_p;
+    bind B_p {*};
+    action T {
+        P1 p1;
+        P2 p2;
+        C c;
+        activity {
+            p1;
+            p2;
+            c;
+            bind p1.out c.inp; // c.inp.a == p1.out.a
+        };
+    }
+};

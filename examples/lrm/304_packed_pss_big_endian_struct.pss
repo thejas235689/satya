@@ -1,0 +1,65 @@
+// PSS v3.0 LRM — Example 304: Packed PSS big-endian struct (page 418)
+struct my_packed_struct : packed_s<LITTLE_ENDIAN> {
+   bit[6] A;
+   bit[2] B;
+   bit[9] C;
+   bit[7] D;
+   bit[6] E;
+}
+MSB                                                           LSB
+ X X E E E E E E D D D D D D D C C C C C C C C C B B A A A A A A
+ X X 5 4 3 2 1 0 6 5 4 3 2 1 0 8 7 6 5 4 3 2 1 0 1 0 5 4 3 2 1 0
+     byte 0           byte 1           byte 2           byte 3
+B B A A A A A A  C C C C C C C C  D D D D D D D C  X X E E E E E E
+1 0 5 4 3 2 1 0  7 6 5 4 3 2 1 0  6 5 4 3 2 1 0 8  X X 5 4 3 2 1 0
+struct my_packed_struct : packed_s<BIG_ENDIAN> {
+   bit[6] A;
+   bit[2] B;
+   bit[9] C;
+   bit[7] D;
+   bit[6] E;
+}
+
+Figure 56—Big-endian struct packing in register
+Figure 57—Big-endian struct packing in byte-addressable space
+24.10.2 sizeof_s
+The template struct sizeof_s is used to query the physical storage size of a PSS data type. It applies to
+types that can be written to or read from a byte-addressable address space, namely numeric types, Booleans,
+enumerated types that have a base type, packed structs, and arrays thereof. The sizeof_s struct is
+declared in the std_pkg package.2
+24.10.2.1 Definition
+Syntax 132—sizeof_s struct
+The static constant nbytes is initialized to the number of consecutive addresses required to store a value of
+type T in a byte-addressable address space. When using the read/write target functions (see 24.10.9), this
+number of bytes is assumed to be taken up by the data in the target storage. For types that are not byte-
+aligned in size, the number of bytes is rounded up. For the definition of packed struct layout in an address
+space, see 24.10.1.
+The static constant nbits is initialized to the exact number of bits that are taken up by the representation of
+a value of type T in a byte-addressable address space.
+sizeof_s<> shall not be parameterized with types other than numeric types, Booleans, enumerated types
+that have a base type, packed structs, and arrays thereof.
+24.10.2.2 Examples
+The following code snippets show the value of nbytes of sizeof_s<> instantiated for several different
+types:
+sizeof_s<int>::nbytes == 4
+sizeof_s<int[3:0]>::nbytes == 1
+2 In PSS 2.0, these declarations were in the addr_reg_pkg package. Referring to these declarations via addr_reg_pkg is
+deprecated in PSS 2.1. To support backward compatibility, PSS tools shall support referencing these declarations in either std_pkg or
+addr_reg_pkg as if they were the same types.
+MSB                                                           LSB
+ A A A A A A B B C C C C C C C C C D D D D D D D E E E E E E X X
+ 5 4 3 2 1 0 1 0 8 7 6 5 4 3 2 1 0 6 5 4 3 2 1 0 5 4 3 2 1 0 X X
+     byte 0            byte 1            byte 2            byte 3
+A A A A A A B B   C C C C C C C C   C D D D D D D D   E E E E E E X X
+5 4 3 2 1 0 1 0   8 7 6 5 4 3 2 1   0 6 5 4 3 2 1 0   5 4 3 2 1 0 X X
+struct sizeof_s<type T> {
+   static const int nbytes = /* implementation-specific */;
+   static const int nbits = /* implementation-specific */;
+};
+
+sizeof_s<bit>::nbytes == 1
+sizeof_s<bit[33]>::nbytes == 5
+sizeof_s<array<int,10>>::nbytes == 40
+struct my_packed_s : packed_s<> {bit[2] kind; int data;};
+sizeof_s<my_packed_s>::nbytes  == 5
+24.10.3 Address space handles

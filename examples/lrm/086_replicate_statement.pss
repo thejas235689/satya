@@ -1,0 +1,14 @@
+// PSS v3.0 LRM — Example 86: replicate statement (page 163)
+action my_test {
+  rand int in [2..4] count;
+  activity {
+    parallel {
+      replicate (count) {
+        do A;
+        do B;
+      }
+    }
+  }
+};
+
+In Example 87, the execution of action my_test results in one execution of A as well as four executions of

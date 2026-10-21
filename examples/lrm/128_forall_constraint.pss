@@ -1,0 +1,30 @@
+// PSS v3.0 LRM — Example 128: forall constraint (page 203)
+action A {
+  rand int in [0..9] x;
+};
+action B {
+  rand int in [0..9] x;
+};
+action C {
+  A a;
+  B b;
+  activity {
+    schedule {
+      a; b;
+    }
+  }
+};
+
+action entry {
+  rand int in [0..9] ax_limit;
+  A a;
+  C c;
+  constraint {
+    forall (a_it: A) {
+      a_it.x <= ax_limit;
+    }
+  }
+  activity {
+    a; c;
+  }
+};

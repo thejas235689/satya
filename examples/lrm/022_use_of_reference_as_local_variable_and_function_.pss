@@ -1,0 +1,17 @@
+// PSS v3.0 LRM — Example 22: Use of reference as local variable and function return value (page 86)
+component A {
+   function void foo();
+};
+component B {
+   A a_arr[5];
+   function ref A choose_A(int code) {
+         return a_arr[code % 5];
+   }
+   action call_foo {
+      exec body {
+         ref A aref = comp.a_arr[3];
+         aref.foo();
+         comp.choose_A(123).foo();
+      }
+   };
+};

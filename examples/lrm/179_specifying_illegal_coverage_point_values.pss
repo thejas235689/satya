@@ -1,0 +1,30 @@
+// PSS v3.0 LRM — Example 179: Specifying illegal coverage point values (page 247)
+struct s {
+rand bit[4] a;
+covergroup {
+coverpoint a {
+ignore_bins ignore_vals = [7, 8];
+}
+} cs23;
+}
+struct s {
+rand bit[4] a;
+covergroup {
+coverpoint a {
+illegal_bins illegal_vals = [7, 8];
+}
+} cs23;
+}
+
+18.3.7 Value resolution
+A coverpoint expression, the expressions in a bins construct, and the coverpoint type, if present, are all
+involved in comparison operations in order to determine into which bins a particular value falls. Let e be the
+coverpoint expression and b be an expression in a bins covergroup_range_list. The following rules shall
+apply when evaluating e and b:
+a)
+If there is no coverpoint type, the effective type of e shall be self-determined. In the presence of a
+coverpoint type, the effective type of e shall be the coverpoint type.
+b)
+b shall be statically cast to the effective type of e. An implementation shall issue a warning under the
+following conditions:
+1)

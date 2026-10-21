@@ -1,0 +1,27 @@
+// PSS v3.0 LRM — Example 311: Customization of addr_value() (page 428)
+component addr_window_exec_c : executor_c<> {
+  bit[64] window_base   = 0x80000000;
+  bit[64] window_size   = 0x1000;
+  bit[64] window_offset = 0x80000000;
+  function bit[64] addr_value(addr_handle_t hndl) {
+    bit[64] addr = super.addr_value(hndl);
+    if (addr >= window_base && addr < (window_base+window_size)) {
+        addr = (addr-window_offset)+0x1000;
+    }
+    return addr;
+  }
+}
+component subsystem_c {
+  addr_window_exec_c exec1;
+  addr_window_exec_c exec2;
+  exec init_down {
+    exec1.window_base   = 0x8000_0000;
+    exec1.window_offset = 0x8000_0000;
+    exec2.window_base   = 0x8000_1000;
+    exec2.window_offset = 0x8000_1000;
+  }
+}
+
+24.10.10 Target data structure setup example
+The following example demonstrates use of packed PSS data written to allocations on byte addressable
+space. It also demonstrates the use of address handles to construct complex data structures in target memory.

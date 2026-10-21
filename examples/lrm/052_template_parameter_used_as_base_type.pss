@@ -1,0 +1,41 @@
+// PSS v3.0 LRM — Example 52: Template parameter used as base type (page 125)
+struct base_t {
+  rand bit[3:0] core;
+}
+struct my_sub1_t : base_t {
+  rand bit[3:0] add1;
+}
+struct my_sub2_t : base_t {
+  rand bit[3:0] add2;
+}
+buffer b1 : base_t { }
+buffer b2 : base_t { }
+abstract action my_action_a <buffer B : base_t> {
+}
+struct my_container_s  <struct T : base_t = my_sub1_t> {
+  T t_attr;
+  constraint t_attr.core >= 1;
+}
+struct my_base1_t {
+  rand int attr1;
+}
+struct my_base2_t {
+  rand int attr2;
+}
+struct my_container_s <struct T> : T {
+}
+struct top_s {
+  rand my_container_s <my_base1_t> cont1;
+  rand my_container_s <my_base2_t> cont2;
+  constraint cont1.attr1  == cont2.attr2;
+}
+
+11.4 Template type instantiation
+A template type is instantiated using the name of the template type followed by the parameter value list
+(specialization) enclosed in angle brackets (<>). Template parameter values are specified positionally.
+The explicit instantiation of a template type represents an actual type. All explicit instantiations provided
+with the same set of parameter values are the same actual type.
+11.4.1 Syntax
+Syntax 28—Template type instantiation
+The following also apply:
+a)

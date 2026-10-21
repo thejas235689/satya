@@ -1,0 +1,81 @@
+// PSS v3.0 LRM — Example 262: Function calls restrictions (page 345)
+import std_pkg::*;
+function int func1(int a, int b);
+function int func2(int a, int b);
+solve function int func3(int a);
+target function void func4(int a);
+function int func1(int a, int b) {  // definition for any platform
+    return a+b;
+}
+solve function int func2(int a, int b) {  // solve-only definition
+    return a+b;
+}
+function int func3(int a) {  // definition for the solve function
+    int res;
+    randomize res with {
+        res > a;
+    };
+    return res;
+}
+function void func4(int a) {  // definition for the target function
+    message(LOW, "The value is %d", a);
+}
+component base_comp {
+    function void func5();
+    action do_it {
+        int a, b, c, x, y, z;
+        exec post_solve {
+            x = func1(1,2);
+            y = func2(3,4);
+            z = func3(5);
+            func4(6);     // ERROR: calling a target function
+            comp.func5(); // OK under comp1, ERROR under comp2
+        }
+        exec body {
+            a = func1(1,2);
+            b = func2(3,4); // ERROR: calling a solve function
+            c = func3(5);   // ERROR: calling a function
+                            // with a solve-only definition
+            func4(6);
+            comp.func5();   // OK under comp2, ERROR under comp1
+        }
+    }
+}
+component comp1: base_comp {
+    solve function void func5() {  // solve-only definition
+        print("I am comp1::func5");
+    }
+}
+component comp2: base_comp {
+    target function void func5() {  // target-only definition
+        message(LOW, "I am comp2::func5");
+    }
+}
+
+22.3 Native PSS functions
+It is possible to specify the definition for native PSS functions using the procedural constructs described in
+22.7.
+For an instance function, the definition (if provided) shall be in the same component type as the original
+declaration (either in its initial definition or in an extension) or in a derived component. For a static
+function, the definition shall be in the same package or component as the original declaration (in case of a
+component, either in its initial definition or in an extension).
+22.3.1 Syntax
+Syntax 85—Function definition
+The optional platform_qualifier (either solve or target) specifies function availability. If the function
+declaration is provided separately and is qualified, platform_qualifier must be the same, or it may be
+omitted. If the function declaration is unqualified, platform_qualifier restricts the function availability for
+the PSS model. If no separate function declaration exists, this definition also serves as the declaration, and
+platform_qualifier or its absence is treated accordingly (see 22.2.1 and Example 262).
+procedural_function
+::=
+[
+platform_qualifier
+]
+[
+pure
+]
+[
+static
+]
+function
+     function_prototype { { procedural_stmt } }

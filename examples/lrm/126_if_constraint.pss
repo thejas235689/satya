@@ -1,0 +1,14 @@
+// PSS v3.0 LRM — Example 126: if constraint (page 200)
+struct if_else_s {
+  rand bit[7:0]     a, b;
+
+  constraint ab_c {
+    if (a > 5) {
+      b == 1;
+    } else {
+      b < a;
+    }
+  }
+}
+
+16.1.7 foreach constraints

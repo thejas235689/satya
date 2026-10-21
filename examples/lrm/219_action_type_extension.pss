@@ -1,0 +1,42 @@
+// PSS v3.0 LRM — Example 219: Action type extension (page 303)
+component mem_ops_c {
+enum mem_block_tag_e {SYS_MEM, A_MEM, B_MEM, DDR};
+buffer mem_buff_s {
+rand mem_block_tag_e mem_block;
+}
+pool mem_buff_s mem;
+bind mem *;
+action memcpy {
+input mem_buff_s src_buff;
+output mem_buff_s dst_buff;
+}
+}
+package soc_config_pkg {
+extend action mem_ops_c::memcpy {
+rand int in [1, 2, 4, 8] ta_width; // introducing new attribute
+constraint { // layering additional constraint
+src_buff.mem_block in [SYS_MEM, A_MEM, DDR];
+dst_buff.mem_block in [SYS_MEM, A_MEM, DDR];
+ta_width < 4 -> dst_buff.mem_block != A_MEM;
+}
+}
+}
+component pss_top {
+import soc_config_pkg::*;// explicitly importing the package grants
+ // access to types and type members
+mem_ops_c mem_ops;
+action test {
+mem_ops_c::memcpy cpy1, cpy2;
+constraint cpy1.ta_width == cpy2.ta_width;// constraining an
+// attribute introduced in an extension
+activity {
+repeat (3) {
+parallel { cpy1; cpy2; };
+}
+}
+}
+}
+
+An enum item introduced in an extension can be referenced within the package in which the extension is
+defined. Outside that package, enum items can be referenced inside a lexical scope that wildcard-imports
+the respective package.

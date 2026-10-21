@@ -1,0 +1,69 @@
+// PSS v3.0 LRM — Example 95: Using a parameterized symbol (page 169)
+component entity {
+action a { }
+action b { }
+action c { }
+action top {
+
+a a1, a2, a3;
+
+b b1, b2, b3;
+
+c c1, c2, c3;
+
+
+symbol a_or_b {
+
+select {a1; b1; }
+
+select {a2; b2; }
+
+select {a3; b3; }
+
+}
+
+
+activity {
+a_or_b;
+
+c1;
+
+c2;
+
+c3;
+
+}
+}
+}
+component entity {
+  action a { }
+  action b { }
+  action c { }
+  action top {
+    a a1, a2, a3;
+    b b1, b2, b3;
+    c c1, c2, c3;
+    symbol ab_or_ba (a aa, b bb) {
+      select {
+        { aa; bb; }
+        { bb; aa; }
+      }
+    }
+    activity {
+      ab_or_ba(a1,b1);
+      ab_or_ba(a2,b2);
+      ab_or_ba(a3,b3);
+      c1;
+      c2;
+      c3;
+    }
+  }
+}
+
+12.8 Named sub-activities
+Sub-activities are structured elements of an activity. Naming sub-activities is a way to specify a logical tree
+structure of sub-activities within an activity. This tree serves for making hierarchical references, both to
+action-handle variables declared in-line, as well as to the activity statements themselves. The hierarchical
+paths thus exposed abstract from the concrete syntactic structure of the activity, since only explicitly labeled
+statements constitute a new hierarchy level.
+12.8.1 Syntax

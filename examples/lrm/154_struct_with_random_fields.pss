@@ -1,0 +1,52 @@
+// PSS v3.0 LRM — Example 154: Struct with random fields (page 222)
+action A {
+  rand bit[3:0] x;
+  int y;
+}
+action my_action {
+  A a, b, c;
+  exec post_solve {
+    a.y = b.x; // ERROR – cannot access uninitialized action handle
+attributes
+  }
+  activity {
+    a;
+    if (a.x > 0) { // OK – 'a' is resolved
+      b;
+      c;
+    }
+    {
+      if (c.y == a.x) { // ERROR – cannot access attributes of
+                        // uninitialized action handle 'c.y'
+        b;
+      }
+      c;
+    }
+  }
+}
+struct abc_s {
+rand bit[4] in [0..12] a_val, b_val, c_val;
+constraint {
+a_val < b_val;
+b_val < c_val;
+}
+}
+
+16.4.9.2 Example 2
+Example 155 shows a root action (my_action) with three sub-action fields and an activity that traverses
+these sub-action fields. It is important that the random-value selection behavior of this activity and the
+struct shown in Example 154 are the same. If a value for a.val is selected without knowing the
+relationship between a.val and b.val, the tool could select a.val=15. When a.val=15, there is no
+legal value for b.val, since b.val must be greater than a.val.
+a)
+When selecting a value for a.val, a PSS processing tool shall consider the following:
+1)
+a.val is in the range 0 to 15, due to its domain.
+2)
+b.val is in the range 0 to 15, due to its domain.
+3)
+c.val is in the range 0 to 15, due to its domain.
+4)
+a.val < b.val.
+5)
+b.val < c.val.

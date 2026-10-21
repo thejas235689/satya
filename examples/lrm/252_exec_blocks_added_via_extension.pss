@@ -1,0 +1,38 @@
+// PSS v3.0 LRM — Example 252: exec blocks added via extension (page 334)
+import std_pkg::*;
+action A {
+  int a;
+  exec pre_solve {
+    a=1;
+  }
+  exec body {
+    message(LOW,"Hello from A %d", a);
+  }
+}
+action A1 : A {
+  exec body {
+    super;
+    message(LOW,"Hello from A1 %d", a);
+  }
+}
+extend action A1 {
+  exec body {
+   message(LOW,"Hello from A1(1) extension %d", a);
+  }
+}
+extend action A1 {
+  exec body {
+   message(LOW,"Hello from A1(2) extension %d", a);
+  }
+}
+
+22.2 Functions
+Functions are a means to encapsulate behaviors used by actions and other entities to implement test
+scenarios. Functions are called in procedural description contexts, and are akin to procedures in
+conventional programming languages.
+Functions can be declared in global, package, or component scopes. Functions can be static or instance
+(non-static) functions. A global or package function is always static. A component function can be explicitly
+declared as static. If a component function is non-static, each function call is associated with a specific
+instance of that component type.
+A function may be defined in one of three ways:
+—

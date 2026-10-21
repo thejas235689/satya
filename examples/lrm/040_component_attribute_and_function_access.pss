@@ -1,0 +1,67 @@
+// PSS v3.0 LRM — Example 40: Component attribute and function access (page 112)
+component vid_pipe_c { ... };
+component codec_c {
+   vid_pipe_c pipeA, pipeB;
+   action decode { ... };
+};
+component multimedia_ss_c {
+   codec_c codecs[4];
+};
+component pss_top {
+   multimedia_ss_c multimedia_ss;
+};
+component my_comp_c {
+  int f;
+  struct S {
+    rand int g;
+    exec post_solve {
+      g = f; // ILLEGAL: S may not refer to instance-specific field of
+             // my_comp_c. NOTE: 'g = my_comp_c::f;' would be legal if
+             // f were 'static const int f'
+    }
+  }
+  solve function void print_f() {
+    print ("%d", f);
+  }
+  action A_a {
+    rand S s;
+    exec post_solve {
+      comp.print_f(); // comp handle required to access 'print_f'
+    }
+  }
+}
+
+component pss_top {
+  my_comp_c comp1, comp2, comp3;
+  exec init {
+    comp1.f = 6; comp2.f = 7; comp3.f = 8;
+  }
+  action entry_a {
+    activity {
+      do my_comp_c::A_a;
+    }
+  }
+}
+
+9.5 Component references
+Each action instance is associated with a specific component instance of its containing component type, the
+component-type scope where the action is defined. The component instance is the “actor” or “agent” that
+performs the action. Only actions defined in the scope of instantiated components can legally participate in a
+scenario.
+The component instance with which an action is associated is referenced via the built-in field comp. The
+value of the comp field can be used for comparisons of references (see 8.5.3). Unlike user-defined reference
+variables, the comp field is assigned automatically as part of the solving process (see 16.4.5) and may not be
+assigned by the user. The static type of the comp field is the ref type of the action’s context component.
+Consequently, attributes and sub-components of the containing component may be referenced via the comp
+field using relative paths.
+9.5.1 Semantics
+A compound action can only instantiate sub-actions that are defined in its containing component or defined
+in component types that are instantiated in its containing component's instance sub-tree. In other words,
+compound actions cannot instantiate actions that are defined in components outside their context component
+hierarchy. Similarly, monitors and cover statements cannot reference actions or other monitors that are
+defined in components outside their context component hierarchy. This maximizes the reusability of
+components in other contexts.
+9.5.2 Examples
+Example 41 illustrates the need to define a sub-action in a containing component or its sub-tree. In action
+graphics::gr_a, the traversal of bus_c::write is illegal since the component bus_c is not
+instantiated in the action's containing component (graphics).

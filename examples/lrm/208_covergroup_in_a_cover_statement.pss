@@ -1,0 +1,37 @@
+// PSS v3.0 LRM — Example 208: Covergroup in a cover statement (page 290)
+enum locked_e { LOCKED, UNLOCKED };
+enum write_mode_e { WRITE_BACK, WRITE_THRU };
+action read {
+  rand locked_e lock_mode;
+}
+action write {
+  rand write_mode_e write_mode;
+}
+action ack {}
+monitor wr {
+  activity {
+    w: do write;
+    r: do read;
+  }
+  covergroup {
+    cpw: coverpoint w.write_mode;
+    cpr: coverpoint r.lock_mode;
+    wXr: cross cpw, cpr;
+  } cgi;
+}
+
+c: cover {
+  monitor wr;
+  activity {
+    wr;
+    do ack;
+  }
+}
+
+Figure 50—Covergroup instantiation in a monitor. No match of cover statement
+19.5.2 Per-instance coverage in cover statements and monitors
+By default, covergroups collect coverage on a per-type basis (see 18.7). Per-instance coverage in cover
+statements is enabled when per_instance is true for a covergroup instance in a cover statement.
+Per-instance coverage of monitors is enabled when per_instance is true for a covergroup instance and
+when there exists a contiguous path of named handles from a cover statement to the location where the
+covergroup is instantiated.

@@ -1,0 +1,13 @@
+// PSS v3.0 LRM — Example 114: Binding of pools to array of components (page 189)
+component mem_c {...}
+component top_c {
+    mem_c mem[4];
+    pool mbuf  mbuf_p;
+    pool mbuf2 mbufA_p;
+    pool mbuf3 mbufB_p;
+    pool mbuf4 mbufC_p;
+    bind mbuf_p  mem.*;       // All elements of the array
+    bind mbufA_p mem[0..2].*; // Explicit range
+    bind mbufB_p mem[1..].*;  // Up to the top element of the array
+    bind mbufC_p mem[2,3].*;  // Explicit array element(s)
+}

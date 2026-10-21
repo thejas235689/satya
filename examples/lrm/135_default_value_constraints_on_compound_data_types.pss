@@ -1,0 +1,16 @@
+// PSS v3.0 LRM — Example 135: Default value constraints on compound data types (page 208)
+struct my_struct {
+  rand array<int,4> arr;
+  constraint default arr == {0, 10, 20, 30}; // (1)
+
+  rand int attr;
+  constraint default attr == 40; // (2)
+};
+action my_action {
+  rand my_struct s1, s2, s3;
+  constraint default s1.arr[3] == 100; // (3)
+
+  constraint default disable s2.arr; // (4)
+  constraint default disable s3; // (5)
+  constraint s3.attr == 50;
+};

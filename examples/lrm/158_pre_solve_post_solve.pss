@@ -1,0 +1,32 @@
+// PSS v3.0 LRM — Example 158: pre_solve/post_solve (page 227)
+function bit[5:0] get_init_val();
+function bit[5:0] get_exp_val(bit[5:0] stim_val);
+struct S1 {
+bit[5:0] init_val;
+rand bit[5:0] rand_val;
+bit[5:0] exp_val;
+exec pre_solve {
+init_val = get_init_val();
+}
+constraint rand_val_c {
+rand_val <= init_val+10;
+}
+exec post_solve {
+exp_val = get_exp_val(rand_val);
+}
+}
+struct S2 {
+bit[5:0] init_val;
+rand bit[5:0] rand_val;
+bit[5:0] exp_val;
+rand S1 s1_1, s1_2;
+exec pre_solve {
+init_val = get_init_val();
+}
+constraint rand_val_c {
+rand_val > init_val;
+}
+exec post_solve {
+exp_val = get_exp_val(rand_val);
+}
+}

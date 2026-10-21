@@ -1,0 +1,18 @@
+// PSS v3.0 LRM — Example 230: Importing the name of a nested package (page 316)
+package p1 {
+struct s { }
+package p2 {
+struct u { }
+}
+}
+struct t { }
+struct s { }
+package top {
+import p1::*;
+struct my_s {
+s     v1; // Resolves to p1::s
+::s   v2; // Explicit reference to ::s
+t     v3; // Resolves to ::t
+p2::u v4; // Resolves to p1::p2::u
+}
+}

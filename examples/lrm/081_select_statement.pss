@@ -1,0 +1,11 @@
+// PSS v3.0 LRM — Example 81: Select statement (page 159)
+action my_test {
+  my_action1         action1;
+  my_action2         action2;
+  activity {
+    select {
+      action1;
+      action2;
+    }
+  }
+}

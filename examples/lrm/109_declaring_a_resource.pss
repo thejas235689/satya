@@ -1,0 +1,23 @@
+// PSS v3.0 LRM — Example 109: Declaring a resource (page 183)
+resource DMA_channel_s {
+  rand bit[3:0] priority;
+};
+
+14.2.1 Syntax
+Syntax 50—Resource object reference
+lock and share are modes of resource use by an action. They serve to declare resource requirements of the
+action and restrict legal scheduling relative to other actions. Locking excludes the use of the resource
+instance by another action throughout the execution of the locking action and sharing guarantees that the
+resource is not locked by another action during its execution.
+In a PSS-generated test scenario, no two actions may be assigned the same resource instance if they overlap
+in execution time and at least one is locking the resource. In other words, there is a strict scheduling
+dependency between an action referencing a resource object in lock mode and all other actions referencing
+the same resource object instance.
+The following apply for arrays of resource object references:
+a)
+Individual elements in the array may be referenced by using the array name and the element index in
+square brackets.
+b)
+A resource object array is specified as entirely locked or entirely shared. The mode cannot be speci-
+fied separately for an individual element of the array.
+c)

@@ -1,0 +1,27 @@
+// PSS v3.0 LRM — Example 150: Evaluation of solve-time exec blocks in procedural randomization (page 219)
+import std_pkg::*;
+struct S1 {
+  rand bit[8] a, b;
+  exec pre_solve { print("Pre S1"); }
+  exec post_solve { print("Post S1"); }
+}
+struct S2 {
+  rand S1 f1;
+  S1 f2;
+  constraint f1.a < f2.a;
+  exec pre_solve { print("Pre S2"); }
+  exec post_solve { print("Post S2"); }
+}
+action A {
+  exec post_solve {
+    S2      v1;
+    bit[4]  v2;
+    v1.f2.a = 100;
+    randomize v1, v2 with {v1.f1.a < v2;}
+  }
+}
+
+Post S1
+16.4.6.2 Random stability
+When procedural randomization features are used in solve-time exec blocks (pre_solve, post_solve,
+pre_body), random stability shall be ensured when the PSS description and the random seed specified to the

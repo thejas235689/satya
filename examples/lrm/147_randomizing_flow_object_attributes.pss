@@ -1,0 +1,25 @@
+// PSS v3.0 LRM — Example 147: Randomizing flow object attributes (page 216)
+component top {
+buffer mem_obj {
+rand int dat;
+constraint dat%2 == 0; // dat must be even
+}
+action write1 {
+output mem_obj out_obj;
+constraint out_obj.dat in [1..5];
+}
+action write2 {
+output mem_obj out_obj;
+constraint out_obj.dat in [6..10];
+}
+action read {
+input mem_obj in_obj;
+constraint in_obj.dat in [8..12];
+}
+action test {
+activity {
+do write1;
+do read;
+}
+}
+}

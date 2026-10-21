@@ -1,0 +1,10 @@
+// PSS v3.0 LRM — Example 273: Procedural while statement (page 362)
+target function bool get_parity(int n) {
+  bool parity;
+  parity = false;
+  while (n != 0) {
+     parity = !parity;
+     n = n & (n-1);
+  }
+  return parity;
+}

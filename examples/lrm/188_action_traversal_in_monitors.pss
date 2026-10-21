@@ -1,0 +1,62 @@
+// PSS v3.0 LRM — Example 188: Action traversal in monitors (page 262)
+enum locked_e {
+  LOCKED,
+  UNLOCKED
+};
+action read {
+  rand locked_e lock_mode;
+}
+monitor m1  {
+  activity {
+    do read;
+  }
+}
+monitor m11 {
+  read r;
+  activity {
+    r;
+  }
+}
+monitor m2  {
+  do read with lock_mode == LOCKED;
+}
+monitor m21 {
+  read r;
+  activity {
+    r with lock_mode == LOCKED;
+  }
+}
+c1: cover  m1;
+
+Figure 23—Action traversal statement. No match
+The attempt of monitor m1 with the checkpoint t1 has a single scenario realization: {read} on the trace
+shown in Figure 24. The scenario realization start point is t1 and its endpoint is t2.
+Figure 24—Action traversal statement. One scenario realization
+In the trace shown in Figure 25, the monitor m1 has one realization scenario (t1 is a checkpoint): the
+unlocked read (the first one). The monitor m2 also has one realization scenario: the locked read (the
+second one).
+Figure 25—Matching action traversal statements with constraints
+Figure 26 shows a trace where the attempt (with checkpoint t1) of the monitor m1 has two realization
+scenarios: {read1} and {read2}.
+
+Figure 26—Action traversal, multiple matches
+19.3.2 Sequential scenario
+The sequential scenario is specified by the sequence statement (see Syntax 71):
+Syntax 71—Sequence monitor activity statement
+The sequential scenario defines a consecutive matching of its member-subscenarios; there may be an
+arbitrary gap between two consecutive subscenarios. Namely, in a sequential scenario, the first sub-scenario
+is matched first; at its match point or after it the second sub-scenario is matched; and so on. The realization
+of scenario sequence { s1,…,sn } consists of member-wise realization unions of subscenarios s1, ...,
+and sn. For example, if a, b, c, d, e, and f are action executions, and for some checkpoint, a realization of s1
+is set {a,b} and a realization of s2  for a checkpoint at or after the end of b is set {c} and for a checkpoint at
+or after the end of c, a realization of s3 is set {d,e,f}, then {a,b,c,d,e,f} is a realization of sequence
+{s1,s2,s3}.
+Consider monitor m1:
+
+monitor m1 {
+  activity {
+    do write;
+    do read;
+  }
+}
+defined in Example 187, the action trace shown in Figure 27, and the checkpoint t0.

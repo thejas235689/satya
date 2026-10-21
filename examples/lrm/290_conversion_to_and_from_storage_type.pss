@@ -1,0 +1,34 @@
+// PSS v3.0 LRM — Example 290: Conversion to and from storage type (page 389)
+typedef float_base_s<7,8> bfloat16_s;
+struct S {
+   exec post_solve {
+     float64 f1 = 20.25;
+     bfloat16_s f2;
+     float64 f3;
+     f2.sign = float_sign(f1);
+     // Unbias from 11-bit exponent, and bias for 8-bit
+     f2.exponent = float_exponent(f1) - (2**(11-1)-1) + (2**(8-1)-1);
+     // Use the leftmost bits, so we lose some precision
+     // but preserve the correct value.
+     f2.mantissa = float_mantissa(f1) >> (52-7);
+     f3 = to_float(
+        f2.mantissa << (52-7),
+        f2.exponent - (2**(8-1)-1) + (2**(11-1)-1),
+        f2.sign);
+   }
+}
+
+—
+A transactor, or testbench agent, connected to an I/O interface of the system that exposes transac-
+tional APIs, or higher-level stimulus sequences, to the PSS tool
+The PSS core library provides means to represent executors in the PSS description and to assign scenario
+entities to them. Executors are characterized by user-defined properties called traits, which serve to control
+the assignment of actions/objects to them. For example, the cluster of a CPU core could be represented as a
+trait attribute. Related executors are grouped together so that scenario entities can be assigned to a random
+instance out of a group. The selection of executors satisfies constraints on their trait attributes, if any are
+specified.
+In addition, executors can be used to customize the implementation of target functions for specific
+environments. Actions assigned to different executors can thereby employ different mappings of portable
+operations.
+The PSS built-in package executor_pkg defines types and functions related to the management of
+executors. In subsequent sections, except Syntax 117, the enclosing executor_pkg is omitted for brevity.

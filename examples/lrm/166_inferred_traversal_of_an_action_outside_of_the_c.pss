@@ -1,0 +1,51 @@
+// PSS v3.0 LRM — Example 166: Inferred traversal of an action outside of the containing component hierarchy (page 235)
+component pss_top {
+  buffer data_buff_s {...};
+  pool data_buff_s data_mem1, data_mem2;
+  bind data_mem1 {A_a.dout, C_a.din};
+  bind data_mem2 {B_a.dout, D_a.din};
+  action A_a {output data_buff_s dout;};
+  action B_a {output data_buff_s dout;};
+  action C_a {input  data_buff_s din;};
+  action D_a {input  data_buff_s din;};
+  action root_a {
+    C_a c;
+    D_a d;
+    activity {
+      select {c; d;}
+    }
+  }
+}
+component bus_c {
+  import bar_pkg::*;
+  action write{input bar_s b;...} // bar_s is a stream
+}
+component graphics {
+  import bar_pkg::*;
+  action foo {output bar_s b;...}
+  action gr_a {
+    activity {
+        do foo; // will infer traversal of bus_c::write
+                // to complete stream object connection
+    }
+  }
+}
+component pss_top {
+  import bar_pkg::*;
+  bus_c a0;
+  graphics g;
+  pool bar_s bar_p;
+  bind bar_p *;
+}
+
+17.3 Data constraints and action inferences
+As mentioned in Clause 16, introducing data constraints on flow objects or other elements of the design may
+affect the inferencing of actions. Consider a slightly modified version of Example 161, as shown in
+Example 167.
+Since the explicit traversal of c does not constrain the val field of its input, it may be bound to the output of
+either explicitly traversed action a or b; thus, there are two legal scenarios to be generated with the second
+select statement evaluated to traverse action c. However, since the data constraint on the traversal of action
+d is incompatible with the in-line data constraints on the explicitly-traversed actions a or b, another instance
+of either A_a or B_a shall be inferred whose output shall be bound to d.din. Since there is no requirement
+for the buffer output of either a or b to be bound, one of these actions shall be traversed from the first select
+statement, but no other action shall be inferred.

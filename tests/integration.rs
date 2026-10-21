@@ -520,3 +520,66 @@ component C {{
         assert_eq!(s.steps[0].action, want, "mode {} should select {}", mode, want);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Constructs found by running the PSS v3.0 LRM's own examples.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn sized_literals_and_aggregate_literals_both_lex() {
+    // `4'b1010` is a sized literal; `'{...}` is an aggregate literal.
+    let m = compile_pss("action a { rand bit[4] x = 4'b1010; exec body { x = 1; }; };").unwrap();
+    assert!(m.actions.contains_key("a"));
+    let m = compile_pss("struct s { int a; }; action a { s v; exec body { v = '{1}; }; };").unwrap();
+    assert!(m.actions.contains_key("a"));
+}
+
+#[test]
+fn constant_template_arguments_parse() {
+    let src = "component C { array<bit[15:0], 5> foo_arr; sized_addr_handle_s<32> h; action a { rand int in [1..9] x; }; };";
+    let m = compile_pss(src).unwrap();
+    assert!(m.components.contains_key("C"));
+}
+
+#[test]
+fn ref_types_and_import_aliases_parse() {
+    let src = r#"
+package P1 { package P2 { struct s { rand int a; }; }; };
+component C {
+  import P1::P2 as P2;
+  ref C close_sibling;
+  list<ref C> all_siblings;
+  action a { rand int in [1..9] x; };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    assert!(m.components.contains_key("C"));
+}
+
+#[test]
+fn pure_component_and_compile_assert_parse() {
+    let src = r#"
+pure component reg_c { action a { rand int in [1..9] x; }; };
+compile assert (1 == 1);
+"#;
+    let m = compile_pss(src).unwrap();
+    assert!(m.components.contains_key("reg_c"));
+}
+
+#[test]
+fn open_ended_ranges_are_solved() {
+    // `in [1..]` means "at least 1".
+    let m = compile_pss("component C { action a { rand int in [1..] y; }; };").unwrap();
+    for seed in [1u64, 5, 9] {
+        let s = engine::run_scenario(&m, "a", seed);
+        let y = s.steps[0].fields.iter().find(|(k, _)| k == "y").map(|(_, v)| *v).unwrap();
+        assert!(y >= 1, "y must be >= 1, got {}", y);
+    }
+}
+
+#[test]
+fn triple_quoted_strings_lex() {
+    let src = "action a { exec body { x = \"\"\"line one\nline two\"\"\"; }; };";
+    let m = compile_pss(src).unwrap();
+    assert!(m.actions.contains_key("a"));
+}

@@ -1,0 +1,30 @@
+// PSS v3.0 LRM — Example 180: Value resolution (page 248)
+struct s {
+rand bit[3] p1;        // type expresses values in the range  0 to 7
+int [3]     p2;        // type expresses values in the range -4 to 3
+covergroup {
+coverpoint p1 {
+bins b1 = [1, 2..5, 6..10]; // warning issued for range 6..10
+bins b2 = [-1, 1..10, 15];  // warning issued for range 1..10
+}
+                            //           and values -1 and 15
+coverpoint p2 {
+bins b3 = [1, 2..5, 6..10]; // warning issued for ranges 2..5
+                            //                       and 6..10
+bins b4 = [-1, 1..10, 15];  // warning issued for range  1..10
+}
+                            //                    and value 15
+} c1;
+}
+
+18.4 Defining cross coverage
+A covergroup can specify cross coverage between two or more coverage points or variables. Cross
+coverage is specified using the cross construct (see Syntax 67). When a variable V is part of a cross
+coverage, the PSS processing tool shall implicitly create a coverage point for the variable, as if it had been
+created by the statement coverpoint V;. Thus, a cross involves only coverage points. Expressions
+cannot be used directly in a cross; a coverage point must be explicitly defined first.
+18.4.1 Syntax
+Syntax 67 declares a cross.
+Syntax 67—cross declaration
+The following also apply:
+a)

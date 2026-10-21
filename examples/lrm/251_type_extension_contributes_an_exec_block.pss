@@ -1,0 +1,22 @@
+// PSS v3.0 LRM — Example 251: Type extension contributes an exec block (page 333)
+import std_pkg::*;
+action A {
+  int a;
+  exec pre_solve {
+    a=1;
+  }
+  exec body {
+    message(LOW,"Hello from A %d", a);
+  }
+}
+action A1 : A {
+  exec body {
+    super;
+    message(LOW,"Hello from A1 %d", a);
+  }
+}
+extend action A1 {
+  exec body {
+   message(LOW,"Hello from A1 extension %d", a);
+  }
+}

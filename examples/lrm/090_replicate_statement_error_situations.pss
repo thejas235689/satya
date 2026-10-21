@@ -1,0 +1,22 @@
+// PSS v3.0 LRM — Example 90: replicate statement error situations (page 166)
+action my_test {
+  A a;
+  C c_arr[4];
+  activity {
+    schedule {
+      replicate (i:4) {
+        B b;
+        a;          // Error - traversal of action handle
+                    // declared outside the replicate scope
+        b;          // OK – action handle declared inside replicate scope
+        c_arr[i];   // OK - each element of the action handle array is a
+                    // unique action handle, so does not cause the same
+                    // handle to be traversed multiple times
+        L: select { // Error – label causes name conflict in expansion
+          do A;
+          do B;
+        }
+      }
+    }
+  }
+};

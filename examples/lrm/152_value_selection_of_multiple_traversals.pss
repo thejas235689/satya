@@ -1,0 +1,18 @@
+// PSS v3.0 LRM — Example 152: Value selection of multiple traversals (page 221)
+action A {
+  rand bit[3:0] x;
+}
+action my_action {
+  A a, b, c;
+  constraint abc_c {
+    a.x < b.x;
+    b.x < c.x;
+  }
+  activity {
+    a;
+    repeat (2) {
+      b;
+      c; // at this point constraint 'abc_c' must hold non-vacuously
+    }
+  }
+}

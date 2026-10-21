@@ -1,0 +1,41 @@
+// PSS v3.0 LRM — Example 76: Atomic block to avoid resource allocation issues (page 154)
+resource core_r {}
+pool [4] core_r core_pool;
+action A {}
+action B {
+  lock core_r core;
+}
+action C {
+  lock core_r core;
+}
+action my_stress_seq {
+  activity {
+    atomic {
+      do A;
+      do B;
+    }
+  }
+}
+action my_test {
+  activity {
+    schedule {
+      do my_stress_seq;
+      do C;
+    }
+  }
+}
+A
+C
+id 0
+B
+In reality, B may start long
+after A completes.
+Resource
+assignment
+randomized to be the
+same.
+
+12.4 Activity control flow constructs
+In addition to defining sequential and parallel blocks of action execution, repetition and branching
+statements can be used inside the activity clause.
+12.4.1 repeat (count)

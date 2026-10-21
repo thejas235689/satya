@@ -1,0 +1,42 @@
+// PSS v3.0 LRM — Example 293: Definition and use of executor trait (page 395)
+struct my_core_trait_s : executor_trait_s {
+   rand int in [0..1] cluster_id;
+};
+component my_embedded_cores_group_c : executor_group_c<my_core_trait_s> {
+   executor_c<my_core_trait_s> cores[8];
+   exec init_down {
+      foreach (c: cores[i]) {
+         c.trait.cluster_id = i/4;
+         add_executor(c);
+      }
+   }
+};
+component my_ip_c {
+   action op {
+      input data_buff in_buff;
+      rand executor_claim_s<my_core_trait_s> core;
+      constraint in_buff.mem_kind == DDR -> core.trait.cluster_id != 0;
+   };
+};
+component pss_top {
+   my_embedded_cores_group_c embedded_core_group;
+   my_ip_c my_ip;
+   action ops_on_two_clusters {
+      activity {
+         do my_ip_c::op with { core.trait.cluster_id == 0; };
+         do my_ip_c::op with { core.trait.cluster_id == 1; };
+      }
+   };
+};
+
+24.6.2.4 Executor resources
+In some cases, the assignment of certain actions to executors needs to be exclusive, ruling out the handling
+of concurrent actions by the same execution agent. Resource claims and resource pools express such rules at
+the scenario model level, guaranteeing that random schedules satisfy the resource consistency of executors.
+In these cases, the executor assigned to actions needs to be in strict correspondence with the resource
+instance claimed by them.
+A resource object that is derived from template struct executor_claim_s is considered a claim not just
+for the purpose of its own executor assignment, but also for that of the actions that claim it as a resource in
+either lock or share mode. In other words, from the executor assignment point of view, a reference to a
+resource object derived from struct executor_claim_s functions like an executor claim of the action
+itself.

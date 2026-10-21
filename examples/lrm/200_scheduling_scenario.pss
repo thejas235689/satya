@@ -1,0 +1,17 @@
+// PSS v3.0 LRM — Example 200: Scheduling scenario (page 280)
+action read {}
+action write {}
+monitor m {
+  activity {
+    schedule {
+      do read;
+      do write;
+   }
+  }
+}
+
+On all traces, the only realization of the scenario defined by m is set {read, write}, its start time is t1, and
+its match time is t4. Note that in the first two traces, the actions are scheduled sequentially, and on the last
+two, they overlap.
+Now consider monitor m1 and m2 in Example 201, the action trace shown in Figure 44, and the checkpoint
+t0.

@@ -1,0 +1,22 @@
+// PSS v3.0 LRM — Example 54: Template type qualification (page 127)
+component my_comp1_c <int bus_width = 32> {
+  action my_action1_a { }
+  action my_action2_a <int nof_iter = 4> { }
+}
+component pss_top {
+  my_comp1_c<64> comp1;
+  my_comp1_c<32> comp2;
+  action test {
+    activity {
+      do my_comp1_c<64>::my_action1_a;
+      do my_comp1_c<64>::my_action2_a<>;
+       do my_comp1_c::my_action1_a;  // Error -  my_comp1_c must be specialized
+      do my_comp1_c<>::my_action1_a;
+    }
+  }
+}
+
+Example 55 depicts various ways of overriding the default values. In the example below, the
+my_struct_t<2> instance overrides the parameter A with 2, and preserves the default values for
+parameters B and C. The my_struct_t<2, 8> instance overrides the parameter A with 2, parameter B
+with 8, and preserves the default value for C.

@@ -1,0 +1,26 @@
+// PSS v3.0 LRM — Example 205: Inlined and standalone constraints in monitors (page 287)
+action read {
+  rand bit [8] core;
+}
+action write {}
+c1: cover {
+  read r;
+  write w;
+  activity {
+    concat {
+     w;
+     r with core == 1;
+    }
+  }
+}
+c2: cover {
+  read r;
+  write w;
+  activity {
+    concat {
+      w;
+      r;
+    }
+  }
+  constraint r.core == 1;
+}

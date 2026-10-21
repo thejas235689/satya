@@ -1,0 +1,56 @@
+// PSS v3.0 LRM — Example 38: Component declared in package (page 110)
+component usb_c {
+  action write {...}
+}
+component uart_c {
+  action write {...}
+}
+component pss_top {
+  uart_c s1;
+  usb_c s2;
+  action entry {
+    uart_c::write wr; //refers to the write action in uart_c
+  }
+}
+package P {
+    component C1 {
+        action A {}
+    }
+}
+component pss_top {
+    P::C1 c1;
+    action entry {
+        activity {
+            do P::C1::A;
+        }
+    }
+}
+
+9.4 Component instantiation
+Components are instantiated under other components as their fields, much like data fields of structs, and
+may be arrays thereof.
+9.4.1 Semantics
+a)
+Component fields are non-random; therefore, the rand modifier shall not be used. Component data
+fields represent configuration data that is accessed by actions and monitors declared in the compo-
+nent and by cover statements invoked in this component. To avoid infinite component instantiation
+recursion, a component type and all template specializations thereof shall not be instantiated under
+its own sub-tree.
+b)
+In any model, the component instance tree has a predefined root component, called pss_top by
+default, but this may be user-defined. There can only be one root component in any valid scenario.
+c)
+Other components, actions, or monitors are instantiated (directly or indirectly) under the root com-
+ponent. See also Example 39.
+d)
+Plain-data fields may be initialized using a constant expression in their declaration. Data fields may
+also be initialized via an exec init_down or init_up block (see 22.1.2), which overrides the value set
+by an initialization assignment. The component tree is elaborated to instantiate each component and
+then the exec init_down and init_up blocks are evaluated hierarchically. See also Example 246 and
+Example 247 in 22.1.3.
+e)
+Component data fields are considered immutable once construction of the component tree is com-
+plete. Actions can read the value of these fields, but cannot modify their value. Component data
+fields are accessed from actions relative to the comp field, which is a handle to the component con-
+text in which the action is executing. See also Example 248 (and 22.1).
+f)

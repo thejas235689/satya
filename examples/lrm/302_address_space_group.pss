@@ -1,0 +1,38 @@
+// PSS v3.0 LRM — Example 302: Address space group (page 415)
+package ip_a_pkg {
+  import addr_reg_pkg::*;
+  struct trait_ip_a_s : addr_trait_s {
+     rand int in [0..1] id;
+  }
+  component ip_a_c {
+    action write_a {
+      rand addr_claim_s<trait_ip_a_s> claim;
+      constraint claim.size in [8, 16];
+      constraint claim.alignment == 4;
+      rand bit[32] data;
+      exec body {
+        addr_handle_t handle;
+        handle = make_handle_from_claim(claim);
+        write32(handle, data);
+      }
+    }
+  }
+}
+package ip_b_pkg {
+  import addr_reg_pkg::*;
+  struct trait_ip_b_s : addr_trait_s {
+     rand int in [0..127] id;
+  }
+  component ip_b_c {
+    action write_a {
+      rand addr_claim_s<trait_ip_b_s> claim;
+      constraint claim.size in [2];
+      rand bit[32] data;
+      exec body {
+        addr_handle_t handle;
+        handle = make_handle_from_claim(claim);
+        write32(handle, data);
+      }
+    }
+  }
+}

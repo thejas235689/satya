@@ -1,0 +1,13 @@
+// PSS v3.0 LRM — Example 282: Conditional processing (compile if) (page 375)
+action new_flow {
+    activity { ... }
+  }
+When the false case is triggered, the code in Example 282 is equivalent to:
+action old_flow {
+    activity { ... }
+  }
+23.3 compile has
+compile has allows conditional elaboration to reason about the existence of types and constants. The
+compile has expression evaluates to true if a type or constant has been previously declared unconditionally
+or within an enabled conditional block (see 23.1.2); otherwise, it evaluates to false.
+23.3.1 Syntax

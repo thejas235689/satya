@@ -684,11 +684,25 @@ impl Lowerer {
                 out.insert(a.name.clone(), act);
             }
         }
-        // Top-level actions (owner None).
+        // Top-level actions (owner None). An `extend action X` whose target is
+        // already declared merges into it.
         for ra in self.raw_actions.values() {
-            if !out.contains_key(&ra.decl.name) {
-                let act = self.lower_action(&ra.decl, ra.owner.clone());
-                out.insert(ra.decl.name.clone(), act);
+            let extra = self.lower_action(&ra.decl, ra.owner.clone());
+            match out.get_mut(&ra.decl.name) {
+                Some(existing) => {
+                    for f in extra.fields {
+                        if !existing.fields.iter().any(|x| x.name == f.name) {
+                            existing.fields.push(f);
+                        }
+                    }
+                    existing.constraints.extend(extra.constraints);
+                    if extra.activity.is_some() {
+                        existing.activity = extra.activity;
+                    }
+                }
+                None => {
+                    out.insert(ra.decl.name.clone(), extra);
+                }
             }
         }
         // Resolve inherited fields/constraints from base actions.

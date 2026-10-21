@@ -1,0 +1,45 @@
+// PSS v3.0 LRM — Example 14: Array operators and methods (page 73)
+int data[4];
+... data.size ... // same as data.size()
+... data.sum  ... // same as data.sum()
+int fixed_sized_arr [16];         // array of 16 signed integers
+array<bit[7:0],256> byte_arr;     // array of 256 bytes
+array<route,8>      east_routes;  // array of 8 route structs
+component pss_top {
+  array<bit[15:0],5> foo_arr;
+  set  <bit[15:0]>   foo_set;
+  exec init_up {
+    foo_arr = {1, 2, 3, 4, 4};    // Array initialization assignment
+    foo_arr[0] = 5;               // Use of [] to select an array element
+    foo_set = foo_arr.to_set();   // Use of to_set() method
+  }
+  action A{ rand bit[15:0] x; }
+  action B{}
+  action C{}
+  action traverse_array_a {
+    // foo_arr has 5 elements and foo_set has 4
+rand int in [1..] y;
+constraint y < comp.foo_arr.size(); // Use of size() method in constraint
+    activity {
+      foreach (elem: comp.foo_arr)           // "foreach" used on an array
+do A with { x == elem; };
+        if (comp.foo_arr[0] > 3)
+          do A;
+        else if (4 in comp.foo_arr)          // Use of "in" operator
+          do B;
+        else if (comp.foo_arr.size() < 4)    // Use of size() method
+          do C;
+    }
+  }
+}
+
+7.9.3 Lists
+The list collection type is used to declare a variable-sized ordered list of elements. Using an index, an
+element in the list can be assigned or used in an expression. A list with N elements, is ordered, with the first
+element accessed using 0 as an index value with the [] operator, and the last element accessed using N-1 as
+an index value.
+A list is initialized as an empty collection unless the declaration contains an initialization assignment. A list
+that is empty is as if it was assigned an empty aggregate literal ({}). List elements can be added or removed
+in exec blocks; therefore the size of a list is not fixed like an array.
+A list declaration consists of the keyword list, followed by the data type of the list elements between angle
+brackets, followed by the name(s) of the list(s).

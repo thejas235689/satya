@@ -1,0 +1,64 @@
+// PSS v3.0 LRM — Example 30: Using non-constant expressions in aggregate literals (page 95)
+struct s {
+  int a, b, c, d;
+};
+struct t {
+  s s1 = {.a=1,.b=2,.c=0,.d=0};
+  constraint s1 == {.b=2,.a=1};
+}
+struct t {
+  set<int>   s =  {1, 2, 0, 0};
+  constraint s == {1, 2}; // False: s has 3 elements, but the literal has 2
+}
+function int get_val(int idx);
+import solve function get_val;
+struct S {
+list<array<int,2>>
+pair_l;
+exec pre_solve {
+repeat(i : 4) {
+array<int,2> pair = {i, get_val(i)};
+pair_l.push_back(pair);
+}
+}
+}
+
+8.4.3 Type inference rules
+The expected type of an expression shall be inferred according to the rules below. The expected type is used
+in the resolution of unqualified enum_item names (see 7.5) and in the interpretation of aggregate literals (see
+8.4.2).
+—
+The type of the expression on the left-hand side of an assignment determines the expected type of the
+expression on the right-hand side. This includes initialization assignments.
+—
+The type of the formal parameter of a function determines the expected type of the respective actual
+parameter expression (see 22.2). This is true also for covergroup instantiations (see 18.2).
+—
+The return type of a function determines the expected type of the expression in its return statement
+(see 22.7.5).
+—
+An expression of a known type on the left-hand side of an equality operator (==, !=) determines the
+expected type of the right-hand side (see 8.5.3).
+—
+The expected type of a conditional_expression (?:) determines the expected type of the second and
+third operands of the expression (see 8.5.8).
+—
+The type of the expression on the left-hand side of a set membership (in) operator determines the
+expected type of the expressions in the open_range_list, or the elements of the collection_expres-
+sion, on the right-hand side (see 8.5.9).
+—
+An explicit data type of a coverpoint determines the expected type of the coverpoint expression (see
+18.3).
+—
+The type (explicit or implicit) of a coverpoint determines the expected type of its bin values (see
+18.3.3).
+—
+In a cast_expression, the specified target type (casting_type) determines the expected type of the
+expression to be cast (see 7.12).
+For the purposes of this section, all integer types are considered to be a single type, as all integer expressions
+are type compatible, and all floating-point types are considered to be a single type, as all floating-point
+expressions are type compatible (see 7.12). See more on the evaluation of numeric expressions in 8.7 and
+8.8.
+In Example 31, contextual typing is required to interpret structure literals. Based on the type of the left
+operand of an equality operator, the structure literal on the right-hand side is interpreted differently in two
+different constraints within the same action.

@@ -1,0 +1,14 @@
+// PSS v3.0 LRM — Example 297: Example address trait type (page 403)
+component transparent_addr_space_c
+<struct TRAIT: addr_trait_s = empty_addr_trait_s>
+: contiguous_addr_space_c<TRAIT> {};
+package ip_pkg {
+  struct mem_trait_s : addr_trait_s {
+    rand mem_kind_e        kind;
+    rand cache_attr_e      ctype;
+    rand int in [0..3]     sec_level;
+    rand bool              mmio;
+  };
+};
+
+Figure 52—Address space regions with trait values

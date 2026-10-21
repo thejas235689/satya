@@ -1,0 +1,40 @@
+// PSS v3.0 LRM — Example 280: Conditional compilation evaluation (page 373)
+compile if statements may appear in the following scopes:
+—
+Global/package
+—
+Action
+—
+Component
+—
+Struct
+—
+Procedural Scopes (Execs1 and Functions)
+—
+Constraints
+—
+Covergroups
+—
+Overrides
+1Excluding target-template exec-body blocks
+package p1 {
+struct s {
+static const int A = 3;
+};
+};
+package p2 {
+import p1::*;
+// derived from p2::s defined later in this file
+struct t : s { };
+// evaluates to true because such a type has been previously defined,
+   // namely p1::s
+compile if (compile has (s)) { … }
+// evaluates to true because such a type has been previously defined,
+   // namely p2::t (even though its supertype is not yet known)
+compile if (compile has (t)) { … }
+// Illegal! Cannot reference a member of a struct in compile-if context
+compile if (t::A == 2) { … }
+struct s {};
+}
+
+23.2.2 Syntax

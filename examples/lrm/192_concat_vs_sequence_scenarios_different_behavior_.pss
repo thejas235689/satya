@@ -1,0 +1,34 @@
+// PSS v3.0 LRM — Example 192: Concat vs sequence scenarios. Different behavior due to standalone constraints (page 269)
+c7: cover {
+  write w;
+  activity {
+    concat {
+      do start;
+      w;
+      do read;
+    }
+  }
+  constraint w.core == 0;
+}
+c8: cover {
+  write w;
+  activity {
+    sequence {
+      do start;
+      w;
+      do read;
+    }
+  }
+  constraint  w.core == 0;
+}
+
+realizations: {start, write1, read} and {start, write2, read}; however, only the first realization meets the
+constraint condition, so that is the realization that will match.
+In the trace shown in Figure 34, the top-level scenario of c7 does not have a match since the only
+unconstrained realization {start, write1, read} does not satisfy the constraint. The top-level scenario of c8
+does have a realization {start, write2, read}.
+Figure 33—First alternative. Example 192
+
+Figure 34—Second alternative. Example 192
+Example 193 illustrates another difference between the concatenation and sequential scenarios in the
+presence of inlined constraints.

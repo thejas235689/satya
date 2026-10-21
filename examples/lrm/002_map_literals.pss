@@ -1,0 +1,5 @@
+// PSS v3.0 LRM — Example 2: Map literals (page 46)
+{.a=1,.b=2,.c=0,.d=0}. Consequently, the constraint s1==s2 holds.
+int c1[4] = {1, 2, 3, 4};      // OK
+int c2[4] =  {1};                    // Error: literal has fewer elements than array
+int c3[4] = {1, 2, 3, 4, 5, 6}; // Error: literal has more elements than array

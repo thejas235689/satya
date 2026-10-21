@@ -1,0 +1,23 @@
+// PSS v3.0 LRM — Example 198: Empty scenarios (page 278)
+sequence {{}; s;}
+is
+equivalent
+to
+sequence {s; {};} and is equivalent to s.
+A scenario is called degenerate if it admits an empty realization. For example, the empty scenario is
+degenerate because its only realization is empty. There may be non-empty degenerate scenarios, for
+example, select {do a; {};} where a is an action type. This scenario admits an empty realization but
+may also admit a realization consisting of an execution of an action of type a.
+The top-level scenario of a cover statement shall not be degenerate. Example 199 shall result in a syntax
+error because the top-level scenario select {do a; {};} admits an empty realization. Note that cover
+statement c2 is legal (b is a name of an action type). Though the scenario select{ do a; {} } is
+degenerate, the scenario
+sequence { select{ do a; {} }; do b; } is not.
+monitor m {}
+activity {}   // activity statement with an empty body
+{}            // empty sequence
+sequence {}   // empty sequence
+concat {}     // empty concat
+eventually {} // empty eventually
+schedule {}   // empty schedule
+overlap {}    // empty overlap

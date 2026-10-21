@@ -1,0 +1,21 @@
+// PSS v3.0 LRM — Example 46: abstract action (page 120)
+package mypkg {
+  abstract action base {
+    rand int i;
+    constraint i>5 && i<10;
+  }
+// action base remains abstract
+  extend action base {
+    rand int j;
+  }
+}
+component pss_top {
+  import mypkg::*;
+  action derived : base {
+    constraint i>6;
+    constraint j>9;
+  }
+}
+
+11. Template types
+11.1 General

@@ -1,0 +1,13 @@
+// PSS v3.0 LRM — Example 195: Overlapping scenario (page 274)
+action read {}
+action write {}
+monitor m {
+  activity {
+    overlap {
+      do read;
+      do write;
+    }
+  }
+}
+
+Figure 39—Overlapping scenario

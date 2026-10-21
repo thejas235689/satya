@@ -1,0 +1,11 @@
+// PSS v3.0 LRM — Example 8: chandle data type (page 67)
+function chandle do_init();
+struct info_s {
+  chandle ptr;
+
+  exec pre_solve {
+    ptr = do_init();
+  }
+}
+
+7.8 Structs

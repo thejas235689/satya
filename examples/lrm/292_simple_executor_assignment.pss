@@ -1,0 +1,41 @@
+// PSS v3.0 LRM — Example 292: Simple executor assignment (page 393)
+struct executor_claim_s
+<struct TRAIT : executor_trait_s = empty_executor_trait_s> {
+   rand TRAIT trait;
+};
+component C {
+   executor_c<> e;
+   executor_group_c<> eg;
+   exec init_down {
+      eg.add_executor(e);
+   }
+   action A {
+      rand executor_claim_s<> ec;
+      exec body C = """
+         do_something();
+      """;
+   };
+};
+component pss_top {
+   C c1,c2;
+
+   action test {
+      C::A a1, a2, a3;
+      activity {
+         parallel {
+            a1 with { comp == this.comp.c1; };
+            a2 with { comp == this.comp.c1; };
+            a3 with { comp == this.comp.c2; };
+         }
+      }
+   };
+};
+
+c)
+and is nearest in the component hierarchy going up from the context component to the root compo-
+nent.
+It shall be an error if no executor group matches a claim per the above rules. Similarly, it shall be an error if
+more than one executor group in the component context identified in b) matches a claim.
+Note that given the above rules, instantiating a group within a group would be pointless, as no executor
+claim could match the inner group.
+24.6.2.3 Claim trait semantics

@@ -1,0 +1,21 @@
+// PSS v3.0 LRM — Example 142: Sequencing constraints (page 212)
+state power_state_s {
+  rand int in [0..3] domain_A, domain_B, domain_C;
+  constraint domain_B in { prev.domain_B - 1,
+                           prev.domain_B,
+                           prev.domain_B + 1};
+  constraint prev.domain_C==0 -> domain_C in [0,1] || domain_B==0;
+};
+component power_ctrl_c {
+  pool power_state_s psvar;
+  bind psvar *;
+  action power_trans1 {
+    output power_state_s next_state;
+  };
+  action power_trans2 {
+    output power_state_s next_state;
+    constraint next_state.domain_C == 0;
+  };
+};
+
+16.4.1 Random attribute fields

@@ -1,0 +1,18 @@
+// PSS v3.0 LRM — Example 71: join_none (page 147)
+activity {
+  L1 : parallel join_select(1) {
+    L2: do A;
+    L3: do B;
+  }
+  L4: do C;
+}
+activity {
+  L1 : parallel join_none {
+    L2: do A;
+    L3: do B;
+  }
+  L4: do C;
+}
+
+assigned the same resource instance completes last, then action C, because it starts execution after the
+previous action completes, will also start its execution after the completion of the first action.

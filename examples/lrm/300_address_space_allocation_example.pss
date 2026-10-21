@@ -1,0 +1,37 @@
+// PSS v3.0 LRM — Example 300: Address space allocation example (page 410)
+component pss_top {
+  action my_op {
+    rand addr_claim_s<> claim;
+    constraint claim.size == 20;
+  };
+  contiguous_addr_space_c<> mem;
+
+  exec init_up {
+    addr_region_s<> region1, region2;
+    region1.size = 50;
+    (void)mem.add_region(region1);
+    region2.size = 10;
+    (void)mem.add_region(region2);
+  }
+
+  action test1 {
+    activity {
+      repeat (3) {
+        do my_op; // OK – allocations can be recycled
+      }
+    }
+  };
+
+  action test2 {
+    activity {
+      parallel {
+        replicate (3) {
+          do my_op; // error – cannot satisfy concurrent claims
+        }
+      }
+    }
+  };
+};
+
+24.8.6 Rules for matching a claim to an address space
+a)

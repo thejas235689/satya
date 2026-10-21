@@ -1,0 +1,30 @@
+// PSS v3.0 LRM — Example 305: make_handle_from_claim example (page 421)
+function addr_handle_t make_handle_from_claim
+(addr_claim_base_s claim, bit[64] offset = 0);
+action my_action {
+  rand transparent_addr_claim_s<> claim;
+  constraint claim.size == 128;
+  constraint claim.alignment == 2**4;
+  exec body {
+    int offset = 16;
+    int data = 128;
+    addr_handle_t h0 = make_handle_from_claim(claim);
+    write32(h0, data); // access API defined in 24.10.9.1
+    // Address handle from claim with an offset
+    addr_handle_t h1 = make_handle_from_claim(claim, offset);
+    write32(h1, data);
+  }
+};
+
+24.10.4.2 make_handle_from_handle function
+The function make_handle_from_handle() creates an address handle from another handle, given an
+offset.
+Syntax 135—make_handle_from_handle function
+The make_handle_from_handle function arguments are:
+—
+A handle that was created by a different call to a make_handle function
+—
+An offset value, of a 64-bit type
+The returned handle's resolved address will be the sum of the handle parameter’s resolved address and the
+offset. The return value of the function is of type addr_handle_t.
+24.10.4.2.1 Example

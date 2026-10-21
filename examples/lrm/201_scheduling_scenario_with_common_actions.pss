@@ -1,0 +1,57 @@
+// PSS v3.0 LRM — Example 201: Scheduling scenario with common actions (page 281)
+action read {}
+action write {}
+action send {}
+action receive {}
+monitor m1 {
+  activity {
+    schedule {
+      sequence {
+        do read;
+        do write;
+      };
+      sequence {
+        do write;
+        do send;
+     }
+  }
+}
+monitor m2 {
+  activity {
+    schedule {
+      sequence {
+        do write;
+        do send;
+      };
+      sequence {
+        do send;
+        do receive;
+     }
+  }
+}
+
+sequence { do write; do send; }, which also has two realizations: {write1, send} and
+{write2, send}. The realization of the top scenario is obtained either as a union of the first realization of the
+first sub-scenario and the second realization of the second sub-scenario or as a union of the second
+realization of the first sub-scenario and the first realization of the second sub-scenario. Both cases result in
+the same realization {read, write1, write2, send}. Other combinations of sub-scenario realizations cannot be
+united because they have a common element, either the first or the second write.
+The scenario of the monitor m2 has no match. Its first sub-scenario sequence
+{ do write; do send; } has one realization: {write1, send}. Its second sub-scenario sequence
+{ do send; do receive; } also has one realization: {send, receive}. Since both realizations
+intersect, the top-level scenario does not have any match.
+19.3.9 Monitor traversal
+A monitor may be traversed within another monitor. The monitor traversal syntax is similar to the action
+traversal statement, see Syntax 77.
+Syntax 77—Monitor traversal statement
+At the monitor traversal statement, the scenario specified by the monitor is being matched. If the monitor
+traversal statement has an associated inline constraint, the monitor scenario realization must match the
+specified constraint.
+Example 202 illustrates a monitor traversal. Monitors irw, irw1, and irw2 are equivalent. Consider the
+monitor matching in the trace shown in Figure 45 for the checkpoint t0. The monitor irw specifies a
+sequential scenario and its only realization is {idle, read, write}. Monitor irw1 defines a sequential
+scenario whose subscenarios are the traversal of action i with the realization {idle} and the traversal of an
+anonymous monitor of type rw. The monitor type rw, in its turn, defines a sequential scenario, and its
+checkpoint is t1 or later so that the realization of monitor irw1 is {idle, read, write}. The monitor irw2
+differs from the monitor irw1 only in that it traverses the monitor of type rw using its handle m, and of
+course, has the same realization {idle, read, write}.

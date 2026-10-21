@@ -1,0 +1,11 @@
+// PSS v3.0 LRM — Example 77: repeat statement (page 155)
+action  my_test {
+   A a;
+   B b;
+   activity {
+      repeat (3) {
+         a;
+         b;
+      }
+   }
+};

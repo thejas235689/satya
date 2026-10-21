@@ -1,0 +1,30 @@
+// PSS v3.0 LRM — Example 240: Name resolution to declaration in imported package in encapsulating package (page 321)
+package P1 {
+ struct s {};
+};
+package P2 {
+ struct s {};
+  component C1 {
+   import P1::*;
+   s f;
+  };
+};
+package P1 {
+ struct s {};
+};
+package P2 {
+  import P1::*;
+ struct s {};
+  component C1 {
+   s f;
+  };
+};
+package P1 {
+ struct s {};
+};
+package P2 {
+  import P1::*;
+  component C1 {
+   s f;
+  };
+}

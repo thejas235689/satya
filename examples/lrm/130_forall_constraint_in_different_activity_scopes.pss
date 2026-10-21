@@ -1,0 +1,29 @@
+// PSS v3.0 LRM — Example 130: forall constraint in different activity scopes (page 204)
+action entry {
+  rand int in [0..9] ax_limit;
+  A a;
+  C c;
+  constraint {
+    a.x <= ax_limit;
+    c.a.x <= ax_limit;
+  }
+  activity {
+    a; c;
+  }
+};
+action entry {
+  activity {
+    do C with {
+      forall (a_it: A) {
+        a_it.x == 1;
+      }
+    }
+    parallel {
+      do A;
+      do C;
+      constraint forall (a_it: A) {
+        a_it.x in [2, 4];
+      }
+    }
+  }
+};

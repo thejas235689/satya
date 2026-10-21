@@ -1,0 +1,10 @@
+// PSS v3.0 LRM — Example 105: state object (page 179)
+enum mode_e {...};
+state config_s {
+rand mode_e mode;
+};
+
+13.4 Using flow objects
+Flow object references are specified by actions as inputs or outputs. These references are used to specify
+rules for combining actions in legal scenarios. An action that outputs a flow object is said to produce that
+object and an action that inputs a flow object is said to consume the object. See Syntax 48.

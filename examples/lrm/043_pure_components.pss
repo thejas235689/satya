@@ -1,0 +1,33 @@
+// PSS v3.0 LRM — Example 43: Pure components (page 116)
+pure component my_register {
+   function bit[32] read();
+   function void write(bit[32] val);
+};
+pure component my_register_group {
+   my_register regs[10];
+};
+component my_ip {
+   my_register_group reg_groups[100]; // sparsely-used large structure
+};
+
+10. Actions
+Actions are a key abstraction unit in PSS. Actions serve to decompose scenarios into elements whose
+definitions can be reused in many different contexts. Along with their intrinsic properties, actions also
+encapsulate the rules for their interaction with other actions and the ways to combine them in legal
+scenarios. Atomic actions may be composed into higher-level actions, and, ultimately, to top-level test
+actions, using activities (see Clause 12). The activity of a compound action specifies the intended schedule
+of its sub-actions, their object binding, and any constraints. Activities are a partial specification of a
+scenario: determining their abstract intent and leaving other details open.
+Actions prescribe their possible interactions with other actions indirectly, by using flow (see Clause 13) and
+resource (see Clause 14) objects. Flow object references specify the action’s inputs and outputs and
+resource object references specify the action’s resource claims.
+By declaring a reference to an object, an action determines its relation to other actions that reference the very
+same object without presupposing anything specific about them. For example, one action may reference a
+data flow object of some type as its input, which another action references as its output. By referencing the
+same object, the two actions necessarily agree on its properties without having to know about each other.
+Each action may constrain the attributes of the object. In any consistent scenario, all constraints shall hold;
+thus, the requirements of both actions are satisfied, as well as any constraints declared in the object itself.
+Actions may be atomic, in which case their implementation is supplied via one or more exec body blocks
+(see 22.1.2), or they may be compound, in which case they contain one or more activity statements (see
+Clause 12) that instantiate and schedule other actions. A single action can have multiple implementations in
+different packages, so the actual implementation of the action is determined by which package is used.

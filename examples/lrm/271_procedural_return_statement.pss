@@ -1,0 +1,4 @@
+// PSS v3.0 LRM — Example 271: Procedural return statement (page 360)
+target function int add(int a, int b) {
+  return (a+b);
+}

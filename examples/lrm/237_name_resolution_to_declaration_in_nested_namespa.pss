@@ -1,0 +1,15 @@
+// PSS v3.0 LRM — Example 237: Name resolution to declaration in nested namespace (page 320)
+package P1 {
+ struct s {};
+};
+package P2 {
+ struct s {};
+  component C1 {
+   import P1::*;
+    struct s {};
+   s f;
+  };
+};
+
+In Example 238, s is declared in two places: imported package P1 and encapsulating package P2. The s
+referenced in nested component C1 is resolved to the s defined in imported package P1. Using qualifiers,

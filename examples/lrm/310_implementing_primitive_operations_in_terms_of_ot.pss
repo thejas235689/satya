@@ -1,0 +1,42 @@
+// PSS v3.0 LRM — Example 310: Implementing primitive operations in terms of other operations (page 427)
+import target SV function void ubus_write8(string uvm_path, bit[64] addr,
+bit[8] data);
+component uvm_ubus_executor_c : executor_c<bus_trait_s> {
+   string uvm_path;
+   function void write8(addr_handle_t hndl, bit[8] data) {
+      ubus_write8(uvm_path, addr_value(hndl), data);
+   }
+};
+extend component pss_top {
+  uvm_ubus_executor_c masters[2];
+  executor_group_c<bus_trait_s> bus_group;
+  exec init_down {
+    foreach (m: masters) {
+      bus_group.add_executor(m);
+    }
+    masters[0].uvm_path = "uvm_test_top.env.ubus_master0";
+    masters[1].uvm_path = "uvm_test_top.env.ubus_master1";
+  }
+};
+component my_32bit_cpu_c : executor_c<my_core_trait_s> {
+  function bit[64] read64(addr_handle_t hndl) {
+    bit[64] result;
+    result[31: 0] = read32(hndl);
+    result[63:32] = read32(make_handle_from_handle(hndl,4));
+    return result;
+   }
+   function void write64(addr_handle_t hndl, bit[64] data) {
+      write32(hndl, data[31:0]);
+      write32(make_handle_from_handle(hndl,4), data[63:32]);
+   }
+};
+
+Figure 58—Executor address mapping
+Overriding the addr_value() function can be used to perform such custom translations. The
+addr_window_exec_c executor shown below overrides the addr_value() function and applies a
+translation if the address falls within a specific window that is configurable on a per-executor instance basis.
+Let’s assume that the executor-specific address windows are located at 0x80000000 and 0x80001000 in
+the global address map. Each executor maps this shared window at 0x1000. The executor instantiation and
+configuration below show how we could configure this translation scheme. When, for example, an action
+running on exec1 accesses address 0x8000_0100, the customized addr_value() function will
+convert the address to 0x0000_1100.

@@ -1,0 +1,93 @@
+// PSS v3.0 LRM — Example 285: compile assert (page 377)
+compile if (compile has(FIELD2)) {
+  static const FIELD1 = 1;
+}
+compile if (compile has(FIELD1)) {
+  static const FIELD2 = 2;
+}
+compile assert(compile has(FIELD1), "FIELD1 not found");
+
+24. PSS core library
+The PSS core library provides standard portable functionality and utilities for common PSS applications. It
+defines a set of component types, data types, functions, and attributes. The interface of the core library is
+specified in PSS-language terms, and its use conforms to the rules of the language. However, the full
+semantics of its entities involve reference to type information, solving, scheduling, and runtime services.
+Hence, the implementation of the core library depends on inner workings of PSS processing tools and is
+expected to be coupled with them.
+The core library currently covers functionality in the following areas:
+—
+String formatting and output operations
+—
+File operations
+—
+Error reporting
+—
+Randomization
+—
+Manipulation and storage of floating-point values
+—
+Representation of execution contexts in the target environment
+—
+Assignments of actions and flow/resource objects to execution contexts
+—
+Representation of target address spaces
+—
+Allocation from and management of target address spaces
+—
+Access to target address spaces
+—
+Representation of and access to registers
+The core library functionality is defined in three packages:
+—
+std_pkg, covering string formatting, file operations, error reporting, randomization, and core data
+types
+—
+executor_pkg, covering representation of execution contexts and assignment of actions and
+flow/resource objects to execution contexts
+—
+addr_reg_pkg, covering representation of address spaces and access to memory, and representa-
+tion and access to registers
+This section covers the interface, semantics, and intended use of core library entities in the areas listed
+above. Note that it defines a library interface, not new language constructs. The code for the built-in library
+package contents appears in Annex C.
+In the following sections, library code definitions may omit reiterating the surrounding package, and
+example code may omit importing core library packages for brevity.
+24.1 String formatting and output
+The PSS core library provides means for string formatting and output operations. The built-in package
+std_pkg defines functions and types for these purposes, as well as for file operations and error reporting,
+introduced in the next two sections of this document.
+On solve platforms, a complete set of input/output and file operations is provided, similar to other
+programming languages. Functions are defined for string formatting, printing, and reading from and writing
+to text files.
+On target platforms, a limited portable messaging capability is provided, because some target environments
+may not have a file system or access to string manipulation libraries such as in C.
+
+24.1.1 String formatting
+Several output functions involve a string formatting capability. They are based on an approach similar to C
+printf()-style string formatting. Each of these functions gets a format string parameter format_str of
+type string, followed by a generic varargs parameter args.
+The format string is used as a template, where all characters are taken literally except when the character %
+appears. A % followed by another % denotes a single literal %. Otherwise, a % starts a format specifier.
+A format specifier determines how data passed in each subsequent function parameter (passed as varargs)
+should be embedded in the resulting string. It consists of the following optional parts followed by a
+formatting character:
+%[flags][width][.precision]format
+The optional flags, if specified, denote the following:
+The optional width, if specified, denotes the minimum number of characters to insert into the formatted
+string. The inserted value is not truncated if larger than the specified width. width is typically used to pad
+fixed-width fields in tabulated output.
+The optional precision, if specified, denotes the following:
+—
+For integer formats (including p), specifies the minimum number of digits to be inserted into the for-
+matted string. If needed, the result is padded with leading zeros. The value is not truncated even if
+the result is longer. A precision of 0 means that no character is inserted for the value 0.
+—
+For floating-point formats e, E, and f, specifies the number of digits to be inserted after the decimal
+point. By default, this is 6.
+—
+For floating-point formats g and G, specifies the maximum number of significant digits to be
+inserted.
+—
+For s and n formats, specifies the maximum number of characters to be inserted. By default, all
+characters in the string, the enumeration item name, or the boolean name are used. Truncation, if
+needed, is from the right.

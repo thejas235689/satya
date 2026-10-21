@@ -1,0 +1,40 @@
+// PSS v3.0 LRM — Example 18: Declaring a map in a struct (page 78)
+struct S {
+   rand list<bit[8]> lst;
+   exec pre_solve {              // Initialize the list
+      repeat (100) {
+         lst.push_back(0);
+      }
+   }
+   constraint {
+      lst.size() in [4..100];    // Error: illegal constraint on size()
+      foreach (lst[i]) {
+         lst[i] == i+lst.size(); // OK: size() is an invariant in foreach
+      }
+   }
+}
+struct my_s {
+  map<int, string> my_map;
+}
+
+Assignment operator =
+Creates a copy of the map-type expression on the RHS and assigns it to the map on the LHS. If the same key
+appears more than once in the expression on the RHS, the last value specified is used. See 8.3 for more
+information on the assignment operator.
+Equality operator ==
+Evaluates to true if the two maps are the same size, have the same set of keys, and all elements with
+corresponding keys are equal. Two maps of different key or element types are incomparable. See 8.5.3 for
+more information on the equality operator.
+Inequality operator !=
+Evaluates to true if the two maps are not the same size, do not have the same set of keys, or not all elements
+with corresponding keys are equal. Two maps of different key or element types are incomparable. See 8.5.3
+for more information on the inequality operator.
+foreach statement
+The foreach statement can be applied to a map to iterate over the map elements within an activity, a
+constraint or native exec code. See 12.4.3, 16.1.7, and 22.7.8, respectively, for more information on the
+foreach statements in these contexts.
+The set membership operator (in) cannot be applied directly to a map. However, it may be applied to the set
+of keys or the list of values produced by the keys() and values() methods, respectively, described below.
+7.9.4.2 Map methods
+The following methods are defined for maps:
+pure function int size();

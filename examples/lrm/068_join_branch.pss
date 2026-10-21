@@ -1,0 +1,17 @@
+// PSS v3.0 LRM — Example 68: join_branch (page 143)
+B b[2];
+activity {
+   L1: parallel join_branch(L2) {
+      L2: parallel {
+         L3: do A;
+         L4: parallel join_branch (L5) {
+            L5: b;
+            L6: do C;
+         }
+      }
+      L7: do D;
+   }
+   L8: do F;
+}
+
+Figure 9—join_branch scheduling graph

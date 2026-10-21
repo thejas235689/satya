@@ -1,0 +1,22 @@
+// PSS v3.0 LRM — Example 167: In-line data constraints affect action inferencing (page 236)
+component pss_top {
+  buffer data_buff_s {
+    rand int val;
+  };
+  pool data_buff_s data_mem;
+  bind data_mem *;
+  action A_a {output data_buff_s dout;};
+  action B_a {output data_buff_s dout;};
+  action C_a {input  data_buff_s din;};
+  action D_a {input  data_buff_s din;};
+  action root_a {
+    A_a a;
+    B_a b;
+    C_a c;
+    D_a d;
+    activity {
+      select {a with{dout.val<5;}; b with {dout.val<5;};}
+      select {c; d with {din.val>5;};}
+    }
+  }
+}

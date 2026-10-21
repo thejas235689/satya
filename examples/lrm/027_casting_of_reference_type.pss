@@ -1,0 +1,17 @@
+// PSS v3.0 LRM — Example 27: Casting of reference type (page 90)
+component C {
+   action A {}
+}
+component sub_C: C {
+   int a = 17;
+}
+extend action C::A {
+   int b;
+   exec post_solve {
+      if ((ref sub_C)comp != null) {
+         b = ((ref sub_C)comp).a;
+      }
+   }
+}
+
+8. Operators and expressions

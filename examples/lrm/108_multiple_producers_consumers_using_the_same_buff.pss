@@ -1,0 +1,68 @@
+// PSS v3.0 LRM — Example 108: Multiple producers/consumers using the same buffer pool (page 182)
+buffer data_buff {
+    rand int int_attr;
+};
+component flow_object_array_c {
+    pool data_buff buff_p;
+    bind buff_p *;
+
+    action prod_buff_a {
+        output data_buff out_1_buff;
+    };
+    action prod_3_buff_a {
+        output data_buff out_3_buff [3];
+    };
+
+    action cons_buff_a {
+        input data_buff in_1_buff;
+    };
+    action cons_2_buff_a {
+        input data_buff in_2_buff [2];
+    };
+
+    action activity_a {
+        prod_buff_a   prod_1b;
+        prod_3_buff_a prod_3b;
+        cons_buff_a   cons_1b;
+        cons_2_buff_a cons_2b_0;
+        cons_2_buff_a cons_2b_1;
+        activity {
+            prod_1b with {out_1_buff.int_attr == 1;};
+            prod_3b with {
+                foreach (b:out_3_buff) { b.int_attr == 3;};
+            };
+
+            cons_1b with { in_1_buff.int_attr == 3;};
+            cons_2b_0;
+            constraint { foreach (b: cons_2b_0.in_2_buff) {
+                b.int_attr == 3;
+            };};
+            cons_2b_1 with {
+                in_2_buff[0].int_attr >= 2 && in_2_buff[1].int_attr < 3;};
+            bind cons_2b_1.in_2_buff[1] prod_3b.out_3_buff[0]; // conflict
+        };
+    };
+};
+
+14. Resource objects
+Resource objects represent computational resources available in the execution environment that may be
+assigned to actions for the duration of their execution.
+14.1 Declaring resource objects
+Resource types can inherit from previously defined structs or resources. See Syntax 49. Resources reside in
+pools (see Clause 15) and may be claimed by specific actions.
+14.1.1 Syntax
+Syntax 49—resource declaration
+The following also apply:
+a)
+Resources have a built-in non-negative integer attribute called instance_id. This attribute rep-
+resents the relative index of the resource instance in the pool. The value of instance_id ranges
+from 0 to pool_size - 1. See also 15.4.
+b)
+There can only be one resource object per instance_id value for a given pool. Thus, actions ref-
+erencing a resource object of some type with the same instance_id are necessarily referencing
+the very same object and agreeing on all its properties.
+c)
+Resource object reference fields can be declared under actions using the lock or share modifier (see
+14.2). Instance fields of resource type (taken as a plain-data type) can only be declared under higher-
+level resource types, as their data attribute.
+14.1.2 Examples

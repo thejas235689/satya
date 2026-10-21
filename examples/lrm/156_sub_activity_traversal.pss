@@ -1,0 +1,29 @@
+// PSS v3.0 LRM — Example 156: Sub-activity traversal (page 224)
+component top {
+action A {
+rand bit[3:0] val;
+}
+action sub {
+A a, b, c;
+constraint abc_c {
+a.val < b.val;
+b.val < c.val;
+}
+activity {
+a;
+b;
+c;
+}
+}
+action top_action {
+A v;
+sub s1;
+constraint c {
+s1.a.val == v.val;
+}
+activity {
+v;
+s1;
+}
+}
+}

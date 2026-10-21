@@ -1,0 +1,58 @@
+// PSS v3.0 LRM — Example 298: Address space with trait (page 404)
+struct mem_trait_s : addr_trait_s {
+  rand mem_kind_e        kind;
+  rand cache_attr_e      ctype;
+  rand int in [0..3]     sec_level;
+  rand bool              mmio;
+};
+component pss_top {
+   import addr_reg_pkg::*;
+   import ip_pkg::*;
+   // IP component
+   my_ip_c ip;
+   // mem_trait_s trait struct is used for sys_mem address space
+   transparent_addr_space_c<mem_trait_s> sys_mem;
+   exec init_up {
+      // Add regions to space here. All regions added to sys_mem space
+      // must have trait type mem_trait_s
+      transparent_addr_region_s<mem_trait_s> sram_region;
+      sram_region.trait.kind      = SRAM;
+      sram_region.trait.ctype     = WB;
+      sram_region.trait.sec_level = 0;
+      sram_region.trait.mmio      = false;
+      sram_region.size            = 4096;
+      sram_region.addr            = 0x400;
+      (void)sys_mem.add_region(sram_region);
+      // add other regions
+      //
+}
+}
+
+24.7.3 Address space regions
+An address space may be composed of regions. Regions map to parts of an address space. A region may be
+characterized by values assigned to address space traits. Traits define properties of a region. Specific
+constraints are placed on address claim traits to allocate addresses from regions with desired characteristics.
+Regions with trait values that satisfy the claim's trait constraints are the candidate matching regions. An
+address claim may span more than one region that satisfies claim trait constraints.
+Address space regions are part of the static component hierarchy. The add_region and
+add_nonallocatable_region functions (see 24.7.1.2.1 and 24.7.1.2.2) may only be called in exec
+init_down and init_up blocks.
+24.7.3.1 Base region type
+addr_region_base_s is the base type for all address space regions (see Syntax 124). Specifying a
+value for the size field is required. Specifying a value for the tag field is optional.
+Syntax 124—Base address region type
+The tag associated with the region from which a memory claim is satisfied may be retrieved using the
+get_tag() function (see 24.10.8).
+24.7.3.2 Contiguous address regions
+The addr_region_s type represents a region in contiguous address space (see Syntax 125). The region type is
+fully characterized by the template TRAIT parameter value and the size attribute of the base region type.
+Syntax 125—Contiguous address space region type
+The values of the trait struct attributes describes the contiguous address region. The PSS tool will match the
+trait attributes of regions to satisfy an address claim as described in 24.8. See an example of trait attribute
+setting in 24.8.7.
+24.7.3.3 Transparent address regions
+The transparent_addr_region_s type defines a transparent region over a contiguous address
+space. Transparent means that the region’s start (lower) address is known to the PSS tool for solve-time
+resolution of a claim address within the address space.
+The addr field of this region is assigned the start address of the region. The end address of the region is the
+calculated value of the expression: addr + size - 1.

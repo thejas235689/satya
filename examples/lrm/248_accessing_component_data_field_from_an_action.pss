@@ -1,0 +1,31 @@
+// PSS v3.0 LRM — Example 248: Accessing component data field from an action (page 330)
+component sub_c {
+bit[32] base_addr = 0x1000;
+action A {
+exec body {
+// reference base_addr in context component
+activate(comp.base_addr + 0x10);
+// activate() is an imported function
+}
+}
+}
+component pss_top {
+sub_c s1, s2;
+exec init_up {
+s1.base_addr = 0x1000;
+s2.base_addr = 0x2000;
+}
+action entry {
+sub_c::A a;
+activity {
+repeat (2) {
+a; // Runs sub_c::A with 0x1000 as base_addr when
+// associated with s1
+// Runs sub_c::A with 0x2000 as base_addr when
+// associated with s2
+}
+}
+}
+}
+
+22.1.4 exec block evaluation with inheritance and extension

@@ -1,0 +1,42 @@
+// PSS v3.0 LRM — Example 98: Hierarchical references and named sub-activities (page 172)
+action A { rand int x; };
+action B {
+  A a;
+  activity {
+    a;
+    my_seq: sequence {
+      A a;
+      a;
+      parallel {
+        my_rep: repeat (3) {
+          A a;
+          a;
+        };
+        sequence {
+          A a; // this 'a' is declared in unnamed scope
+          a;   // can't be accessed from outside
+        };
+      };
+    };
+  };
+};
+action C {
+  B b1, b2;
+  constraint b1.a.x == 1;
+  constraint b1.my_seq.a.x == 2;
+  constraint b1.my_seq.my_rep.a.x == 3; // applies to all three iterations
+                                        // of the loop
+  activity {
+    b1;
+    b2 with { my_seq.my_rep.a.x == 4; }; // likewise
+  }
+};
+
+12.9 Explicitly binding flow objects
+Input and output fields of actions may be explicitly connected to actions using the bind statement (see
+Syntax 44). It states that the fields of the respective actions reference the same object—the output of one
+action is the input of another.
+12.9.1 Syntax
+Syntax 44—bind statement
+The following also apply:
+a)

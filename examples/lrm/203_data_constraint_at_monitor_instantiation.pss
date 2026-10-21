@@ -1,0 +1,58 @@
+// PSS v3.0 LRM — Example 203: Data constraint at monitor instantiation (page 284)
+action read {
+  rand bit [32] addr;
+}
+action write {
+  rand bit [32] addr;
+}
+monitor write_read_sequence {
+  write w;
+  read r;
+  activity {
+    sequence {
+      w;
+      r;
+    }
+  }
+}
+monitor write_read_concat {
+  write w;
+  read r;
+  activity {
+    concat {
+      w;
+      r;
+   }
+  }
+}
+monitor m11 {
+  write_read_sequence wrs;
+  activity {
+    wrs with w.addr == r.addr;
+  }
+}
+monitor m12 {
+  write_read_sequence wrs;
+  activity {
+    wrs
+  }
+  constraint wrs.w.addr == wrs.r.addr;
+}
+monitor m21 {
+  write_after_read_concat wrc;
+  activity {
+    wrc with w.addr == r.addr;
+  }
+}
+monitor m22 {
+  write_read_concat wrc;
+  activity {
+    wrc;
+ }
+  constraint wrc.w.addr == wrc.r.addr;
+}
+
+Monitors m11 and m12 and monitors m21 and m22 are pairwise equivalent. Monitors m11 and m12 match
+when there is a read after a write from the same address. Monitors m21 and m22 match when the first
+read after a write is from the same address (see 19.3.3).
+19.4 Monitor action handles and constraints

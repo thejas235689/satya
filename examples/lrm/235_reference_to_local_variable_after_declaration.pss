@@ -1,0 +1,22 @@
+// PSS v3.0 LRM — Example 235: Reference to local variable after declaration (page 318)
+// Source Unit 1 (file1.pss)
+component lib_base_c { /* ... */ }
+// Source Unit 2 (file2.pss)
+component my_a_c : my_base_c { /* ... */ }
+component my_base_c : lib_base_c { /* ... */ }
+component pss_top {
+action entry {
+constraint val_c {
+val < 10;
+}
+rand bit[4]
+val;
+}
+}
+function int get_val();
+component pss_top {
+exec init_up {
+int val;
+val = get_val();
+}
+}

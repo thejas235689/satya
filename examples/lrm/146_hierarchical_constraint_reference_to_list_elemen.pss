@@ -1,0 +1,60 @@
+// PSS v3.0 LRM — Example 146: Hierarchical constraint reference to list element (page 214)
+action A {
+    rand bit[3:0]   a;
+  }
+
+  action B {
+    action bit[3:0] a_bit;
+    A               a_1;
+
+    activity {
+      a_bit;
+      a_1;
+    }
+  }
+action sub_a {
+   rand list<bit[8]> lst;
+   exec pre_solve {
+      lst.push_back(0);
+   }
+}
+action parent_a {
+   sub_a a;
+   rand int yy;
+   constraint a.lst[0] == yy;
+   activity {
+     a;
+   }
+}
+
+16.4.3 Randomization of flow objects
+When an action is randomized, its input and output fields are assigned a reference to a flow object of the
+respective type. On entry to any of the action’s exec blocks (except pre_solve, see 22.1.2), as well as its
+activity clause(s), values for all rand data attributes accessible through its inputs and outputs fields are
+resolved. The values accessible in these contexts satisfy all constraints. Constraints can be placed on
+attribute fields from the immediate type context, from a containing struct or action at any level or via the
+input/output fields of actions.
+The same flow object may be referenced by an action outputting it and one or more actions inputting it. The
+binding of inputs to outputs may be explicitly specified in an activity clause or may be left unspecified. In
+cases where binding is left unspecified, the counterpart action of a flow object’s input/output may already be
+one explicitly traversed in an activity or it may be introduced implicitly by the PSS processing tool to satisfy
+the binding rules (see Clause 17). In the case where multiple actions input the same buffer object type, the
+input references may be constrained to indicate that they refer to the same object. In all of these cases, value
+selection for the data attributes of a flow object shall satisfy all constraints coming from the action that
+outputs it and actions that input it.
+Consider the model in Example 147. Assume a scenario is generated starting from action test. The
+traversal of action write1 is scheduled, followed by the traversal of action read. When read is
+randomized, its input in_obj must be resolved. Every buffer object shall be the output of some action. The
+activity does not explicitly specify the binding of read’s input to any action’s output, but it must be
+resolved regardless. Action write1 outputs a mem_obj whose dat is in the range 1 to 5, due to a
+constraint in action write1. But, dat of the mem_obj instance read inputs must be in the range 8 to 12.
+So read.in_obj cannot be bound to write1.out_obj without violating a constraint. The PSS
+processing tool shall schedule another action of type write2 at some point prior to read, whose
+mem_obj is bound to read’s input. In selecting the value of read.in_obj.dat, the PSS processing
+tool shall consider the following:
+—
+dat is an even integer, due to the constraint in mem_obj.
+—
+dat is in the range 6 to 10, due to a constraint in write2.
+—
+dat is in the range 8 to 12, due to a constraint in read.

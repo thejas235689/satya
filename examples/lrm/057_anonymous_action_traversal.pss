@@ -1,0 +1,26 @@
+// PSS v3.0 LRM — Example 57: Anonymous action traversal (page 132)
+action A {
+  rand bit[3:0]   f1;
+}
+action B {
+  A a1, a2;
+
+  activity {
+    a1;
+    a2 with {
+      f1 < 10;
+    };
+  }
+}
+action A {
+  rand bit[3:0]   f1;
+}
+action B {
+  activity {
+    do A;
+    do A with {f1 < 10;};
+  }
+}
+
+Example 58 shows the use of a label of an action traversal statement to constrain a sub-action instance from
+a higher activity context.

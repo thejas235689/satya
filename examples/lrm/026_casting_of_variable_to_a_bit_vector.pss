@@ -1,0 +1,38 @@
+// PSS v3.0 LRM — Example 26: Casting of variable to a bit vector (page 89)
+import std_pkg::*;
+enum config_modes_e {UNKNOWN, MODE_A=10, MODE_B=20};
+enum foo_e {A=10, B, C};
+function bit[32] get_cfg_mode() {return 30;}
+     // a new cfg_mode that has not been added to the enum type yet
+action my_a {
+   config_modes_e top_cfg;
+   rand config_modes_e cfg;
+   rand foo_e foo;
+   constraint cfg == (config_modes_e)11;
+                                // contradiction - no possible value
+   constraint cfg == (config_modes_e)foo;
+                                // cfg==MODE_A, the only value in the
+                                // numeric domain of both cfg and foo
+   exec pre_solve {
+      config_modes_e cfg_mode = (config_modes_e)get_cfg_mode();
+      match (cfg_mode) {
+         [MODE_A,
+          MODE_B] : top_cfg = cfg_mode;
+         [UNKNOWN]: print("Unknown configuration mode\n");
+         default  : print("Invalid configuration mode = %d\n",
+                           (int)cfg_mode);
+      }
+   }
+}
+package external_fn_pkg {
+   enum align_e {byte_aligned=1, short_aligned=2, word_aligned=4};
+   function bit[31:0] alloc_addr(bit[31:0] size, bit[3:0] align);
+   buffer mem_seg_s {
+      rand bit[31:0]  size;
+      bit[31:0] addr;
+      align_e al;
+      exec post_solve {
+         addr = alloc_addr(size, (bit[3:0])al);
+      }
+   }
+}

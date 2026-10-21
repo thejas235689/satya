@@ -1,0 +1,43 @@
+// PSS v3.0 LRM — Example 213: Polymorphic function calls (page 297)
+import std_pkg::*;
+component base_c {
+   target function void foo() {
+      message(LOW, "base_c::foo");
+   }
+
+   action call_foo {
+      exec body {
+         comp.foo();
+      }
+   }
+}
+component der_c : base_c {
+   function void foo() {
+      message(LOW, "der_c::foo");
+   }
+};
+component pss_top {
+   base_c b;
+   der_c d;
+   action test {
+      base_c::call_foo b_foo, d_foo;
+      constraint {b_foo.comp == this.comp.b;
+                  d_foo.comp == this.comp.d;}
+      activity {
+         b_foo;
+         d_foo;
+      }
+   }
+}
+
+mult_xfer_a correctly resolves to the xfer_a action declared in the base component. It is thus not
+necessary to further qualify the type name xfer_a in the anonymous traversal in mult_xfer_a.
+The component dma_test_c instantiates the derived component dma_der_c. The first traversal
+statement in the activity is an anonymous traversal of the dma_der_c::mult_xfer_a action. The next
+statement anonymously traverses the dma_base_c::xfer_a action. We can use the dma_base_c path
+qualifier because the instantiated subcomponent of type dma_der_c is also considered a dma_base_c
+component. It would be illegal to refer to dma_base_c::mult_xfer_a because mult_xfer_a is not
+declared in dma_base_c. To promote reuse, the third anonymous traversal statement is preferred, referring
+to dma_der_c::xfer_a, since xfer_a can be used without knowing whether it was declared in the
+base component or the derived component. Note that, since there is only a single instance of the
+dma_der_c component, the instance context of these traversals is the same.

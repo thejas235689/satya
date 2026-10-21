@@ -1,0 +1,69 @@
+// PSS v3.0 LRM — Example 12: Array declarations (page 70)
+struct my_s1 {
+  int a, b;
+}
+struct my_s2 {
+  list<my_s1> my_list;
+  exec pre_solve {
+    my_s1 v1 = {.a=1,.b=2};
+    my_list.push_back(v1);
+    my_list[0].a = 10; // my_list == {{.a=10,.b=2}}, v1 == {.a=1,.b=2}
+  }
+}
+struct my_s {
+  list<map<string, int>> m_list_of_maps;
+  map<string, list<int>> m_map_of_lists;
+}
+int my_int_arr1[20];        // Square array declaration syntax
+array<int,20> my_int_arr2;  // Template array declaration syntax
+
+The same operators and methods may be applied to arrays declared using both syntaxes. However, the
+template array syntax may be used where a data_type is required, enabling such capabilities as use as a
+function return type, nested array types, and more.
+An array with N elements, is ordered, with the first element accessed using 0 as an index value with the []
+operator, and the last element accessed using N-1 as an index value.
+The square array syntax can also be used to declare fixed-size arrays of action or monitor handles,
+components, and flow and resource object references. Individual elements of such arrays may be accessed
+using the [] operator. However, other operators and methods do not apply to these arrays, unless otherwise
+specified. Action handle arrays are described in 12.3.1.1 and 12.3.2, monitor handle arrays are described in
+20.4, component arrays are described in 9.4, and object reference arrays are described in 13.4 and 14.2. Note
+that the elements of action and monitor handle arrays and object reference arrays have reference semantics
+(see 7.10).
+7.9.2.1 Array operators
+The following operators are defined for arrays:
+Index operator []
+Used to access a specific element of an array, given an index into the array. The index shall be an integral
+value. See 8.6.2 for more information on the index operator.
+Assignment operator =
+Creates a copy of the array-type expression on the RHS and assigns it to the array on the LHS. See 8.3 for
+more information on the assignment operator.
+Equality operator ==
+Evaluates to true if all elements with corresponding indexes are equal. Two arrays of different element types
+or different sizes are incomparable. See 8.5.3 for more information on the equality operator.
+Inequality operator !=
+Evaluates to true if not all elements with corresponding indexes are equal. Two arrays of different element
+types or different sizes are incomparable. See 8.5.3 for more information on the inequality operator.
+Set membership operator in
+The set membership operator can be applied to an array to check whether a specific element is currently
+within the array. It evaluates to true if the element specified on the left of the operator exists in the array
+collection on the right of the operator. The type of the element shall be the same as the array’s element data
+type. See 8.5.9 for more information on the set membership operator.
+foreach statement
+The foreach statement can be applied to an array to iterate over the array elements within an activity, a
+constraint or native exec code. See 12.4.3, 16.1.7, and 22.7.8, respectively, for more information on the
+foreach statements in these contexts.
+7.9.2.2 Array methods
+The following methods are defined for arrays:
+
+pure function int size();
+Returns the number of elements in the array. Since arrays have fixed sizes, the returned value is considered a
+constant expression. This function can also be used with arrays of action handles, components, and flow
+and resource object references.
+pure function <data_type> sum();
+Returns the sum of all elements currently stored in the array. This function can only be used on arrays of a
+numeric data type (int, bit, or floating-point type). The method can be used in a constraint to constrain an
+array of random int or bit elements to have a sum of a certain value.
+The return type of this function is dependent on the type of the data element:
+pure function string join(string connector);
+This method only applies to arrays of strings. It concatenates the strings from the array using connector as
+the connector between them and returns the resulting string.

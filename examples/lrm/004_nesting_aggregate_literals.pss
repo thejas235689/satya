@@ -1,0 +1,98 @@
+// PSS v3.0 LRM — Example 4: Nesting aggregate literals (page 47)
+struct s {
+  int a, b, c, d;
+};
+struct t {
+  s s1 = {.a=1,.b=2,.c=0,.d=0};
+  s s2 = {.b=2,.a=1};
+  constraint s1 == s2;
+}
+struct s {
+  int a, b, c, d;
+};
+struct t {
+  list<s>  my_l = {
+    {.a=1,.d=4},
+    {.b=2,.c=8}
+  };
+}
+
+5. Modeling concepts
+A PSS model is made up of a number of elements (described briefly in 1.3) that define a set of possible
+scenarios to be applied to the Design Under Test (DUT) via the associated test environment. Scenarios are
+composed of behaviors—ultimately executed on some combination of components that make up the DUT or
+on verification components that define the test environment—and the communication between them. This
+clause introduces the elements of a PSS model and defines their relationships.
+The primary behavior abstraction mechanism in PSS is an action, which represents a particular behavior or
+set of behaviors. Actions combine to form the scenarios that represents the verification intent. Actions that
+correspond directly to operations performed by the underlying DUT or test environment are referred to as
+atomic actions, which contain an explicit mapping of the behavior to an implementation on the target
+platform in one of several supported forms. Compound actions encapsulate flows of other actions using an
+activity that defines the critical intent to be verified by specifying the relationships between specific actions.
+The remainder of the PSS model describes a set of rules that are used by a PSS processing tool to create the
+scenarios that implements the critical verification intent while satisfying the data flow, scheduling, and
+resource constraints of the target DUT and associated test environment. In the case where the specification
+of intent is incomplete (partial), the PSS processing tool shall infer the execution of additional actions and
+other model elements necessary to make the partial specification complete and valid. In this way, a single
+partial specification of verification intent may be expanded into a variety of actual scenarios that all
+implement the critical intent, but might also include a wide range of other behaviors that may provide
+greater coverage of the functionality of the DUT as demonstrated in the example in Figure 1.
+Figure 1—Partial specification of verification intent
+
+In Figure 1, actions a, b, and c are specified to be traversed sequentially in an activity. Depending on the
+data flow between them, and on other constraints in the model, this may describe a complete scenario
+specification (see Figure 1(i)), or it may describe a partial specification, which may be expanded into
+multiple scenarios that infer other actions. All scenarios satisfy the critical intent defined by the activity,
+where a will be traversed, followed sometime later by b, followed sometime later by c. Figure 1 shows
+several possible scenarios that may be generated from the partial specification, depending on various factors
+to be discussed later in this section.
+An activity primarily specifies the set of actions to be executed and the scheduling relationships between
+them. Actions may be scheduled sequentially, in parallel, or in various combinations based on conditional
+evaluation, looping, or randomization constructs. Activities may also include explicit data bindings between
+actions. An activity that traverses a compound action is evaluated hierarchically, i.e., when a compound sub-
+action is traversed in an activity, the sub-action activity is traversed fully at that point in the parent activity
+(see 5.3.2).
+5.1 Modeling data flow
+Actions may be declared to have inputs and/or outputs of a given data flow object type. The data flow object
+types define scheduling semantics for the given action relative to those with which it shares the object. Data
+flow objects may be declared directly or may inherit from user-defined data structures or other flow objects
+of a compatible type. An action that outputs a flow object is said to produce that object and an action that
+inputs a flow object is said to consume the object. Data flow objects are described in Clause 13.
+5.1.1 Buffers
+The first kind of data flow object is the buffer type. A buffer represents persistent data that can be written
+(output) by a producing action and may be read (input) by any number of consuming actions. As such, a
+buffer defines a strict scheduling dependency between the producer and the consumer that requires the
+producing action to complete its execution—and, thus, complete writing the buffer object—before execution
+of the consuming action may begin to read the buffer (see Figure 2). Note that other consuming actions may
+also input the same buffer object. While there are no implied scheduling constraints between the consuming
+actions, none of them may start until the producing action completes.
+Figure 2—Buffer flow object semantics
+Figure 2 illustrates the sequential scheduling semantics between the producer and consumer of a buffer flow
+object.
+In Figure 1(i), assume that action a produces a buffer of a particular type, and b inputs a buffer object of a
+compatible type, In this case, we say that the buffer object is bound from the output of a to the input of b,
+since the semantics of the buffer object support the activity. Similarly, in Figure 1(ii), if, instead of action a,
+
+action d produced a buffer object of a compatible type for action b, action d could be inferred as the
+producer of the buffer for action b to consume. The buffer scheduling semantics allow action d to be
+inferred at any point in the schedule prior to the start of action b (shown in Figure 1(ii) as either d1, d2, or
+d3), while the activity requires only that action a completes before action b starts. In this case, there is no
+explicit scheduling constraint between a and d.
+5.1.2 Streams
+The stream flow object type represents transient data exchanged between actions. The semantics of the
+stream flow object require that the producing and consuming actions execute in parallel (i.e., both activities
+shall begin execution when the same preceding actions complete; see Figure 3). In a stream object, there
+shall be a one-to-one connection between the producer and consumer.
+Figure 3—Stream flow object semantics
+Figure 3 illustrates the parallel scheduling semantics between the producer and the consumer of a stream
+flow object.
+In Figure 1(iii), the parallel execution of actions f and g dictates that any data exchanged between these
+actions shall be of the stream type. Again, assuming that action a does not output a compatible buffer for
+action b to input, then action f may be inferred to supply the buffer to action b. If action f inputs or outputs
+a stream object, then the one-to-one requirement of the stream object would require that action g, which has
+a compatible stream type, also be inferred to execute in parallel with f. Action e may be inferred if it is
+needed to supply a buffer input to either f or g.
+NOTE—Figure 1(iv) shows an alternate inferred scenario that also satisfies the base scenario of sequential execution of
+actions a, b, and c, but in this case, the binding between a and b is legal, and action c requires a buffer input that can
+only be supplied by f or g.
+5.1.3 States

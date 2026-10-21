@@ -1,0 +1,24 @@
+// PSS v3.0 LRM — Example 41: Illegal traversal of an action outside of the containing component hierarchy (page 114)
+component bus_c {
+  import bar_pkg::*;
+  action write{input bar_s b;...} // bar_s is a stream
+}
+component graphics {
+  import bar_pkg::*;
+  action foo {output bar_s b;...}
+  action gr_a {
+    activity {
+      parallel {
+        do bus_c::write;  // illegal
+        do foo;
+      }
+    }
+  }
+}
+component pss_top {
+  import bar_pkg::*;
+  bus_c a0;
+  graphics g;
+  pool bar_s bar_p;
+  bind bar_p *;
+}

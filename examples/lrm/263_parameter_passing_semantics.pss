@@ -1,0 +1,66 @@
+// PSS v3.0 LRM — Example 263: Parameter passing semantics (page 348)
+package generic_functions {
+   struct params_s {
+      int x;
+   };
+struct params_inh_s : params_s {
+   int y;
+}
+   // Prototypes
+   function void set_val0(params_s p, int a);
+   function void set_val1(params_s p_dst, params_s p_src);
+   function params_s zero_attributes();
+   // Definitions
+   function void set_val0(params_s p, int a)
+   {
+      p.x = a;
+      a = 0;
+   }
+   function void set_val1(params_s p_dst, params_s p_src)
+   {
+      p_dst.x = p_src.x;
+   }
+   function params_s zero_attributes()
+   {
+      params_s s;
+      s.x = 0;
+      return s;
+   }
+   component A {
+      params_s p;
+      params_inh_s p_inh1, p_inh2;
+      int a;
+      exec init_up {
+         a = 10;
+         p.x = 20;
+         set_val0(p, a);
+         // p.x is set to 10 at this point and a is unchanged
+         set_val1(p, zero_attributes());
+         // p.x is set to 0 at this point
+         // Variables of inherited type may be passed as
+         // function parameters of base type
+         p_inh1.x = 5;
+         p_inh1.y = 15;
+         p_inh2.x = 10;
+         p_inh2.y = 20;
+         set_val1(p_inh1, p_inh2);
+         // The value of p_inh1.y can never be changed by set_val1 because
+         // set_val1 can only access fields of params_s (i.e., x)
+      }
+   };
+}
+
+22.4 Foreign procedural interface
+Static function declarations in PSS may expose, and ultimately be bound to, foreign language APIs
+(functions, tasks, procedures, etc.) available on the target platform and/or on the solve platform. A function
+that was previously declared in the PSS description can be designated as imported. Calling an imported
+function from a PSS procedural context invokes the respective API in the foreign language. Parameters and
+result passing are subject to the type mapping defined for that language.
+Instance functions cannot be imported.
+22.4.1 Definition using imported functions
+Additional language qualifiers are added to imported functions to provide more information to the tool about
+the way the function is implemented. In typical use, such qualifiers are specified in an environment-specific
+package (e.g., a UVM environment-specific package or C-test-specific package).
+A static function declared in a component can only be imported in the scope of the same component type. It
+shall be illegal to import a function declared in a base component type within a derived or unrelated
+component type.

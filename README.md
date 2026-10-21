@@ -134,9 +134,11 @@ The C, firmware and bench backends correspond to the three realizations a
 PSS-as-single-source-of-truth flow needs — native mode, UVM mode and firmware
 reference mode — plus the pre-/post-silicon bridge.
 
-See [`docs/DESIGN.md`](docs/DESIGN.md) for the detailed design and
+See [`docs/DESIGN.md`](docs/DESIGN.md) for the detailed design,
 [`docs/VERIFICATION.md`](docs/VERIFICATION.md) for the verification report
-(checked against the PSS v3.0 standard and the DVCon 2025 workshop examples).
+(checked against the PSS v3.0 standard and the DVCon 2025 workshop examples) and
+[`docs/LRM-EXAMPLES.md`](docs/LRM-EXAMPLES.md) for the conformance run over
+every code example in the standard itself.
 
 ---
 
@@ -325,6 +327,10 @@ satya/
     demo.pss         example PSS model
     demo.json        the same model in JSON
     pss_mini.rs      single-file library walkthrough
+    lrm/             197 code examples extracted from the PSS v3.0 standard
+  tools/
+    lrm_extract.py   extract examples from the LRM PDF text
+    lrm_examples.py  run Satya over every extracted example
   tests/
     integration.rs   end-to-end tests
 ```

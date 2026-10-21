@@ -1,0 +1,19 @@
+// PSS v3.0 LRM — Example 113: Static binding (page 188)
+struct mem_segment_s {...};
+buffer data_buff_s {
+  rand mem_segment_s seg;
+};
+resource channel_s {...};
+component dma_sub_c {
+};
+component dma_c {
+  dma_sub_c dmas1, dmas2;
+  pool data_buff_s buff_p;
+  bind buff_p {*};
+  pool [4] channel_s chan_p;
+  bind chan_p {dmas1.*, dmas2.*};
+  action mem2mem_a {
+    input data_buff_s in_data;
+    output data_buff_s out_data;
+  };
+};

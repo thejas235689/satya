@@ -1,0 +1,35 @@
+// PSS v3.0 LRM — Example 102: Hierarchical resource binding (page 176)
+action sub_a {
+  lock  res_r rlkA, rlkB;
+  share res_r rshA, rshB;
+}
+action compound_a {
+  lock  res_r crlkA, crlkB;
+  share res_r crshA, crshB;
+  sub_a a1, a2;
+  activity {
+    schedule {
+      a1;
+      a2;
+    }
+    bind crlkA {a1.rlkA, a2.rlkA};
+    bind crshA {a1.rshA, a2.rshA};
+    bind crlkB {a1.rlkB, a2.rshB};
+    bind crshB {a1.rshB, a2.rlkB}; //illegal
+  }
+}
+
+13. Flow objects
+A flow object represents incoming or outgoing data/control flow for actions, or their pre-condition and post-
+condition. A flow object can have two modes of reference by actions: input and output.
+13.1 Buffer objects
+Buffer objects represent data items in some persistent storage that can be written and read. Once their
+writing is completed, they can be read as needed. Typically, buffer objects represent data or control buffers
+in internal or external memories. See Syntax 45.
+13.1.1 Syntax
+Syntax 45—buffer declaration
+The following also apply:
+a)
+Note that the buffer type does not imply any specific layout in memory for the specific data being
+stored.
+b)

@@ -1,0 +1,15 @@
+// PSS v3.0 LRM — Example 246: Data initialization in a component (page 328)
+component sub_c {
+  int base_addr;
+
+  exec init_up {
+    base_addr = 0x1000;
+  }
+};
+component pss_top {
+  sub_c s1, s2;
+
+  exec init_up {
+    s1.base_addr = 0x2000;
+  }
+};

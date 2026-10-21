@@ -1,0 +1,38 @@
+// PSS v3.0 LRM — Example 247: init_down and init_up exec blocks (page 329)
+component C {
+    exec init_down {
+    }
+    exec init_up {
+    }
+}
+component T {
+    C  c1, c2;
+    exec init_down {
+    }
+    exec init_up {
+    }
+}
+init_d
+(1)
+init_u
+(6)
+T:T
+init_d
+(2)
+init_u
+(4)
+T.c1:C
+init_d
+(3)
+init_u
+(5)
+T.c2:C
+
+—
+init_up in T.c1
+—
+init_down in T.c2
+—
+init_up in T.c2
+—
+init_up in T

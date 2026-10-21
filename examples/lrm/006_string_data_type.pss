@@ -1,0 +1,17 @@
+// PSS v3.0 LRM — Example 6: String data type (page 65)
+struct string_s {
+  rand bit      a;
+  rand string   s;
+  constraint {
+    if (a == 1) {
+      s == "FOO";
+    } else {
+      s == "BAR";
+    }
+  }
+}
+
+rand string in ["Hello", "Hallo", "Ni Hao"] hello_s;
+Note that an open_range_list, composed solely of individual string literals, may also be used in set
+membership (in) expressions (see 8.5.9) and as a match_choice expression in match statements (see 12.4.6
+and 22.7.10). Ranges of string literals (e.g., "a".."b") are not permitted.

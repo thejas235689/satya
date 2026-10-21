@@ -1,0 +1,44 @@
+// PSS v3.0 LRM — Example 194: Eventuality scenario (page 273)
+{start, write}.
+Figure 37—First alternative. Example 194
+Figure 38—Second alternative. Example 194
+In general, sequence { s1; s2; ...; sn; } is equivalent to
+concat { s1; eventually s2; ... eventually sn; }, where s1, s2, ..., and sn are the
+sequence subscenarios.
+action start;
+action read { rand int core; }
+action write { rand int core; }
+c: cover {
+  read r;
+  write w;
+  activity {
+    concat {
+      do start;
+      select {
+        eventually r;
+        w;
+      }
+    }
+    constraint {
+      w.core == 1;
+      r.core == 0;
+    }
+  }
+}
+
+19.3.5 Overlapping scenario
+The overlapping scenario is specified by the monitor activity overlap statement (see Syntax 74):
+Syntax 74—Overlap monitor activity statement
+The overlapping scenario defines overlapping of its member subscenarios. The overlapping scenario meets
+the same conditions as the scheduling scenario and the additional condition that there is a time instant where
+all its member scenarios are simultaneously active.
+In an overlapping scenario, the subscenarios are matched from the overlapping scenario checkpoint or after
+it. The realizations of scenario overlap { s1,...,sn } consist of member-wise realization unions of
+subscenarios s1, ..., and sn, provided that these realizations of different scenarios are pairwise disjoint
+and that they mutually overlap in time. Realizations of scenarios s1, ..., and sn overlap if
+max(b1,...,bn) < min(e1,...,en), where b1, ..., bn  and e1, ..., en are the beginning and
+the end time of the realizations of scenarios s1, ..., sn, accordingly. For example, if {a,b} is a realization
+of s1, {c} is a realization of s2 and {d,e,f} is a realization of s3, and the maximal among the beginning
+times of action executions a, c, and d is less than the minimal between the end times of action executions b,
+c, and f, then {a,b,c,d,e,f} is a realization of overlap { s1,s2,s3 }. Here, a, b, c, d, e, and f are action
+executions.

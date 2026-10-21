@@ -1,0 +1,37 @@
+// PSS v3.0 LRM — Example 115: Pool binding (page 190)
+state power_state_s { rand int in [0..4] level; }
+resource channel_s {}
+component graphics_c {
+   pool power_state_s power_state_var;
+   bind power_state_var *; // accessible to all actions under this
+                           // component (specifically power_transition's
+                           // input/output)
+   action power_transition_a {
+      input power_state_s curr;  //current state
+      output power_state_s next; //next state
+      lock channel_s chan;
+   }
+}
+component my_multimedia_ss_c {
+   graphics_c gfx0;
+   graphics_c gfx1;
+   pool [4] channel_s channels;
+   bind channels {gfx0.*,gfx1.*};// accessible by default to all actions
+                                 // under these component sub-trees
+                                 // (specifically power_transition's chan)
+   action observe_same_power_state_a {
+      input power_state_s gfx0_state;
+      input power_state_s gfx1_state;
+      constraint gfx0_state.level == gfx1_state.level;
+   }
+   // explicit binding of the two power state variables to the
+   // respective inputs of action observe_same_power_state_a
+   bind gfx0.power_state_var observe_same_power_state_a.gfx0_state;
+   bind gfx1.power_state_var observe_same_power_state_a.gfx1_state;
+}
+
+In Example 116, there is a observe_same_power_state_a action type with an array of 2 input state
+objects. Action power_transition_a will cause at least one inferred instance to bind with the
+respective observe_same_power_state_a action’s object for each one of the graphics_c
+component instances. Using explicit pool bind statements, each element in the object array of
+observe_same_power_state_a is bound to a different pool.

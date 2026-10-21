@@ -1,0 +1,11 @@
+// PSS v3.0 LRM — Example 112: Pool declaration (page 186)
+buffer data_buff_s {
+  rand mem_segment_s seg;
+};
+resource channel_s {...};
+component dmac_c {
+  pool data_buff_s buff_p;
+  pool [4] channel_s chan_p;
+}
+
+15.3 Static pool binding directive

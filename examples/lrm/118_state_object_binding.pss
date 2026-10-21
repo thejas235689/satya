@@ -1,0 +1,20 @@
+// PSS v3.0 LRM — Example 118: State object binding (page 193)
+enum codec_config_mode_e {UNKNOWN, A, B}
+component codec_c {
+  state configuration_s {
+    rand codec_config_mode_e mode;
+    constraint initial -> mode == UNKNOWN;
+  }
+  pool configuration_s config_var;
+  bind config_var *;
+  action configure {
+    input configuration_s prev_conf;
+    output configuration_s next_conf;
+    constraint prev_conf.mode == UNKNOWN && next_conf.mode in [A, B];
+  }
+}
+
+16. Randomization
+Scenario properties can be expressed in PSS declaratively, as algebraic constraints over attributes of
+scenario entities.
+a)

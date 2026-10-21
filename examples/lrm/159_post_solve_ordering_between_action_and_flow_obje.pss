@@ -1,0 +1,26 @@
+// PSS v3.0 LRM — Example 159: post_solve ordering between action and flow objects (page 228)
+buffer mem_obj {
+  exec post_solve { ... }
+};
+
+action write {
+  output mem_obj out_obj;
+  exec post_solve { ... }
+};
+
+action read {
+  input mem_obj in_obj;
+  exec post_solve { ... }
+};
+
+action test {
+  write wr;
+  read  rd;
+
+  activity {
+    wr;
+    rd;
+    bind wr.out_obj rd.in_obj;
+  }
+  exec post_solve { ... }
+};

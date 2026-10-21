@@ -1,0 +1,27 @@
+// PSS v3.0 LRM — Example 96: Scoping and named sub-activities (page 170)
+action A {};
+action B {
+  int x;
+  activity {
+    L1: parallel { // 'L1' is 1st level named sub-activity
+      if (x > 10) {
+        L2: {      // 'L2' is 2nd level named sub-activity
+          A a;
+          a;
+        }
+        {
+          A a; // OK - this is a separate naming scope for variables
+          a;
+        }
+      }
+      L2: { // Error - this 'L2' conflicts with 'L2' above
+        A a;
+        a;
+      }
+    }
+  }
+};
+
+Example 97 below demonstrates a name conflict between a local action-handle variable and a label of an
+activity statement in the same named sub-activity. This is not allowed, as it would render the hierarchical
+path L.a from action A’s scope ambiguous.

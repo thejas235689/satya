@@ -1,0 +1,48 @@
+// PSS v3.0 LRM — Example 190: Concat vs sequence scenarios. Covergroups (page 267)
+{start, write1, read};
+the
+top-level
+scenario
+of
+cover
+statement
+c4
+has
+two
+realizations:
+{start, write1, read} and {start, write2, read}. This difference may impact the embedded covergroup
+sampling: c3 will sample core value 1, whereas c4 may sample either core value   0 or 1 (see 19.5).
+c3: cover {
+  write w;
+  activity {
+    concat {
+      do start;
+      w;
+      do read;
+    }
+  }
+  covergroup {
+    cp: coverpoint w.core;
+  } cg;
+}
+
+c4: cover {
+  write w;
+  activity {
+    sequence {
+      do start;
+      w;
+      do read;
+    }
+  }
+  covergroup {
+    cp: coverpoint w.core;
+  } cg;
+}
+
+Figure 30—Action trace with two repeated actions in the middle
+Example 191 and Example 192 illustrate the impact of inline and standalone constraints on the matching
+behavior of sequential and concatenation monitors.
+In Example 191, there are two cover statements, c5 and c6, each of which specifies an inline constraint for
+the traversal of the write action. The activity in c5 specifies a concat scenario and c6 specifies a sequence
+scenario.

@@ -1,0 +1,15 @@
+// PSS v3.0 LRM — Example 204: Action handles in monitors (page 286)
+action read {
+  rand bit [32] addr;
+}
+action write {
+  rand bit [32] addr;
+}
+monitor m {
+  read r;
+  write w;
+  activity {
+    w;
+    r with addr == w.addr;
+  }
+}

@@ -1,0 +1,21 @@
+// PSS v3.0 LRM — Example 308: Mapping of primitive operations to foreign C functions (page 426)
+function bit[32] read32(addr_handle_t hndl) {
+if (executor() != null ) {
+   return executor().read32(hndl);
+} else {
+      // return value per default implementation
+}
+}
+function bit[32] my_transactor_read_word(bit[64] addr);
+import target C function my_transactor_read_word;
+function void my_transactor_write_word(bit[64] addr, bit[32] data);
+import target C function my_transactor_write_word;
+component my_transactor_executor_c<struct TRAIT : executor_trait_s =
+ empty_executor_trait_s> : executor_c<TRAIT> {
+  function bit[32] read32(addr_handle_t hndl) {
+    return my_transactor_read_word(addr_value(hndl));
+  }
+  function void write32(addr_handle_t hndl, bit[32] data) {
+    my_transactor_write_word(addr_value(hndl), data);
+  }
+};

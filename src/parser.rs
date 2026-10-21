@@ -212,6 +212,11 @@ impl Parser {
     }
 
     fn parse_item(&mut self) -> PssResult<Item> {
+        // `pure component` / `pure action`.
+        if self.at_ident("pure") {
+            self.bump();
+            return self.parse_item();
+        }
         if self.at_ident("import") {
             return Ok(Item::Import(self.parse_import()?));
         }
@@ -257,6 +262,10 @@ impl Parser {
     fn parse_import(&mut self) -> PssResult<Path> {
         self.expect_ident_named("import")?;
         let path = self.parse_scoped_path()?;
+        // `import P3::P4 as P2;`
+        if self.eat_ident("as") {
+            let _ = self.expect_ident()?;
+        }
         self.expect_punct(";")?;
         Ok(path)
     }
@@ -327,7 +336,7 @@ impl Parser {
 
     fn parse_type_decl(&mut self, is_extend: bool) -> PssResult<TypeDecl> {
         let keyword = self.expect_ident()?; // struct/resource/buffer/state
-        let name = self.expect_ident()?;
+        let name = self.parse_scoped_path()?.leaf();
         let template_params = self.parse_template_params()?;
         let base = if self.eat_punct(":") {
             Some(self.parse_type_ref()?)
@@ -523,6 +532,11 @@ impl Parser {
     }
 
     fn parse_type_ref(&mut self) -> PssResult<TypeRef> {
+        // `ref T` reference type.
+        if self.at_ident("ref") {
+            self.bump();
+            return self.parse_type_ref();
+        }
         // `bit[N]` or `bit[msb:lsb]` sized type.
         if self.at_ident("bit") {
             self.bump();
@@ -549,7 +563,18 @@ impl Parser {
                 self.eat_gt();
             } else {
                 loop {
-                    template_args.push(self.parse_type_ref()?);
+                    if self.at_gt() {
+                        break;
+                    }
+                    // A template argument may be a constant expression
+                    // (`array<bit[15:0], 5>`, `sized_addr_handle_s<32>`).
+                    if matches!(self.peek().kind, TokKind::Int(_)) {
+                        // Precedence above comparison so the closing `>` is not
+                        // swallowed as a `>` operator.
+                        let _ = self.parse_expr(9)?;
+                    } else {
+                        template_args.push(self.parse_type_ref()?);
+                    }
                     if self.eat_punct(",") {
                         continue;
                     }
@@ -930,7 +955,8 @@ impl Parser {
             is_abstract = true;
         }
         self.expect_ident_named("action")?;
-        let name = self.expect_ident()?;
+        // The name may be qualified when extending (`extend action C::A`).
+        let name = self.parse_scoped_path()?.leaf();
         let template_params = self.parse_template_params()?;
         let base = if self.eat_punct(":") {
             Some(self.parse_type_ref()?)
@@ -1191,7 +1217,11 @@ impl Parser {
                     loop {
                         let lo = self.parse_expr(0)?;
                         if self.eat_punct("..") {
-                            let hi = self.parse_expr(0)?;
+                            let hi = if self.at_punct("]") || self.at_punct(",") {
+                                Expr::Int(i64::MAX)
+                            } else {
+                                self.parse_expr(0)?
+                            };
                             items.push(Expr::InRange(
                                 Box::new(Expr::Int(0)),
                                 Box::new(lo),
@@ -1391,6 +1421,14 @@ impl Parser {
 
     fn parse_compile_if(&mut self) -> PssResult<Item> {
         self.expect_ident_named("compile")?;
+        if self.eat_ident("assert") {
+            // `compile assert ( expression ) ;`
+            if self.at_punct("(") {
+                let _ = self.capture_paren_cond();
+            }
+            self.eat_punct(";");
+            return Ok(Item::Raw("compile assert".into()));
+        }
         self.expect_ident_named("if")?;
         let cond = if self.at_punct("(") {
             self.capture_paren_cond()
@@ -1498,9 +1536,24 @@ impl Parser {
     fn parse_range_or_set(&mut self) -> PssResult<Expr> {
         if self.at_punct("[") {
             self.bump();
-            let lo = self.parse_expr(0)?;
+            // `[..hi]` — open at the bottom.
             if self.eat_punct("..") {
                 let hi = self.parse_expr(0)?;
+                self.expect_punct("]")?;
+                return Ok(Expr::InRange(
+                    Box::new(Expr::Int(0)),
+                    Box::new(Expr::Int(i64::MIN)),
+                    Box::new(hi),
+                ));
+            }
+            let lo = self.parse_expr(0)?;
+            if self.eat_punct("..") {
+                // `[lo..]` — open at the top.
+                let hi = if self.at_punct("]") {
+                    Expr::Int(i64::MAX)
+                } else {
+                    self.parse_expr(0)?
+                };
                 self.expect_punct("]")?;
                 return Ok(Expr::InRange(Box::new(Expr::Int(0)), Box::new(lo), Box::new(hi)));
             }
@@ -1623,6 +1676,23 @@ impl Parser {
                 }
                 self.bump();
                 Ok(Expr::Path(Path::simple(id)))
+            }
+            TokKind::Punct(p) if p == "'" => {
+                // `'{ ... }` aggregate (assignment-pattern) literal.
+                self.bump();
+                if self.at_punct("{") {
+                    self.bump();
+                    let mut items = Vec::new();
+                    while !self.at_punct("}") && !self.at_eof() {
+                        items.push(self.parse_expr(0)?);
+                        if !self.eat_punct(",") {
+                            break;
+                        }
+                    }
+                    self.expect_punct("}")?;
+                    return Ok(Expr::List(items));
+                }
+                Ok(Expr::Unknown("'".into()))
             }
             TokKind::Punct(p) if p == "(" => {
                 self.bump();

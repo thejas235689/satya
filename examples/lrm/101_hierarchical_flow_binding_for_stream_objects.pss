@@ -1,0 +1,40 @@
+// PSS v3.0 LRM — Example 101: Hierarchical flow binding for stream objects (page 175)
+action sub_a {
+  input data_buf din;
+  output data_buf dout;
+}
+action compound_a {
+  input data_buf data_in;
+  output data_buf data_out;
+  sub_a a1, a2;
+  activity {
+    a1;
+    a2;
+    bind a1.dout a2.din;
+    bind data_in a1.din;   // hierarchical bind
+    bind data_out a2.dout; // hierarchical bind
+//  The following bind statements would be illegal
+//  bind data_in a1.dout;  // sub-action output may not be bound to
+//                         // compound action’s input
+//  bind data_out a2.din;  // sub-action input may not be bound to
+//                         // compound action’s output
+  }
+}
+action sub_a {
+  input data_str din;
+  output data_buf dout;
+}
+action compound_a {
+  input data_str data_in;
+  output data_buf data_out;
+  sub_a a1, a2;
+  activity {
+    a1;
+    a2;
+    bind data_in a1.din;  // hierarchical bind
+//  The following bind statement would be illegal
+//  bind data_in a2.din;  // a2 is not scheduled in parallel with compound_a
+  }
+}
+
+12.11 Hierarchical resource object binding

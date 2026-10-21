@@ -1,0 +1,19 @@
+// PSS v3.0 LRM — Example 253: Function availability (page 337)
+package external_functions_pkg {
+
+  function bit[31:0] alloc_addr(bit[31:0] size);
+
+  function void transfer_mem(
+    bit[31:0] src, bit[31:0] dst, bit[31:0] size
+  );
+}
+package pregen_tests_pkg {
+
+  import solve function external_functions_pkg::alloc_addr;
+
+  import target function external_functions_pkg::transfer_mem;
+
+}
+
+Example 254 demonstrates an activity with reactive control flow based on values returned from a target
+function called in an exec body block.

@@ -1,0 +1,26 @@
+// PSS v3.0 LRM — Example 215: Use of comp and this.comp with inheritance (page 299)
+component dma_base_c {
+  action xfer_a {
+    rand int i;
+ }
+}
+component dma_der_c : dma_base_c {
+  int j;
+  action mult_xfer_a {
+    activity {
+      repeat(3) {
+        do xfer_a; // dma_base_c::xfer_a
+      }
+    }
+ }
+}
+component dma_test_c {
+  dma_der_c dma1, dma2;
+  action test_a {
+    activity {
+      do dma_base_c::xfer_a;
+      do dma_der_c::xfer_a with {comp == this.comp.dma1;
+                                 (this.comp.dma1.j < 8) -> i>4;};
+    }
+  }
+}

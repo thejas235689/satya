@@ -1,0 +1,22 @@
+// PSS v3.0 LRM — Example 191: Concat vs sequence scenarios. Inline constraints with same behavior (page 268)
+c5: cover {
+  activity {
+    concat {
+      do start;
+      do write with core == 0;
+      do read;
+    }
+  }
+}
+c6: cover {
+  activity {
+    sequence {
+      do start;
+      do write with core == 0;
+      do read;
+    }
+  }
+}
+
+Figure 31—First alternative. Example 191
+Figure 32—Second alternative. Example 191

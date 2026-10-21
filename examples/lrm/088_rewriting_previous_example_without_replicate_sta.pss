@@ -1,0 +1,24 @@
+// PSS v3.0 LRM — Example 88: Rewriting previous example without replicate statement (page 164)
+action my_test {
+  activity {
+    schedule {
+      do A;
+      replicate (i: 4) do B with { size == i*10; };
+    }
+  }
+};
+action my_test {
+  activity {
+    schedule {
+      do A;
+      do B with { size == 0*10; };
+      do B with { size == 1*10; };
+      do B with { size == 2*10; };
+      do B with { size == 3*10; };
+    }
+  }
+};
+
+Example 89 illustrates the use of a replicate label array for unique hierarchical paths to specific expansion
+instances. References are made to action handles declared and traversed in specific expansion instances of a
+replicate statement from outside its scope.

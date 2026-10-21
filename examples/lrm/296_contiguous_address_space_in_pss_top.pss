@@ -1,0 +1,26 @@
+// PSS v3.0 LRM — Example 296: Contiguous address space in pss_top (page 402)
+component pss_top {
+   import addr_reg_pkg::*;
+my_ip_c ip;
+contiguous_addr_space_c<> sys_mem;
+exec init_up {
+          // Add regions to space here
+          addr_region_s<> r1;
+          r1.size = 0x40000000; // 1 GB
+          (void)sys_mem.add_region(r1);
+          addr_region_s<> mmio;
+          mmio.size = 4096;
+          (void)sys_mem.add_nonallocatable_region(mmio);
+}
+}
+
+Syntax 123—Transparent address space component
+24.7.1.5 Other address spaces
+Other kinds of address spaces, with different assumptions on allocations and generic operations, are
+possible. These may be represented as derived types of the corresponding base space/region/claim types. An
+example could be a space representing a routing table in a network router. PSS does not attempt to
+standardize these.
+24.7.2 Address space traits
+An address space trait is a PSS struct. A trait struct describes properties of a contiguous address space and
+its regions. empty_addr_trait_s is defined as an empty trait struct that is used as the default trait type
+for address spaces, regions and claims.

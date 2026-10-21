@@ -1,0 +1,52 @@
+// PSS v3.0 LRM — Example 162: Action inferences for partially-specified flows (page 232)
+action xfer_data {
+  input data_buff_s src_data;
+  output data_buff_s out_data;
+};
+component pss_top {
+  state config_s {};
+  pool config_s config_var;
+  bind config_var *;
+  buffer data_buff_s {};
+  pool data_buff_s data_mem;
+  bind data_mem *;
+  stream data_stream_s {};
+  pool data_stream_s data_bus;
+  bind data_bus *;
+  action setup_A {
+    output config_s new_cfg;
+  };
+  action setup_B {
+    output config_s new_cfg;
+  };
+  action load_data {
+    input config_s curr_cfg;
+    constraint !curr_cfg.initial;
+    output data_buff_s out_data;
+  };
+  action send_data {
+    input data_buff_s src_data;
+    output data_stream_s out_data;
+  };
+  action receive_data {
+    input data_stream_s in_data;
+  };
+};
+
+In this case, the xfer_data action could also be inferred, along with setup_A or setup_B to provide
+the data_buff_s input to send_data.src_data. If xfer_data were inferred, then its src_data
+input would require the additional inference of another instance of setup_A, setup_B, or xfer_data
+to provide the data_buff_s. This “inference chain” would continue until either an instance of setup_A
+or setup_B is inferred, which would require no further inferencing, or the inferencing limit of the tool is
+exceeded, in which case an error would be reported.
+Since the type of the inferred action is randomly selected from all available compatible action types, a tool
+may ensure that either setup_A or setup_B gets inferred before the inferencing limit is exceeded.
+Consider Example 163. Starting with the constr_test action, two instances of the get_data action
+are traversed in parallel. Since each instance inputs a buffer of type data_buff_s, at least one instance of
+load_data must be inferred to provide the input buffer. The equality constraint c2 requires that
+gd1.src_data and gd2.src_data are actually the same object, so only a single instance of
+load_data will be inferred. Without the c2 constraint, it would have been possible to infer two separate
+instances of load_data, each of which would provide a buffer object to either gd1 or gd2, although
+inferring a single instance is also legal. Note that the c1 constraint by itself is not sufficient to guarantee a
+single instance inference since there could be two distinct buffers with identical contents. With the c2
+constraint present, the c1 constraint is redundant (but legal).

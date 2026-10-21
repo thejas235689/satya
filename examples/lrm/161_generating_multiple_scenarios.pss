@@ -1,0 +1,61 @@
+// PSS v3.0 LRM — Example 161: Generating multiple scenarios (page 230)
+component pss_top {
+  buffer data_buff_s {
+    rand int val;
+  };
+  pool data_buff_s data_mem;
+  bind data_mem *;
+  action A_a {output data_buff_s dout;};
+  action B_a {output data_buff_s dout;};
+  action C_a {input  data_buff_s din;};
+  action D_a {input  data_buff_s din;};
+  action root_a {
+    A_a a;
+    B_a b;
+    C_a c;
+    D_a d;
+    activity {
+      select {a; b;}
+      select {c; d;}
+    }
+  }
+}
+
+requirements, resource limitations, pool bindings, and algebraic constraints, permit a tool to introduce the
+traversal of additional actions as defined by the model to ensure the generation of a valid scenario that meets
+the critical intent as defined by the activity. The introduction of an action in the execution of a scenario to
+complete a partially specified flow is called action inferencing.
+The evaluation ordering rules for pre_solve and post_solve exec blocks of actions, objects, and structs, as
+specified in 16.4.12, apply regardless of whether the actions are explicitly traversed or inferred, and whether
+objects are explicitly or implicitly bound. In particular, the order conforms to the scheduling relations
+between actions, such that if an action is scheduled before another, its pre_solve and post_solve execs are
+evaluated before the other’s. Backtracking is not performed across exec blocks. Assignments in exec blocks
+to attributes that figure in constraints may therefore lead to unsatisfied constraint errors. This applies to
+inferred parts of the scenarios in the same way as to parts that are explicitly specified in activities.
+17.1 Implicit binding and action inferences
+In a scenario description, the explicit binding of outputs to inputs may be left unspecified. In these cases, an
+implementation shall execute a scenario that reflects a valid completion of the given partial specification in a
+way that conforms to pool binding rules. If no valid scenario exists, the tool shall report an error.
+Completing a partial specification may involve decisions on output-to-input binding of flow objects in
+actions that are explicitly traversed. It may also involve introducing the traversal of additional actions,
+beyond those explicitly traversed, to serve as the counterpart of a flow object exchange. Once an action
+traversal is inferred to complete a given flow object exchange, it may also be considered for completing
+other flow object exchanges with which it may also be compatible.
+Action inferences are necessary to make a scenario execution legal if the following conditions hold:
+a)
+An input of any kind is not explicitly bound to an output, or an output of stream kind is not explicitly
+bound to an input.
+b)
+There is no action explicitly traversed or inferred that is available to legally bind its output/input to
+the unbound input/output, i.e.,
+1)
+There is no action that is or may be scheduled before the inputting action in the case of buffer
+or state objects.
+2)
+There is no action that is or may be scheduled in parallel to the inputting/outputting action in
+the case of stream objects.
+The inferencing of actions may be based on random or policy-driven (which may include specified coverage
+goals) decisions of a processing tool. Actions may only be inferred to complete a partially-specified flow. If
+all required input-to-output bindings are specified by explicit bindings to the traversed actions in the
+activity, an implementation may not introduce additional actions in the execution. See Annex E for more
+details on inference rules.

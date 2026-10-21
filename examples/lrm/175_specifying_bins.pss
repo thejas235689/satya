@@ -1,0 +1,13 @@
+// PSS v3.0 LRM — Example 175: Specifying bins (page 245)
+struct s {
+rand bit[10] v_a;
+covergroup {
+coverpoint v_a {
+bins a   = [0..63, 65];
+bins b[] = [127..150, 148..191];
+bins c[] = [200, 201, 202];
+bins d   = [1000..];
+bins others[] = default;
+}
+} cs;
+}

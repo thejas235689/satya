@@ -1,0 +1,37 @@
+// PSS v3.0 LRM — Example 134: Contradiction with default value constraints (page 207)
+struct my_struct {
+  rand int in [0..3] attr1;
+  constraint default attr1 == 0; // (1)
+
+  rand int in [0..3] attr2;
+  constraint attr1 < attr2; // (2)
+};
+action my_action {
+  rand my_struct s1;
+
+  rand my_struct s2;
+  constraint default s2.attr1 == 2; // (3)
+
+  rand my_struct s3;
+  constraint default disable s3.attr1; // (4)
+  constraint s3.attr1 > 0; // (5)
+};
+action my_action {
+  rand int attr1;
+  constraint default attr1 == -1; // (1)
+
+  rand int attr2;
+  constraint default attr2 == -1; // (2)
+};
+action my_derived_action : my_action {
+  constraint {
+    default disable attr1;        // (3)
+    attr1 == 0;                   // (4) OK
+  }
+
+  constraint attr2 == 0;          // (5) contradiction!
+};
+
+randomized over their full domain. Constraint (5) disables defaults of all attributes under the struct,
+including the 4 arr elements and attr. A subsequent constraint determines that s3.attr randomizes to
+50.

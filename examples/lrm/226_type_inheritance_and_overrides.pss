@@ -1,0 +1,34 @@
+// PSS v3.0 LRM — Example 226: Type inheritance and overrides (page 311)
+action axi_write_action { ... };
+action xlator_action {
+  axi_write_action axi_action;
+  axi_write_action other_axi_action;
+  activity {
+    axi_action; // overridden by instance
+    other_axi_action; // overridden by type
+  }
+};
+action axi_write_action_x : axi_write_action { ... };
+action axi_write_action_x2 : axi_write_action_x { ... };
+action axi_write_action_x3 : axi_write_action_x { ... };
+action axi_write_action_x4 : axi_write_action_x { ... };
+action reg2axi_top {
+  override {
+    type axi_write_action with axi_write_action_x;
+    instance xlator.axi_action with axi_write_action_x2;
+  }
+  xlator_action   xlator;
+  activity {
+    repeat (10) {
+      xlator; // override applies equally to all 10 traversals
+    }
+  }
+};
+action reg2axi_top_x : reg2axi_top {
+  override {
+    type axi_write_action with axi_write_action_x4;
+    instance xlator.axi_action with axi_write_action_x3;
+  }
+};
+
+21. Source organization and processing

@@ -1,0 +1,2 @@
+// PSS v3.0 LRM — Example 36: Component (page 109)
+    [ component_super_spec ] { { component_body_item } }

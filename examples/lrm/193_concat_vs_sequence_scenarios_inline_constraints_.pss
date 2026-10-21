@@ -1,0 +1,36 @@
+// PSS v3.0 LRM — Example 193: Concat vs sequence scenarios. Inline constraints with different behavior (page 271)
+c9: cover {
+  read r;
+  write w;
+  activity {
+    concat {
+      do start;
+      w;
+      r with core == w.core;
+    }
+  }
+}
+c10: cover {
+  read r;
+  write w;
+  activity {
+    sequence {
+      do start;
+      w;
+      r with core == w.core;
+    }
+  }
+}
+
+Figure 35—First alternative. Example 193
+Figure 36—Second alternative. Example 193
+19.3.4 Eventuality scenario
+The eventuality scenario is specified by the monitor activity eventually statement (see Syntax 73):
+Syntax 73—Eventually monitor activity statement
+Given a checkpoint t0, the eventuality scenario matches its sub-scenario for any checkpoint t≥t0, i.e.,
+any realization of the sub-scenario matched from any checkpoint t≥t0 is a realization of the eventuality
+scenario.
+Consider cover statement c in Example 194. It reads: capture a scenario when some read action after
+start belongs to core 0 or the first write action after start belongs to core 1. Without eventually, only
+the first read after start would be checked, and if that action did not satisfy “r.core == 0”, there is
+no match.

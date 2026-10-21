@@ -1,0 +1,9 @@
+// PSS v3.0 LRM — Example 272: Procedural repeat-count statement (page 361)
+target function int sum(int a, int b) {
+  int res;
+  res = 0;
+  repeat(b) {
+     res = res + a;
+  }
+  return res;
+}

@@ -1,0 +1,49 @@
+// PSS v3.0 LRM — Example 229: Declaration of nested package before outer package (page 314)
+my_lib::public_s my_struct;
+package my_lib {
+        package impl {
+            struct internal_impl_s {}
+    }
+}
+package my_lib::impl {
+            struct internal_impl_s {}
+    }
+package my_lib::impl {
+struct internal_impl_s {}
+}
+package my_lib {
+struct public_s {}
+}
+
+An alternate method for referencing package declarations is via the import statement. Importing an
+identifier into a package or component makes that identifier visible within that lexical scope without
+requiring the scope resolution operator. An import statement is a name resolution directive, and does not
+introduce symbol declarations or symbol aliases into the namespace in which it appears.
+Two forms of the import statement are provided: explicit import and wildcard import. An explicit import
+only imports the symbols specifically referenced by the import. Example:
+import my_lib::public_s;
+public_s my_struct;
+It shall be illegal to explicitly import an identifier from a package if the same name is already declared in the
+importing namespace or to explicitly import the same identifier from two different packages.
+A wildcard import allows all identifiers declared within a package to be imported into a lexical scope,
+provided the identifier is not otherwise defined anywhere in the importing component or package. A
+wildcard import also allows access from the lexical scope to members declared in type extensions found in
+the imported package. Note that type extensions are unnamed and therefore cannot be explicitly imported.
+A wildcard import is of the following form:
+import my_lib::*;
+public_s my_struct;
+A local declaration of an identifier takes precedence over a wildcard import of the same identifier. An
+explicit import of an identifier takes precedence over a wildcard import of the same identifier from a
+different package. If the same name is declared in two wildcard-imported packages, neither is imported, a
+qualified reference must be used.
+import specifications may appear in package and component declaration statements and in component
+extension statements, but shall come first in those statements. The scope of an import statement is limited to
+the declaration statement or extension statement in which it appears.
+Elements in the unnamed global package are visible to all user-defined namespaces without the need for an
+explicit import statement. To explicitly refer to a type declared in the unnamed global package, prefix the
+type name with “::”.
+import statements are not transitive. If package B imports package A, package B does not have unqualified
+access to contents declared in packages that A may have imported. Package B must import those packages
+directly in order to have unqualified access to contents declared within them.
+21.1.3.1 Syntax
+Syntax 82—import statement

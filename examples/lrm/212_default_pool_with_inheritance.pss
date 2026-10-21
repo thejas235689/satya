@@ -1,0 +1,46 @@
+// PSS v3.0 LRM — Example 212: Default pool with inheritance (page 296)
+component base_c {
+ action base_a {
+ rand int i;
+ rand bit[31:0] b;
+ constraint {i < 10;}
+ constraint c {b > 7;}
+ }
+}
+component der_c : base_c {
+ action der_a : base_a {
+ rand int j;
+ constraint {j > 5 -> i < 5;}
+ constraint c {j < 10 -> b < 128;}
+ }
+}
+resource cpu_core_s {
+}
+component base_c {
+  pool[4] cpu_core_s cpu_p;
+  bind cpu_p *;
+  action act1_a {
+    share cpu_core_s cpu_share;
+  }
+  action act2_a {
+    lock cpu_core_s cpu_lock;
+  }
+}
+component der_c : base_c {
+  action act3_a {
+    share cpu_core_s cpu_share;
+  }
+}
+
+As mentioned above, a derived type inherits all members from the base type and may declare additional
+elements specific to the derived type. When a named element (other than a function) is declared in the
+derived type with the same name as an element in the base type, the derived type’s declaration shadows
+(masks) the base type’s declaration (as with constraint c in Example 211).
+When the shadowed element is a function, the function call is polymorphic, that is, the actual function called
+depends on its context component. In Example 213, component der_c shadows the definition of function
+foo() in component base_c. Action call_foo invokes the appropriate definition of foo() depending
+on the type of its context component. Action test schedules call_foo in the context of a component of
+type base_c, followed by call_foo in the context of der_c. Executing test will call the core library
+target function message() to add the following messages to the execution log, at LOW verbosity:
+base_c::foo
+der_c::foo

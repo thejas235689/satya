@@ -1,0 +1,36 @@
+// PSS v3.0 LRM — Example 185: Per-instance coverage in actions (page 254)
+enum mode_e { M0, M1, M2 }
+component pss_top {
+action A {
+rand mode_e mode;
+covergroup {
+option.per_instance = true;
+coverpoint mode;
+} cg;
+}
+action entry {
+A
+a1;
+activity {
+repeat (4) {
+a1;
+}
+repeat (10) {
+do A;
+}
+}
+}
+}
+
+19. Behavioral coverage
+A large number of specific scenarios may be generated from one PSS specification. These scenarios vary in
+the action order and data. Coverage statements identify a key action order and data combinations that need
+to be observed to exercise the key functionality. The specification of the observed action order and, possibly
+their data, related to this ordering, is called behavioral coverage and is described in this clause. Data
+coverage is described in Clause 18.
+19.1 Defining behavioral coverage: cover and monitor
+The cover statement directs the PSS processing tool to observe an action scenario; i.e., an action execution
+order together with its data as specified in its body. The action order specification, including action data
+specification, is called a scenario. Scenarios may also be written separately as monitors. The cover
+statements are only active in component instances actually instantiated from the root component.
+19.1.1 Syntax

@@ -1,0 +1,41 @@
+// PSS v3.0 LRM — Example 254: Reactive control flow (page 338)
+resource object types without the ref modifier.
+A function may specify any number of formal parameters, stating their types and names. Function
+parameters shall be either plain-data types or reference types. Functions shall not have parameters of action
+types, component types, or flow/resource object types without the ref modifier. Functions may also declare
+generic parameters without stating their specific type, and may declare a variable number of parameters—
+see 22.2.5. Note that the set of types allowed for imported foreign functions is restricted (see 22.4).
+Parameter direction modifiers (input, output, or inout) are optional in the function declaration. However, if
+they are specified in the function declaration, such a function may only be imported (see 22.4). Functions
+whose definition is built into implementations, such as functions included in the PSS core library (see
+component my_ip_c {
+  import target C function int sample_DUT_state();
+     // specify mapping to target C function by that same name
+  action check_state {
+    int curr_val;
+    exec body {
+      curr_val = comp.sample_DUT_state();
+         // value only known during execution on target platform
+    }
+  };
+  action A { };
+  action B { };
+  action my_test {
+    check_state cs;
+    activity {
+      repeat {
+        cs;
+        if (cs.curr_val % 2 == 0) {
+          do A;
+        } else {
+          do B;
+        }
+      } while (cs.curr_val < 10);
+    }
+  };
+};
+
+Clause 24), may also have output or inout parameters. In the declaration of native functions and target-
+template functions, direction modifiers shall not be used.
+Example 255 declares a function in a package scope. In this case, the function compute_value returns
+an int, accepts an input value (val), and returns an output value via the out_val parameter.

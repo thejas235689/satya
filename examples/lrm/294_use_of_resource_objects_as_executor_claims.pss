@@ -1,0 +1,68 @@
+// PSS v3.0 LRM — Example 294: Use of resource objects as executor claims (page 397)
+struct my_core_trait_s : executor_trait_s {
+   rand int in [0..7] core_id;
+};
+resource my_core_r : executor_claim_s<my_core_trait_s> {
+   constraint trait.core_id == instance_id;
+};
+component my_cores_group_c : executor_group_c<my_core_trait_s> {
+   executor_c<my_core_trait_s> cores[8];
+   exec init_down {
+      foreach (c: cores[i]) {
+         c.trait.core_id = i;
+         add_executor(c);
+      }
+   }
+};
+component my_ip_c {
+   action op1 {
+      lock my_core_r core;
+      exec body {
+
+my_ip_blocking_op();
+      }
+   };
+   action op2 {
+      share my_core_r core;
+      exec body {
+
+while (!my_ip_op2_done()) { yield(); }
+      }
+   };
+};
+component pss_top {
+   my_cores_group_c core_group;
+   pool [8] my_core_r core_pool;
+   bind core_pool *;
+   my_ip_c my_ip;
+   action test {
+      activity {
+         schedule {
+            replicate (10) {
+               select {
+                  do my_ip_c::op1;
+
+       do my_ip_c::op2;
+               }
+            }
+ }
+}
+};
+};
+
+24.6.2.5 Executor query function
+The function executor() returns a reference to the executor instance currently operative. When called
+during the evaluation of exec blocks of an action or flow/resource object or of any function invoked by
+them, it returns the executor instance assigned to that entity. The function executor() can be used,
+among other purposes, to delegate generic target functions to an executor-specific implementation.
+Syntax 120—Executor query function
+Note that the reference returned from executor() for actions assigned to different executors would be
+different, even if these actions are executing concurrently. The returned value shall be null if the evaluating
+entity is not assigned to any executor. Since assignment to executors is only resolved as part of the solve
+process, calling executor() in pre_solve exec blocks shall always return null.
+In Example 295, a call to the global function my_target_op() is delegated to the instance function
+my_target_op_impl() of the currently operative executor, through a call to executor(). Function
+my_target_op_impl() is declared in component executor_base_c and implemented differently
+in two executor subtypes. Consequently, the call to my_target_op() in the exec body of action
+call_op will be implemented differently based on the executor assignment of call_op.
+function ref executor_base_c executor();

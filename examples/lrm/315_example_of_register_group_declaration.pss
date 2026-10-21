@@ -1,0 +1,24 @@
+// PSS v3.0 LRM — Example 315: Example of register group declaration (page 436)
+pure component my_reg_grp0_c : reg_group_c {
+   my_readonly_reg0_c   reg0;            // (1)
+   my_reg1_c            reg1[4];         // (2)
+   my_sub_reg_grp_c     sub;             // (3)
+  reg_c<my_regx_s, WRITEONLY, 32> regx; // (4)
+ // May be foreign, too
+ function bit[64] get_offset_of_instance(string name) {
+   match(name) {
+    ["reg0"]:  return 0x0;
+    ["sub"]:   return 0x20;
+        ["regx"]:  return 0x0;            // (5)
+    default: return -1; // Error case
+   }
+ }
+ function bit[64] get_offset_of_instance_array(string name, int index) {
+   match(name) {
+    ["reg1"]:  return (0x4 + index*4);
+    default: return -1; // Error case
+   }
+ }
+}
+
+4)

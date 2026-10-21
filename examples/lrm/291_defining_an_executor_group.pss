@@ -1,0 +1,25 @@
+// PSS v3.0 LRM — Example 291: Defining an executor group (page 392)
+struct master_trait_s : executor_trait_s {};
+component my_core_executor_c : executor_c<master_trait_s> { ... };
+component my_bus_vip_executor_c : executor_c<master_trait_s> { ... };
+component my_hybrid_group_c : executor_group_c<master_trait_s> {
+   my_core_executor_c cores[4];
+   my_bus_vip_executor_c bfms[2];
+   exec init_down {
+      foreach (c: cores) {
+         add_executor(c);
+      }
+      foreach (b: bfms) {
+         add_executor(b);
+      }
+   }
+};
+
+Syntax 119—Executor claim struct
+Example 292 demonstrates the use of the executor_claim_s struct. In this case, action A declares an
+executor claim. A’s executor claim is matched with executor group eg that is instantiated directly under its
+context component C, as both are parameterized with the same (default) trait type. Consequently, action A
+is necessarily assigned to the executor e instantiated under its context component. Component C is
+instantiated twice under pss_top. Under the entry action test, action A is invoked three times. The
+generated test will call the function do_something() twice under the execution context associated with
+executor c1.e, and subsequently once under the execution context associated with executor c2.e.

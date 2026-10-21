@@ -1,0 +1,76 @@
+// PSS v3.0 LRM — Example 245: Resolution in presence of package alias (page 324)
+package P1 {
+  package P2 {
+    struct s {}
+  }
+}
+package P3 {
+  package P4 {
+    struct s {}
+  }
+}
+component pss_top {
+  import P1::*;
+  import P3::P4 as P2;
+  action test {
+    P2::s f;
+  }
+}
+
+22. Test realization
+A PSS model interacts with foreign languages in order to drive, or bring about, the behaviors that leaf-level
+actions represent in a test scenario. This is done by calling application programming interfaces (APIs)
+available in the execution environment, or generating foreign language code that executes as part of the test.
+In addition, external code, such as reference models and checkers, may be used to help compute stimulus
+values or expected results during stimulus generation.
+The platform on which test generation takes place is generally referred to as the solve platform, while the
+platform on which test execution takes place is called the target platform.
+Logic used to help compute stimulus values is coded using procedural constructs (see 22.7), possibly
+invoking a foreign procedural interface on the solve platform (see 22.4). The implementation of runtime
+behavior of leaf-level actions can similarly be specified with procedural constructs, possibly invoking a
+foreign procedural interface on the target platform or invoking target template functions (see 22.6).
+Alternatively, implementation of actions and other scenario entities can be specified as target code template
+blocks (see 22.5). In all cases, the constructs for specifying implementation of PSS entities are called exec
+blocks.
+Functions can be defined in PSS as a means to factor out and reuse portable procedural logic required for the
+implementation of scenario entities in exec blocks (see 22.3). Functions may take parameters and optionally
+return a result value. Like exec blocks, functions are defined in terms of procedural constructs or as target
+code templates.
+22.1 exec blocks
+exec blocks provide a mechanism for associating specific functionality with a component, an action, a flow/
+resource object, or a struct (see Syntax 83). A number of exec block kinds are used to implement scenario
+entities.
+—
+init_down and init_up exec blocks allow component data fields to be assigned a value as the compo-
+nent tree is being elaborated (see 9.4).
+—
+body exec blocks specify the actual runtime implementation of atomic actions.
+—
+pre_solve and post_solve exec blocks of actions, flow/resource objects, and structs are a way to
+involve arbitrary computation as part of the scenario solving.
+—
+Other exec kinds serve more specific purposes in the context of pre-generated test code and auxiliary
+files.
+
+22.1.1 Syntax
+Syntax 83—exec block declaration
+The following also apply:
+a)
+exec block content is given in one of two forms: as a sequence of procedural constructs (possibly
+involving foreign function calls) or as a text segment of target code parameterized with PSS attri-
+butes.
+b)
+In either case, a single exec block is always mapped to implementation in no more than one foreign
+language.
+c)
+In the case of a target-template block, the target language shall be explicitly declared; however,
+when using procedural constructs, the corresponding language may vary.
+d)
+“exec init” is an alias for “exec init_up,” and is considered deprecated as of PSS 2.0. The keyword
+“init” may be removed in a future version of this standard. Users should use “init_up” instead.
+e)
+Multiple exec blocks of the same kind may be declared in a given definition scope. If multiple exec
+blocks of the same kind are declared in a given definition scope, they shall be considered as a single
+exec block of the given kind, processed in source order.
+22.1.2 exec block kinds
+The following list describes the different exec block kinds:

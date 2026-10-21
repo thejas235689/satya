@@ -1,0 +1,44 @@
+// PSS v3.0 LRM — Example 160: exec body block sampling external data (page 229)
+function bit[3:0] compute_val1(bit[3:0] v);
+function bit[3:0] compute_val2(bit[3:0] v);
+component pss_top {
+
+  action A {
+    rand bit[3:0] x;
+    bit[3:0] y1, y2;
+
+    constraint assume_y_c {
+      y1 >= x && y1 <= x+2;
+      y2 >= x && y2 <= x+3;
+
+      y1 <= y2;
+    }
+
+    exec body {
+      y1 = compute_val1(x);
+      y2 = compute_val2(x);
+    }
+  }
+}
+
+17. Action inferencing
+Perhaps the most powerful feature of PSS is the ability to focus purely on the user’s verification intent, while
+delegating the means to achieve that intent. Previous clauses have introduced the semantic concepts to
+define such abstract specifications of intent. The modeling constructs and semantic rules thus defined for a
+portable stimulus model allow a tool to generate a number of scenarios from a single (partial) specification
+to implement the desired intent.
+Beginning with a root action, which may contain an activity, a number of actions and their relative
+scheduling constraints is used to specify the verification intent for a given model. The other elements of the
+model, including flow objects, resources and their binding, as well as algebraic constraints throughout,
+define a set of rules that shall be followed to generate a valid scenario matching the specified intent. It is
+possible to fully specify a verification intent model, in which only a single valid scenario of actions may be
+generated. The randomization of data fields in the actions and their respective flow and resource objects
+would render this scenario as what is generally referred to as a “directed random” test, in which the actions
+are fully defined, but the data applied through the actions is randomized. The data values themselves may
+also be constrained so that there is only one scenario that may be generated, including fully-specified values
+for all data fields, in which case the scenario would be a “directed” test.
+There are a number of ways to specify the scheduling relationship between actions in a portable stimulus
+model. The first, which allows explicit specification of verification intent, is via an activity. As discussed in
+Clause 12, an activity may define explicit scheduling dependencies between actions, which may include
+statements, such as schedule, select, if-else and others, to allow multiple scenarios to be generated even for
+a fully-specified intent model. Consider Example 161.

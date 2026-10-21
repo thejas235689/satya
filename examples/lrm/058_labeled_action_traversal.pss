@@ -1,0 +1,17 @@
+// PSS v3.0 LRM — Example 58: Labeled action traversal (page 133)
+  action mem2mem_chain {
+    activity {
+      do mem_c::load_buff;
+      repeat (10) {
+        select {
+          xfer: do dma_c::mem2mem_xfer;
+          cpy:  do cpu_c::memcpy;
+        }
+      }
+    }
+  }
+  action my_test {
+    activity {
+      do mem2mem_chain with { xfer.size > 10; };
+    }
+  }

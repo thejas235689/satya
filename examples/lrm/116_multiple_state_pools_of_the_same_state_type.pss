@@ -1,0 +1,32 @@
+// PSS v3.0 LRM — Example 116: Multiple state pools of the same state type (page 191)
+state power_state_s {
+   rand int in [0..4] level;
+   constraint initial -> level == 0;
+}
+// graphics component with power state
+component graphics_c {
+   pool power_state_s power_state_var;
+   bind power_state_var *; // accessible to all actions under this
+                           // component (specifically power_transition's
+                           // input/output)
+   action power_transition_a {
+      input  power_state_s curr; //current state
+      output power_state_s next; //next state
+   }
+}
+component my_multimedia_ss_c {
+   graphics_c gfx[2];
+   action observe_same_power_state_a {
+      rand int in [1..4] observed_level;
+      input power_state_s gfx_state[2];
+      constraint { foreach (s: gfx_state) {
+        s.level == observed_level;
+      }}
+   }
+   // explicit binding of the two power state variables to the
+   // respective inputs of action observe_same_power_state_a
+   bind gfx[0].power_state_var observe_same_power_state_a.gfx_state[0];
+   bind gfx[1].power_state_var observe_same_power_state_a.gfx_state[1];
+}
+
+15.4 Resource pools and the instance_id attribute

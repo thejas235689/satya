@@ -1,0 +1,42 @@
+// PSS v3.0 LRM — Example 60: Individual action handle array element traversal (page 134)
+action A {
+  rand bit[3:0]   f1;
+}
+action B {
+  A a1, a2;
+
+  activity {
+    a1;
+    a2 with {
+      f1 < 10;
+    };
+  }
+}
+action C {
+  action bit[3:0] max;
+  B b1;
+
+  activity {
+    max;
+    b1 with {
+      a1.f1 <= max;
+    };
+  }
+}
+component pss_top {
+    action A { }
+    action entry {
+        A   a_arr[4];
+        A   a1, a2, a3, a4;
+        activity {
+            a_arr[0];
+            a1;
+        }
+    }
+}
+
+When an action handle array is traversed as a whole, each array element is traversed independently
+according to the semantics of the containing scope.
+Example 61 below shows an action that traverses the elements of the a_arr action handle array in two
+ways, depending on the value of a rand action attribute. Both ways of traversing the elements of a_arr
+have identical semantics.

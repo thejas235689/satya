@@ -1,0 +1,19 @@
+// PSS v3.0 LRM — Example 217: Type extension (page 301)
+      extend action type_identifier { { action_body_item } }
+    | extend monitor type_identifier { { monitor_body_item } }
+    | extend component type_identifier { { component_body_item } }
+    | extend struct_kind type_identifier { { struct_body_item } }
+    | extend enum type_identifier { [ enum_item { , enum_item } ] }
+enum config_modes_e {UNKNOWN, MODE_A=10, MODE_B=20};
+component uart_c {
+action configure {
+rand config_modes_e mode;
+constraint {mode != UNKNOWN;}
+}
+}
+package additional_config_pkg {
+extend enum config_modes_e {MODE_C=30, MODE_D=50}
+extend action uart_c::configure {
+constraint {mode != MODE_D;}
+}
+}

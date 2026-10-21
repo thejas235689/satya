@@ -1,0 +1,26 @@
+// PSS v3.0 LRM — Example 279: Export action foreign language implementation (page 371)
+component comp {
+
+  action A1 {
+    rand bit          mode;
+    rand bit[31:0]    val;
+
+    constraint {
+      if (mode!=0) {
+        val in [0..10];
+      } else {
+        val in [10..100];
+      }
+    }
+  }
+
+}
+package pkg {
+  // Export A1, providing a mapping to field 'mode'
+  export target comp::A1(bit mode);
+}
+namespace comp {
+void A1(unsigned char mode);
+}
+
+23. Conditional code processing

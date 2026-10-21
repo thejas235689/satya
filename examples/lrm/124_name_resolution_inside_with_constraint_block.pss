@@ -1,0 +1,71 @@
+// PSS v3.0 LRM — Example 124: Name resolution inside with constraint block (page 198)
+action A {
+  rand bit[3:0]   f;
+};
+action B {
+  A a1, a2, a3, a4;
+
+  constraint c1 { a1.f in [8..15]; };
+  constraint c2 { a1.f == a4.f; };
+  activity {
+    a1;
+    a2 with {
+      f in [8..15]; // same effect as constraint c1 has on a1
+    };
+    a3 with {
+      f == a4.f;    // illegal: a4.f unresolved at this point
+    };
+    a4;
+  }
+};
+component subc {
+action A {
+rand int f;
+rand int g;
+}
+}
+component top {
+subc sub1, sub2;
+action B {
+rand int f;
+rand int h;
+subc::A a;
+activity {
+a with {
+f < h;
+// sub-action's f and containing action's h
+g == this.f; // sub-action's g and containing action's f
+comp == this.comp.sub1;
+// sub-action's component is sub-component
+// 'sub1' of the parent action's component
+};
+}
+}
+}
+
+16.1.4 Logical expression constraints
+A logical (Boolean) constraint can be used to specify a constraint. Syntax 54 shows the syntax for an
+expression constraint.
+16.1.4.1 Syntax
+Syntax 54—Expression constraint
+expression may be any logical expression. The constraint is satisfied if the expression evaluates to true.
+16.1.5 Implication constraints
+Conditional constraints can be specified using the implication operator (->). Syntax 55 shows the syntax for
+an implication constraint.
+16.1.5.1 Syntax
+Syntax 55—Implication constraint
+expression may be any logical expression. constraint_set represents any valid constraint or an unnamed
+constraint set.
+The following also apply:
+a)
+The Boolean equivalent of the implication operator a -> b is (!a || b). This states that if the
+expression is true, all of the constraints in constraint_set shall be satisfied. In other words, if the
+expression is true, then the random values generated are constrained by the constraint set. Other-
+wise, the random values generated are unconstrained.
+b)
+The implication constraint is bidirectional.
+16.1.5.2 Examples
+Consider Example 125. Here, b is forced to have the value 1 whenever the value of the variable a is greater
+than 5. However, since the constraint is bidirectional, if b has the value 1, then the evaluation expression
+(!(a>5) || (b==1)) is true, so the value of a is unconstrained. Similarly, if b has a value other than
+1, a is <= 5.

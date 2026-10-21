@@ -1,0 +1,65 @@
+// PSS v3.0 LRM — Example 75: Atomic block to avoid action interference (page 152)
+action bringup_a {}
+state config_s {
+   rand mode_e mode;
+}
+action configX_a {
+  output config_s out_cfg;
+  constraint out_cfg.mode == X;
+}
+action A_a {}
+action B_a {
+  input config_s cfg;
+  constraint cfg.mode == X;
+}
+action my_stress_seq_a {
+  activity {
+    do bringup_a;
+    atomic {
+      do A_a;
+      do B_a;
+    }
+  }
+}
+bringup_a
+A_a
+configX_a
+B_a
+mode X
+In reality, B_a may start
+long after A_a. Stress is not
+achieved because relevant
+behavior is spaced apart or
+diluted.
+bringup_a
+A_a
+configX_a
+B_a
+mode X
+
+Figure 19 illustrates the cluster of actions in an atomic block (i.e., A_a and B_a) and how the configX_a
+action is an “upward” scheduling dependency of the atomic block. The figure shows two examples where
+configX_a is scheduled: a) after the bring-up and before the atomic block; b) in parallel with the bring-up
+and before the atomic block.
+Figure 19—Scheduling graph of atomic block avoiding interference
+Consider the code in Example 76. It demonstrates how the atomic specifier prevents the PSS solver from
+generating an unintended scenario scheduling due to a possible outcome of the resource allocation process.
+Test intent of my_stress_seq is that B follows A as soon as possible. Figure 20 shows a scheduling
+solution that would violate this intent within the my_test scenario. C could be scheduled in parallel with A
+when both B and C happen to be assigned same resource slot, causing B to wait for completion of C which
+may take longer than A.
+bringup_a
+configX_a
+mode X
+B_a
+A_a
+configX_a
+B_a
+Inferred action is scheduled
+prior to the atomic block.
+Atomic block does not start
+until all its dependencies are
+met.
+bringup_a
+mode X
+A_a

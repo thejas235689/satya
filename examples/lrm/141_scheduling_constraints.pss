@@ -1,0 +1,30 @@
+// PSS v3.0 LRM — Example 141: Scheduling constraints (page 211)
+action my_sub_flow {
+   A a; B b; C c; D d;
+   activity {
+      sequence {
+         a;
+         schedule {
+            b; c; d;
+         };
+      };
+   };
+};
+action my_top_flow {
+   my_sub_flow sf1, sf2;
+   activity {
+      schedule {
+         sf1;
+         sf2;
+      };
+   };
+   constraint sequence {sf1.a, sf2.b};
+   constraint parallel {sf1.b, sf2.b, sf2.d};
+};
+
+16.3 Sequencing constraints on state objects
+A pool of state type stores exactly one state object at any given time during the execution of a test scenario,
+thus serving as a state variable (see 15.5). Any action that outputs a state object to a pool is considered a
+state transition with respect to that state variable. Within the context of a state type, reference can be made to
+attributes of the previous state, relating them in Boolean expressions to attributes values of this state. This is
+done by using the built-in reference variable prev (see 13.3).

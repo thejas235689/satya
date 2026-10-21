@@ -1,0 +1,18 @@
+// PSS v3.0 LRM — Example 73: Scope of join inside sequence block (page 148)
+activity {
+  L1 : parallel join_first(1) {
+    L2: do A;
+    L3: do B;
+  }
+  L4: do C;
+}
+activity {
+   L1: sequence {
+      L2: parallel join_branch(L3) {
+         L3: do A;
+         L4: do B;
+      }
+      L5: do C;
+   }
+   L6: do D;
+}

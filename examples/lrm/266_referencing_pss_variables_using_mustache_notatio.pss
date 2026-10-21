@@ -1,0 +1,16 @@
+// PSS v3.0 LRM — Example 266: Referencing PSS variables using mustache notation (page 352)
+component top {
+struct S {
+rand int b;
+}
+action A {
+rand int a;
+rand S   s1;
+exec body C = """
+  printf("a={{a}} s1.b={{s1.b}} a+b={{a+s1.b}}\n");
+""";
+}
+}
+
+A variable reference can be used in any position in the generated code. Example 267 shows a variable
+reference used to select the function being called.

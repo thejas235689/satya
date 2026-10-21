@@ -1,0 +1,25 @@
+// PSS v3.0 LRM — Example 222: Combining inheritance and extension (page 307)
+component base_c {
+ action base_a {
+ rand int i;
+ rand bit[31:0] b;
+ constraint { i < 10; }
+ constraint c { b > 7; }
+ }
+}
+component der_c : base_c {
+ action der_a : base_a {
+ rand int j;
+ constraint { j > 5 -> i < 5; }
+ constraint c { j < 10 -> b < 128; }
+ }
+  extend action der_a {
+    constraint { j > 7; }
+  }
+  extend action base_a {...} // ILLEGAL
+}
+extend component base_c {
+  extend action base_a {
+    constraint { i > 2; }
+  }
+}

@@ -1,0 +1,32 @@
+// PSS v3.0 LRM — Example 164: Resource equality constraint may affect scheduling (page 234)
+component pss_top {
+  buffer    data_buff_s {bit[4] val;};
+  resource  dma_descr   {bit[4] chan;};
+  pool      data_buff_s dbuf_p;
+  bind      dbuf_p *;
+  pool [16] dma_descr   descr_p;
+  bind      descr_p *;
+  action load_data {
+    output data_buff_s out_data;
+  }
+  action get_data {
+    input  data_buff_s src_data;
+  }
+  action m2m {
+    input  data_buff_s ibuf;
+    output data_buff_s obuf;
+    lock   dma_descr   descr;
+  }
+  action constr_rsrc_test {
+    get_data gd1 , gd2;
+    m2m      m2m1, m2m2;
+    constraint c3 {m2m1.ibuf    == m2m2.ibuf;}
+    constraint c4 {gd1.src_data != gd2.src_data;}
+    constraint c5 {m2m1.descr   == m2m2.descr;}
+//  constraint c6 {m2m1.descr.instance_id == m2m2.descr.instance_id;}
+    activity {
+      schedule {m2m1; m2m2;}
+      parallel {gd1 ; gd2; }
+    }
+  }
+}

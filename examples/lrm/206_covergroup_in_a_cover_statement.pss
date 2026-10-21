@@ -1,0 +1,22 @@
+// PSS v3.0 LRM — Example 206: Covergroup in a cover statement (page 288)
+enum locked_e { LOCKED, UNLOCKED };
+enum write_mode_e { WRITE_BACK, WRITE_THRU };
+action read {
+  rand locked_e lock_mode;
+}
+action write {
+  rand write_mode_e write_mode;
+}
+c: cover {
+  write w;
+  read r;
+  activity {
+    w;
+    r;
+  }
+  covergroup {
+    cpw: coverpoint w.write_mode;
+    cpr: coverpoint r.lock_mode;
+    wXr: cross cpw, cpr;
+  } cg;
+}

@@ -1,0 +1,59 @@
+// PSS v3.0 LRM — Example 268: Allowing programmatic declaration of a target variable declaration (page 353)
+static my_int16 field__0;
+component top {
+action A {
+rand bit[1:0] func_id;
+rand bit[3:0] a;
+exec body C = """
+  func_{{func_id}}({{a}});
+""";
+}
+}
+enum obj_type_e {my_int8,my_int16,my_int32,my_int64};
+function string get_unique_obj_name();
+import solve function get_unique_obj_name;
+buffer mem_buff_s {
+  rand obj_type_e obj_type;
+  string obj_name;
+
+  exec post_solve {
+    obj_name = get_unique_obj_name();
+  }
+
+  // declare an object in global space
+  exec declaration C = """
+    static {{obj_type}} {{obj_name}};
+  """;
+};
+
+22.5.3.2 Formatting
+When a variable reference is converted to a string, the result is formatted as follows:
+—
+int
+signed decimal (%d)
+—
+bit
+unsigned decimal (%ud)
+—
+bool
+"true"  | "false"
+—
+string
+string (%s)
+—
+chandle
+pointer (%p)
+—
+float32, float64
+floating-point (%f)
+22.5.4  Capturing comments in target-template exec blocks
+To retain implementations inside a template exec block as PSS comments and prevent the code from
+appearing in the target code, the language allows a special commenting notation with a hash inside braces
+(without whitespace). The token {# introduces a comment, which ends with the successive occurrence of
+#}, enabling a multi-line comments capture. And the notation {#} introduces a comment that ends with the
+current line.
+22.5.4.1 Examples
+Example 269 demonstrates the usage of a multi-line comment where an implementation with an individual
+mode-based API declaration is commented and replaced with a declaration based on the action usage. The
+example also captures the usage of a single-line comment where a constant variable implementation is
+commented and replaced with a static one.

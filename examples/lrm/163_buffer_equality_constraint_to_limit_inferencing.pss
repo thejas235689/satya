@@ -1,0 +1,23 @@
+// PSS v3.0 LRM — Example 163: Buffer equality constraint to limit inferencing (page 233)
+component pss_top {
+  buffer data_buff_s {bit[4] val;};
+  pool   data_buff_s dbuf_p;
+  bind   dbuf_p *;
+  action load_data {
+    output data_buff_s out_data;
+  }
+  action get_data {
+    input  data_buff_s src_data;
+  }
+  action constr_test {
+    get_data gd1, gd2;
+    constraint c1 {gd1.src_data.val == gd2.src_data.val;}
+    constraint c2 {gd1.src_data     == gd2.src_data;}
+    activity {
+      parallel {gd1; gd2;}
+    }
+  }
+}
+
+statement must require one instance to be traversed before the other, in either order. Note that the
+commented-out constraint c6 is equivalent to c5.

@@ -1,0 +1,29 @@
+// PSS v3.0 LRM — Example 24: typedef (page 87)
+import std_pkg::*;
+component my_comp {
+   ref my_comp close_sibling;
+   int data, close_sibling_data;
+   list<ref my_comp> all_siblings;
+   list<int> all_siblings_data;
+   exec init_down {
+      if (close_sibling != null) {
+         close_sibling_data = close_sibling.data;
+      }
+      foreach (sibling: all_siblings) {
+         all_siblings_data.push_back(sibling.data);
+      }
+   }
+}
+component pss_top {
+   my_comp c1, c2, c3;
+   exec init_down {
+      c1.data = 10;
+      c2.data = 20;
+      c3.data = 30;
+      c2.close_sibling = c1;
+      c3.close_sibling = c2;
+      c1.all_siblings = {c2,c3};
+      c2.all_siblings = {c1,c3};
+      c3.all_siblings = {c1,c2};
+   }
+}

@@ -1,0 +1,11 @@
+// PSS v3.0 LRM — Example 275: Procedural match statement (page 365)
+target function int bucketize(int a) {
+  int res;
+  match (a) {
+     [0..3]:  res = 1;
+     [4..7]:  res = 2;
+     [8..15]: res = 3;
+     default: res = 4;
+  }
+  return res;
+}

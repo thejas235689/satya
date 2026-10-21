@@ -1,0 +1,16 @@
+// PSS v3.0 LRM — Example 264: Explicit specification of the implementation language (page 350)
+package known_c_functions {
+import C function generic_functions::compute_expected_value;
+}
+
+22.4.2.1 Syntax
+Syntax 87—Import class declaration
+The following also apply:
+a)
+Imported class functions support the same return and parameter types as imported functions. import
+class declarations also support capturing the class hierarchy of the foreign language classes.
+b)
+Fields of import class type can be instantiated in package and component scopes. An import class
+field in a package scope is a global instance. A unique instance of an import class field in a compo-
+nent exists for each component instance.
+c)

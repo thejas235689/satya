@@ -1,0 +1,31 @@
+// PSS v3.0 LRM — Example 256: const parameter declaration (page 340)
+struct s {
+  int a, b;
+}
+static const array<int, 3> MY_ARR = {1,2,3};
+static const s MY_STRUCT = {.a = 1, .b =2};
+function void copy_array(const array<int, 3> src, array<int, 3> dst) {
+  foreach (dst[i]) {
+    dst[i] = src[i];
+    // src[i] = dst[i];    // ERROR - src is const and its value cannot
+                           // be changed
+  }
+}
+function void swap_structs(s s1, s s2) {
+    s tmp = s1;
+    s1 = s2;
+    s2 = tmp;
+}
+component pss_top {
+  array<int, 3> my_arr;
+  s s1, s2;
+  exec init {
+    copy_array(my_arr, MY_ARR);   // ERROR: dst parameter is not const
+    copy_array(my_arr, {1,2,3});  // ERROR: dst parameter is not const
+    copy_array(MY_ARR, my_arr);   // OK
+    swap_structs(s1, MY_STRUCT);  // ERROR: s2 parameter is not const
+    swap_structs(s1, s2);         // OK
+  }
+}
+
+d)

@@ -1,0 +1,6 @@
+// PSS v3.0 LRM — Example 227: Hierarchical declaration of nested package (page 314)
+struct
+internal_impl_s
+is
+also
+my_lib::impl::internal_impl_s.

@@ -1,0 +1,45 @@
+// PSS v3.0 LRM — Example 301: Address space allocation example (page 412)
+import addr_reg_pkg::*;
+import mem_pkg::*;
+package mem_pkg {
+   enum cache_attr_e {UC, WB, WT, WC, WP};
+   struct mem_trait_s : addr_trait_s {
+      rand cache_attr_e  ctype;
+      rand int in [0..3] sec_level;
+   }
+};
+component good_ip {
+   action write_mem {
+      // Allocate from nearest address space matching TRAIT type and value
+      rand transparent_addr_claim_s<mem_trait_s> mem_claim;
+      constraint mem_claim.size == 128;
+      constraint mem_claim.trait.ctype == UC;
+   }
+   action write_mem_unconstrained {
+      // Allocate from nearest address space matching TRAIT type and value
+      // Note that ctype field of the claim trait is unconstrained.
+      // However, given there is only a single region in the address space
+      // with ctype==UC, that region is chosen as it is the only match
+      // available that can satisfy the trait constraints.
+      // ctype cannot be randomized to have a value that is not UC because
+      // it is compelled to match with one of the regions, just like when
+      // an action wants to consume a buffer object, it needs to pick from
+      // the available objects in the pool.
+      rand transparent_addr_claim_s mem_claim;
+      constraint mem_claim.size == 128;
+   }
+};
+component great_ip {
+   action write_mem {
+      // Allocate from nearest address space matching TRAIT type and value
+      rand transparent_addr_claim_s<mem_trait_s> mem_claim;
+      constraint mem_claim.size == 256;
+      constraint mem_claim.trait.ctype == UC;
+   }
+};
+component sub_ip {
+   // Subsystem has its own address space
+   transparent_addr_space_c<mem_trait_s> mem;
+   good_ip  go_ip;
+   great_ip gr_ip;
+};

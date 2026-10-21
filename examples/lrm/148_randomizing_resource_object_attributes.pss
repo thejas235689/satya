@@ -1,0 +1,32 @@
+// PSS v3.0 LRM — Example 148: Randomizing resource object attributes (page 217)
+component top {
+enum rsrc_kind_e {A, B, C, D};
+resource rsrc_obj {
+rand rsrc_kind_e kind;
+}
+pool[2] rsrc_obj rsrc_pool;
+bind rsrc_pool *;
+action do_something {
+share rsrc_obj my_rsrc_inst;
+constraint my_rsrc_inst.kind != A;
+}
+action do_something_else {
+lock rsrc_obj my_rsrc_inst;
+}
+action test {
+do_something      a1, a2;
+do_something_else a3, a4;
+activity {
+parallel {
+a1 with { my_rsrc_inst.kind != B; };
+
+a2 with { my_rsrc_inst.kind != C; };
+
+a3;
+}
+a4 with { my_rsrc_inst.kind == A; };
+}
+}
+}
+
+16.4.6 Procedural randomization of data

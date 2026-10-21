@@ -1,0 +1,21 @@
+// PSS v3.0 LRM — Example 170: Two coverage points and cross coverage items (page 240)
+enum color_e {red, green, blue};
+struct s {
+rand color_e color;
+covergroup {
+c: coverpoint color;
+} cs1;
+}
+enum color_e {red, green, blue};
+struct s {
+    rand color_e        color;
+    rand bit[3:0]       pixel_adr, pixel_offset, pixel_hue;
+    covergroup {
+        Hue : coverpoint pixel_hue;
+        Offset : coverpoint pixel_offset;
+        AxC: cross color, pixel_adr;
+        all : cross color, Hue, Offset;
+    } cs2;
+}
+
+18.2.1 Syntax

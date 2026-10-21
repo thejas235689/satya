@@ -1,0 +1,43 @@
+// PSS v3.0 LRM — Example 168: Data constraints affect action inferencing (page 237)
+component pss_top {
+  buffer data_buff_s {
+    rand int val;
+  };
+  pool data_buff_s data_mem;
+  bind data_mem *;
+  action A_a {
+    output data_buff_s dout;
+    constraint {dout.val<5;}
+  };
+  action B_a {
+    output data_buff_s dout;
+    constraint {dout.val<5;}
+  };
+  action C_a {
+    input data_buff_s din;
+  };
+  action D_a {
+    input data_buff_s din;
+    constraint {din.val > 5;}
+  };
+  action root_a {
+    A_a a;
+    B_a b;
+    C_a c;
+    D_a d;
+    activity {
+      select {a; b;}
+      select {c; d;}
+    }
+  }
+}
+
+18. Data coverage
+The legal state space for all non-trivial verification problems is very large. Coverage goals identify
+important scenarios and key value ranges and value combinations that need to occur in order to exercise key
+functionality. Covering scenarios is the subject of the behavioral coverage, and it is described in Clause 19.
+Covering value ranges and combinations is called data coverage, and it is described in this clause. The
+covergroup construct is used to specify the data coverage targets.
+The coverage targets specified by the covergroup construct are more directly related to the test scenario
+being created. As a consequence, in many cases the coverage targets would be considered coverage targets
+on the “generation” side of stimulus. PSS also allows data to be sampled by calling external functions.

@@ -1,0 +1,28 @@
+// PSS v3.0 LRM — Example 151: Activity with random fields (page 220)
+action A {
+  rand bit[3:0] val;
+}
+
+action my_action {
+  A a, b, c;
+  constraint abc_c {
+    a.val < b.val;
+    b.val < c.val;
+  }
+   activity {
+    a;
+    b;
+    c;
+  }
+}
+
+Constraints accessing attributes through action handles are never violated. However, they are considered
+vacuously satisfied so long as these action handles are uninitialized. The Boolean expressions only need to
+evaluate to true at the point(s) in an activity when all action handles used in a constraint have been traversed.
+Expressions in activity statements accessing attributes through action handles shall be illegal if they are
+evaluated at a point in which any of the action handles are uninitialized. Similarly, expressions in solve-exec
+(pre_solve and post_solve) statements of compound actions accessing attributes of sub-actions shall be
+illegal, since these are evaluated prior to the activity (see 16.4.12), and all action handles are uninitialized at
+that point. This applies equally to right-value and left-value expressions.
+Example 152 shows a root action (my_action) with sub-action fields and an activity containing a loop. A
+value for a.x is selected, then two sets of values for b.x and c.x are selected.

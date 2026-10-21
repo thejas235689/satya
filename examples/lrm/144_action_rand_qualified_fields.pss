@@ -1,0 +1,25 @@
+// PSS v3.0 LRM — Example 144: Action rand-qualified fields (page 213)
+struct S1 {
+  rand bit[3:0]   a;
+  bit[3:0]        b;
+}
+struct S2 {
+  rand S1         s1_1;
+  S1              s1_2;
+}
+action A {
+  rand bit[3:0]   a;
+}
+action B {
+  A  a_1, a_2;
+  rand bit[3:0]   b;
+
+  activity {
+    a_1;
+    a_2;
+  }
+}
+
+Example 145 shows an action-qualified field in action B named a_bit. The PSS processing tool assigns a
+value to a_bit when it is traversed in the activity body. The semantics are identical to assigning a
+value to the rand-qualified action field A::a.

@@ -1,0 +1,10 @@
+// PSS v3.0 LRM — Example 103: buffer object (page 177)
+struct mem_segment_s {...};
+buffer data_buff_s {
+rand mem_segment_s seg;
+};
+
+13.2.1 Syntax
+Syntax 46—stream declaration
+The following also apply:
+a)

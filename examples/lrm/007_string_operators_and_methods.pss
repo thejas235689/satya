@@ -1,0 +1,47 @@
+// PSS v3.0 LRM — Example 7: String operators and methods (page 66)
+component pss_top {
+  action string_manipulations {
+    string hello_str = "Hello, world, and good bye!";
+    int n=1, m=7, k=11;
+    string s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11;
+    int str_size, n1, n2, n3, n4, n5;
+    list<int> int_l;
+    list<string> str_l1, str_l2, str_l3;
+    list<bit[8]> char_codes1, char_codes2;
+    exec post_solve {
+      s1 = hello_str[..4];       // s1 = "Hello"
+      s2 = hello_str[m..k];      // s2 = "world"
+      s3 = hello_str[m..];       // s3 = "world, and good bye!"
+      s4 = hello_str[1];         // s4 = "e"
+      // s5 = hello_str[7..100]; // ERROR: too large ending position
+      // s6 = hello_str[4..1];   // ERROR: starting larger than ending
+      str_size = hello_str.size();  // str_size = 27
+      n1 = hello_str.find("world");    // n1 = 7
+      n2 = hello_str.find("earth");    // n3 = -1
+      n3 = hello_str.find("o");        // n2 = 4
+      n4 = hello_str.find("o", 6);     // n2 = 8
+      n5 = hello_str.find_last("o");   // n5 = 20
+      int_l = hello_str.find_all("o"); // int_l = {4,8,19,20}
+      s7 = hello_str.lower(); // s7 = "hello, world, and good bye!"
+      s8 = hello_str.upper(); // s8 = "HELLO, WORLD, AND GOOD BYE!"
+      str_l1 = hello_str.split(", ");
+            // str_l1 = {"Hello", "world", "and good bye!"}
+      str_l2 = "abc123abcabc456".split("abc");
+            // str_l2 = {"", "123", "", "456"}
+      str_l3 = {"ABC", "XYZ", "123"};
+      s9 = str_l3.join("::");  // s9 = "ABC::XYZ::123"
+      s10 = str_l3.join("");   // s10 = "ABCXYZ123"
+      char_codes1 = s1.chars(); // "Hello" -> {72,101,108,108,111}
+      char_codes2 = {65,66,67,68,69};
+      s11 = char_codes2.str_from_chars(); // s11 = "ABCDE"
+    }
+  }
+}
+
+7.7 Chandles
+The chandle type (pronounced “see-handle”) represents an opaque handle to a foreign language pointer as
+shown in Syntax 13. A chandle is used with the foreign procedural interface (see 22.4) to store foreign
+language pointers in the PSS model and pass them to foreign language functions. See Annex D for more
+information about the foreign procedural interface.
+A chandle has the following restrictions:
+—

@@ -1,0 +1,3 @@
+// PSS v3.0 LRM — Example 119: Declaring a static constraint (page 195)
+      constraint constraint_set
+    | [ dynamic ] constraint identifier constraint_block

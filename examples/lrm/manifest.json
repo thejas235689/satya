@@ -1,0 +1,1578 @@
+[
+ {
+  "num": 2,
+  "title": "Map literals",
+  "page": 46,
+  "kind": "declaration",
+  "file": "002_map_literals.pss",
+  "lines": 4
+ },
+ {
+  "num": 4,
+  "title": "Nesting aggregate literals",
+  "page": 47,
+  "kind": "action",
+  "file": "004_nesting_aggregate_literals.pss",
+  "lines": 97
+ },
+ {
+  "num": 6,
+  "title": "String data type",
+  "page": 65,
+  "kind": "declaration",
+  "file": "006_string_data_type.pss",
+  "lines": 16
+ },
+ {
+  "num": 7,
+  "title": "String operators and methods",
+  "page": 66,
+  "kind": "component",
+  "file": "007_string_operators_and_methods.pss",
+  "lines": 46
+ },
+ {
+  "num": 8,
+  "title": "chandle data type",
+  "page": 67,
+  "kind": "declaration",
+  "file": "008_chandle_data_type.pss",
+  "lines": 10
+ },
+ {
+  "num": 9,
+  "title": "Struct with rand qualifiers",
+  "page": 69,
+  "kind": "declaration",
+  "file": "009_struct_with_rand_qualifiers.pss",
+  "lines": 12
+ },
+ {
+  "num": 12,
+  "title": "Array declarations",
+  "page": 70,
+  "kind": "declaration",
+  "file": "012_array_declarations.pss",
+  "lines": 68
+ },
+ {
+  "num": 14,
+  "title": "Array operators and methods",
+  "page": 73,
+  "kind": "component",
+  "file": "014_array_operators_and_methods.pss",
+  "lines": 44
+ },
+ {
+  "num": 18,
+  "title": "Declaring a map in a struct",
+  "page": 78,
+  "kind": "declaration",
+  "file": "018_declaring_a_map_in_a_struct.pss",
+  "lines": 39
+ },
+ {
+  "num": 19,
+  "title": "Map operators and methods",
+  "page": 81,
+  "kind": "component",
+  "file": "019_map_operators_and_methods.pss",
+  "lines": 44
+ },
+ {
+  "num": 20,
+  "title": "Declaring a set in a struct",
+  "page": 82,
+  "kind": "expression",
+  "file": "020_declaring_a_set_in_a_struct.pss",
+  "lines": 1
+ },
+ {
+  "num": 21,
+  "title": "Set operators and methods",
+  "page": 84,
+  "kind": "component",
+  "file": "021_set_operators_and_methods.pss",
+  "lines": 58
+ },
+ {
+  "num": 22,
+  "title": "Use of reference as local variable and function return value",
+  "page": 86,
+  "kind": "component",
+  "file": "022_use_of_reference_as_local_variable_and_function_.pss",
+  "lines": 16
+ },
+ {
+  "num": 24,
+  "title": "typedef",
+  "page": 87,
+  "kind": "component",
+  "file": "024_typedef.pss",
+  "lines": 28
+ },
+ {
+  "num": 26,
+  "title": "Casting of variable to a bit vector",
+  "page": 89,
+  "kind": "package",
+  "file": "026_casting_of_variable_to_a_bit_vector.pss",
+  "lines": 37
+ },
+ {
+  "num": 27,
+  "title": "Casting of reference type",
+  "page": 90,
+  "kind": "component",
+  "file": "027_casting_of_reference_type.pss",
+  "lines": 16
+ },
+ {
+  "num": 30,
+  "title": "Using non-constant expressions in aggregate literals",
+  "page": 95,
+  "kind": "declaration",
+  "file": "030_using_non_constant_expressions_in_aggregate_lite.pss",
+  "lines": 63
+ },
+ {
+  "num": 32,
+  "title": "Contextual typing in enum_item resolution",
+  "page": 97,
+  "kind": "component",
+  "file": "032_contextual_typing_in_enum_item_resolution.pss",
+  "lines": 43
+ },
+ {
+  "num": 36,
+  "title": "Component",
+  "page": 109,
+  "kind": "expression",
+  "file": "036_component.pss",
+  "lines": 1
+ },
+ {
+  "num": 38,
+  "title": "Component declared in package",
+  "page": 110,
+  "kind": "component",
+  "file": "038_component_declared_in_package.pss",
+  "lines": 55
+ },
+ {
+  "num": 40,
+  "title": "Component attribute and function access",
+  "page": 112,
+  "kind": "component",
+  "file": "040_component_attribute_and_function_access.pss",
+  "lines": 66
+ },
+ {
+  "num": 41,
+  "title": "Illegal traversal of an action outside of the containing component hierarchy",
+  "page": 114,
+  "kind": "component",
+  "file": "041_illegal_traversal_of_an_action_outside_of_the_co.pss",
+  "lines": 23
+ },
+ {
+  "num": 42,
+  "title": "Using the comp attribute in constraints",
+  "page": 115,
+  "kind": "component",
+  "file": "042_using_the_comp_attribute_in_constraints.pss",
+  "lines": 21
+ },
+ {
+  "num": 43,
+  "title": "Pure components",
+  "page": 116,
+  "kind": "component",
+  "file": "043_pure_components.pss",
+  "lines": 32
+ },
+ {
+  "num": 45,
+  "title": "compound action",
+  "page": 119,
+  "kind": "action",
+  "file": "045_compound_action.pss",
+  "lines": 21
+ },
+ {
+  "num": 46,
+  "title": "abstract action",
+  "page": 120,
+  "kind": "component",
+  "file": "046_abstract_action.pss",
+  "lines": 20
+ },
+ {
+  "num": 52,
+  "title": "Template parameter used as base type",
+  "page": 125,
+  "kind": "action",
+  "file": "052_template_parameter_used_as_base_type.pss",
+  "lines": 40
+ },
+ {
+  "num": 54,
+  "title": "Template type qualification",
+  "page": 127,
+  "kind": "component",
+  "file": "054_template_type_qualification.pss",
+  "lines": 21
+ },
+ {
+  "num": 57,
+  "title": "Anonymous action traversal",
+  "page": 132,
+  "kind": "action",
+  "file": "057_anonymous_action_traversal.pss",
+  "lines": 25
+ },
+ {
+  "num": 58,
+  "title": "Labeled action traversal",
+  "page": 133,
+  "kind": "action",
+  "file": "058_labeled_action_traversal.pss",
+  "lines": 16
+ },
+ {
+  "num": 60,
+  "title": "Individual action handle array element traversal",
+  "page": 134,
+  "kind": "component",
+  "file": "060_individual_action_handle_array_element_traversal.pss",
+  "lines": 41
+ },
+ {
+  "num": 65,
+  "title": "Another parallel statement",
+  "page": 138,
+  "kind": "action",
+  "file": "065_another_parallel_statement.pss",
+  "lines": 49
+ },
+ {
+  "num": 67,
+  "title": "Scheduling block with sequential sub-blocks",
+  "page": 141,
+  "kind": "action",
+  "file": "067_scheduling_block_with_sequential_sub_blocks.pss",
+  "lines": 54
+ },
+ {
+  "num": 68,
+  "title": "join_branch",
+  "page": 143,
+  "kind": "declaration",
+  "file": "068_join_branch.pss",
+  "lines": 16
+ },
+ {
+  "num": 69,
+  "title": "join_branch with scheduling dependency",
+  "page": 145,
+  "kind": "declaration",
+  "file": "069_join_branch_with_scheduling_dependency.pss",
+  "lines": 7
+ },
+ {
+  "num": 71,
+  "title": "join_none",
+  "page": 147,
+  "kind": "declaration",
+  "file": "071_join_none.pss",
+  "lines": 17
+ },
+ {
+  "num": 73,
+  "title": "Scope of join inside sequence block",
+  "page": 148,
+  "kind": "declaration",
+  "file": "073_scope_of_join_inside_sequence_block.pss",
+  "lines": 17
+ },
+ {
+  "num": 74,
+  "title": "join with schedule block",
+  "page": 150,
+  "kind": "declaration",
+  "file": "074_join_with_schedule_block.pss",
+  "lines": 25
+ },
+ {
+  "num": 75,
+  "title": "Atomic block to avoid action interference",
+  "page": 152,
+  "kind": "action",
+  "file": "075_atomic_block_to_avoid_action_interference.pss",
+  "lines": 64
+ },
+ {
+  "num": 76,
+  "title": "Atomic block to avoid resource allocation issues",
+  "page": 154,
+  "kind": "action",
+  "file": "076_atomic_block_to_avoid_resource_allocation_issues.pss",
+  "lines": 40
+ },
+ {
+  "num": 77,
+  "title": "repeat statement",
+  "page": 155,
+  "kind": "action",
+  "file": "077_repeat_statement.pss",
+  "lines": 10
+ },
+ {
+  "num": 81,
+  "title": "Select statement",
+  "page": 159,
+  "kind": "action",
+  "file": "081_select_statement.pss",
+  "lines": 10
+ },
+ {
+  "num": 85,
+  "title": "match statement",
+  "page": 162,
+  "kind": "action",
+  "file": "085_match_statement.pss",
+  "lines": 15
+ },
+ {
+  "num": 86,
+  "title": "replicate statement",
+  "page": 163,
+  "kind": "action",
+  "file": "086_replicate_statement.pss",
+  "lines": 13
+ },
+ {
+  "num": 88,
+  "title": "Rewriting previous example without replicate statement",
+  "page": 164,
+  "kind": "action",
+  "file": "088_rewriting_previous_example_without_replicate_sta.pss",
+  "lines": 23
+ },
+ {
+  "num": 89,
+  "title": "replicate statement with label array",
+  "page": 165,
+  "kind": "action",
+  "file": "089_replicate_statement_with_label_array.pss",
+  "lines": 23
+ },
+ {
+  "num": 90,
+  "title": "replicate statement error situations",
+  "page": 166,
+  "kind": "action",
+  "file": "090_replicate_statement_error_situations.pss",
+  "lines": 21
+ },
+ {
+  "num": 92,
+  "title": "Hand-coded action traversal",
+  "page": 167,
+  "kind": "component",
+  "file": "092_hand_coded_action_traversal.pss",
+  "lines": 37
+ },
+ {
+  "num": 95,
+  "title": "Using a parameterized symbol",
+  "page": 169,
+  "kind": "component",
+  "file": "095_using_a_parameterized_symbol.pss",
+  "lines": 68
+ },
+ {
+  "num": 96,
+  "title": "Scoping and named sub-activities",
+  "page": 170,
+  "kind": "action",
+  "file": "096_scoping_and_named_sub_activities.pss",
+  "lines": 26
+ },
+ {
+  "num": 97,
+  "title": "Activity statement label name conflict",
+  "page": 171,
+  "kind": "action",
+  "file": "097_activity_statement_label_name_conflict.pss",
+  "lines": 25
+ },
+ {
+  "num": 98,
+  "title": "Hierarchical references and named sub-activities",
+  "page": 172,
+  "kind": "action",
+  "file": "098_hierarchical_references_and_named_sub_activities.pss",
+  "lines": 41
+ },
+ {
+  "num": 99,
+  "title": "bind statement",
+  "page": 174,
+  "kind": "component",
+  "file": "099_bind_statement.pss",
+  "lines": 35
+ },
+ {
+  "num": 101,
+  "title": "Hierarchical flow binding for stream objects",
+  "page": 175,
+  "kind": "action",
+  "file": "101_hierarchical_flow_binding_for_stream_objects.pss",
+  "lines": 39
+ },
+ {
+  "num": 102,
+  "title": "Hierarchical resource binding",
+  "page": 176,
+  "kind": "action",
+  "file": "102_hierarchical_resource_binding.pss",
+  "lines": 34
+ },
+ {
+  "num": 103,
+  "title": "buffer object",
+  "page": 177,
+  "kind": "declaration",
+  "file": "103_buffer_object.pss",
+  "lines": 9
+ },
+ {
+  "num": 105,
+  "title": "state object",
+  "page": 179,
+  "kind": "declaration",
+  "file": "105_state_object.pss",
+  "lines": 9
+ },
+ {
+  "num": 107,
+  "title": "stream flow object",
+  "page": 181,
+  "kind": "action",
+  "file": "107_stream_flow_object.pss",
+  "lines": 22
+ },
+ {
+  "num": 108,
+  "title": "Multiple producers/consumers using the same buffer pool",
+  "page": 182,
+  "kind": "component",
+  "file": "108_multiple_producers_consumers_using_the_same_buff.pss",
+  "lines": 67
+ },
+ {
+  "num": 109,
+  "title": "Declaring a resource",
+  "page": 183,
+  "kind": "action",
+  "file": "109_declaring_a_resource.pss",
+  "lines": 22
+ },
+ {
+  "num": 111,
+  "title": "Locking and sharing arrays of resource objects",
+  "page": 185,
+  "kind": "component",
+  "file": "111_locking_and_sharing_arrays_of_resource_objects.pss",
+  "lines": 51
+ },
+ {
+  "num": 112,
+  "title": "Pool declaration",
+  "page": 186,
+  "kind": "component",
+  "file": "112_pool_declaration.pss",
+  "lines": 10
+ },
+ {
+  "num": 113,
+  "title": "Static binding",
+  "page": 188,
+  "kind": "component",
+  "file": "113_static_binding.pss",
+  "lines": 18
+ },
+ {
+  "num": 114,
+  "title": "Binding of pools to array of components",
+  "page": 189,
+  "kind": "component",
+  "file": "114_binding_of_pools_to_array_of_components.pss",
+  "lines": 12
+ },
+ {
+  "num": 115,
+  "title": "Pool binding",
+  "page": 190,
+  "kind": "component",
+  "file": "115_pool_binding.pss",
+  "lines": 36
+ },
+ {
+  "num": 116,
+  "title": "Multiple state pools of the same state type",
+  "page": 191,
+  "kind": "component",
+  "file": "116_multiple_state_pools_of_the_same_state_type.pss",
+  "lines": 31
+ },
+ {
+  "num": 118,
+  "title": "State object binding",
+  "page": 193,
+  "kind": "component",
+  "file": "118_state_object_binding.pss",
+  "lines": 19
+ },
+ {
+  "num": 119,
+  "title": "Declaring a static constraint",
+  "page": 195,
+  "kind": "declaration",
+  "file": "119_declaring_a_static_constraint.pss",
+  "lines": 2
+ },
+ {
+  "num": 121,
+  "title": "Referencing a dynamic constraint inside a static constraint",
+  "page": 196,
+  "kind": "action",
+  "file": "121_referencing_a_dynamic_constraint_inside_a_static.pss",
+  "lines": 31
+ },
+ {
+  "num": 122,
+  "title": "Inheriting and shadowing constraints",
+  "page": 197,
+  "kind": "declaration",
+  "file": "122_inheriting_and_shadowing_constraints.pss",
+  "lines": 9
+ },
+ {
+  "num": 124,
+  "title": "Name resolution inside with constraint block",
+  "page": 198,
+  "kind": "component",
+  "file": "124_name_resolution_inside_with_constraint_block.pss",
+  "lines": 70
+ },
+ {
+  "num": 126,
+  "title": "if constraint",
+  "page": 200,
+  "kind": "declaration",
+  "file": "126_if_constraint.pss",
+  "lines": 13
+ },
+ {
+  "num": 128,
+  "title": "forall constraint",
+  "page": 203,
+  "kind": "action",
+  "file": "128_forall_constraint.pss",
+  "lines": 29
+ },
+ {
+  "num": 130,
+  "title": "forall constraint in different activity scopes",
+  "page": 204,
+  "kind": "action",
+  "file": "130_forall_constraint_in_different_activity_scopes.pss",
+  "lines": 28
+ },
+ {
+  "num": 132,
+  "title": "unique constraint",
+  "page": 205,
+  "kind": "action",
+  "file": "132_unique_constraint.pss",
+  "lines": 18
+ },
+ {
+  "num": 134,
+  "title": "Contradiction with default value constraints",
+  "page": 207,
+  "kind": "action",
+  "file": "134_contradiction_with_default_value_constraints.pss",
+  "lines": 36
+ },
+ {
+  "num": 135,
+  "title": "Default value constraints on compound data types",
+  "page": 208,
+  "kind": "action",
+  "file": "135_default_value_constraints_on_compound_data_types.pss",
+  "lines": 15
+ },
+ {
+  "num": 138,
+  "title": "Distribution directive weight specification forms",
+  "page": 209,
+  "kind": "declaration",
+  "file": "138_distribution_directive_weight_specification_form.pss",
+  "lines": 15
+ },
+ {
+  "num": 141,
+  "title": "Scheduling constraints",
+  "page": 211,
+  "kind": "action",
+  "file": "141_scheduling_constraints.pss",
+  "lines": 29
+ },
+ {
+  "num": 142,
+  "title": "Sequencing constraints",
+  "page": 212,
+  "kind": "component",
+  "file": "142_sequencing_constraints.pss",
+  "lines": 20
+ },
+ {
+  "num": 144,
+  "title": "Action rand-qualified fields",
+  "page": 213,
+  "kind": "action",
+  "file": "144_action_rand_qualified_fields.pss",
+  "lines": 24
+ },
+ {
+  "num": 146,
+  "title": "Hierarchical constraint reference to list element",
+  "page": 214,
+  "kind": "action",
+  "file": "146_hierarchical_constraint_reference_to_list_elemen.pss",
+  "lines": 59
+ },
+ {
+  "num": 147,
+  "title": "Randomizing flow object attributes",
+  "page": 216,
+  "kind": "component",
+  "file": "147_randomizing_flow_object_attributes.pss",
+  "lines": 24
+ },
+ {
+  "num": 148,
+  "title": "Randomizing resource object attributes",
+  "page": 217,
+  "kind": "component",
+  "file": "148_randomizing_resource_object_attributes.pss",
+  "lines": 31
+ },
+ {
+  "num": 150,
+  "title": "Evaluation of solve-time exec blocks in procedural randomization",
+  "page": 219,
+  "kind": "action",
+  "file": "150_evaluation_of_solve_time_exec_blocks_in_procedur.pss",
+  "lines": 26
+ },
+ {
+  "num": 151,
+  "title": "Activity with random fields",
+  "page": 220,
+  "kind": "action",
+  "file": "151_activity_with_random_fields.pss",
+  "lines": 27
+ },
+ {
+  "num": 152,
+  "title": "Value selection of multiple traversals",
+  "page": 221,
+  "kind": "action",
+  "file": "152_value_selection_of_multiple_traversals.pss",
+  "lines": 17
+ },
+ {
+  "num": 154,
+  "title": "Struct with random fields",
+  "page": 222,
+  "kind": "action",
+  "file": "154_struct_with_random_fields.pss",
+  "lines": 51
+ },
+ {
+  "num": 155,
+  "title": "Activity with random fields",
+  "page": 223,
+  "kind": "action",
+  "file": "155_activity_with_random_fields.pss",
+  "lines": 21
+ },
+ {
+  "num": 156,
+  "title": "Sub-activity traversal",
+  "page": 224,
+  "kind": "component",
+  "file": "156_sub_activity_traversal.pss",
+  "lines": 28
+ },
+ {
+  "num": 158,
+  "title": "pre_solve/post_solve",
+  "page": 227,
+  "kind": "declaration",
+  "file": "158_pre_solve_post_solve.pss",
+  "lines": 31
+ },
+ {
+  "num": 159,
+  "title": "post_solve ordering between action and flow objects",
+  "page": 228,
+  "kind": "action",
+  "file": "159_post_solve_ordering_between_action_and_flow_obje.pss",
+  "lines": 25
+ },
+ {
+  "num": 160,
+  "title": "exec body block sampling external data",
+  "page": 229,
+  "kind": "component",
+  "file": "160_exec_body_block_sampling_external_data.pss",
+  "lines": 43
+ },
+ {
+  "num": 161,
+  "title": "Generating multiple scenarios",
+  "page": 230,
+  "kind": "component",
+  "file": "161_generating_multiple_scenarios.pss",
+  "lines": 60
+ },
+ {
+  "num": 162,
+  "title": "Action inferences for partially-specified flows",
+  "page": 232,
+  "kind": "component",
+  "file": "162_action_inferences_for_partially_specified_flows.pss",
+  "lines": 51
+ },
+ {
+  "num": 163,
+  "title": "Buffer equality constraint to limit inferencing",
+  "page": 233,
+  "kind": "component",
+  "file": "163_buffer_equality_constraint_to_limit_inferencing.pss",
+  "lines": 22
+ },
+ {
+  "num": 164,
+  "title": "Resource equality constraint may affect scheduling",
+  "page": 234,
+  "kind": "component",
+  "file": "164_resource_equality_constraint_may_affect_scheduli.pss",
+  "lines": 31
+ },
+ {
+  "num": 166,
+  "title": "Inferred traversal of an action outside of the containing component hierarchy",
+  "page": 235,
+  "kind": "component",
+  "file": "166_inferred_traversal_of_an_action_outside_of_the_c.pss",
+  "lines": 50
+ },
+ {
+  "num": 167,
+  "title": "In-line data constraints affect action inferencing",
+  "page": 236,
+  "kind": "component",
+  "file": "167_in_line_data_constraints_affect_action_inferenci.pss",
+  "lines": 21
+ },
+ {
+  "num": 168,
+  "title": "Data constraints affect action inferencing",
+  "page": 237,
+  "kind": "expression",
+  "file": "168_data_constraints_affect_action_inferencing.pss",
+  "lines": 42
+ },
+ {
+  "num": 170,
+  "title": "Two coverage points and cross coverage items",
+  "page": 240,
+  "kind": "expression",
+  "file": "170_two_coverage_points_and_cross_coverage_items.pss",
+  "lines": 20
+ },
+ {
+  "num": 175,
+  "title": "Specifying bins",
+  "page": 245,
+  "kind": "expression",
+  "file": "175_specifying_bins.pss",
+  "lines": 12
+ },
+ {
+  "num": 179,
+  "title": "Specifying illegal coverage point values",
+  "page": 247,
+  "kind": "expression",
+  "file": "179_specifying_illegal_coverage_point_values.pss",
+  "lines": 29
+ },
+ {
+  "num": 180,
+  "title": "Value resolution",
+  "page": 248,
+  "kind": "expression",
+  "file": "180_value_resolution.pss",
+  "lines": 29
+ },
+ {
+  "num": 182,
+  "title": "Specifying cross bins",
+  "page": 250,
+  "kind": "expression",
+  "file": "182_specifying_cross_bins.pss",
+  "lines": 80
+ },
+ {
+  "num": 184,
+  "title": "Per-instance coverage of flow objects",
+  "page": 253,
+  "kind": "expression",
+  "file": "184_per_instance_coverage_of_flow_objects.pss",
+  "lines": 30
+ },
+ {
+  "num": 185,
+  "title": "Per-instance coverage in actions",
+  "page": 254,
+  "kind": "expression",
+  "file": "185_per_instance_coverage_in_actions.pss",
+  "lines": 35
+ },
+ {
+  "num": 187,
+  "title": "Illustration of behavioral coverage concepts",
+  "page": 258,
+  "kind": "expression",
+  "file": "187_illustration_of_behavioral_coverage_concepts.pss",
+  "lines": 41
+ },
+ {
+  "num": 188,
+  "title": "Action traversal in monitors",
+  "page": 262,
+  "kind": "expression",
+  "file": "188_action_traversal_in_monitors.pss",
+  "lines": 61
+ },
+ {
+  "num": 189,
+  "title": "Concat vs sequence scenarios. Simple case",
+  "page": 266,
+  "kind": "expression",
+  "file": "189_concat_vs_sequence_scenarios_simple_case.pss",
+  "lines": 29
+ },
+ {
+  "num": 190,
+  "title": "Concat vs sequence scenarios. Covergroups",
+  "page": 267,
+  "kind": "expression",
+  "file": "190_concat_vs_sequence_scenarios_covergroups.pss",
+  "lines": 47
+ },
+ {
+  "num": 191,
+  "title": "Concat vs sequence scenarios. Inline constraints with same behavior",
+  "page": 268,
+  "kind": "expression",
+  "file": "191_concat_vs_sequence_scenarios_inline_constraints_.pss",
+  "lines": 21
+ },
+ {
+  "num": 192,
+  "title": "Concat vs sequence scenarios. Different behavior due to standalone constraints",
+  "page": 269,
+  "kind": "expression",
+  "file": "192_concat_vs_sequence_scenarios_different_behavior_.pss",
+  "lines": 33
+ },
+ {
+  "num": 193,
+  "title": "Concat vs sequence scenarios. Inline constraints with different behavior",
+  "page": 271,
+  "kind": "expression",
+  "file": "193_concat_vs_sequence_scenarios_inline_constraints_.pss",
+  "lines": 35
+ },
+ {
+  "num": 194,
+  "title": "Eventuality scenario",
+  "page": 273,
+  "kind": "expression",
+  "file": "194_eventuality_scenario.pss",
+  "lines": 43
+ },
+ {
+  "num": 195,
+  "title": "Overlapping scenario",
+  "page": 274,
+  "kind": "expression",
+  "file": "195_overlapping_scenario.pss",
+  "lines": 12
+ },
+ {
+  "num": 196,
+  "title": "Overlapping of three scenarios",
+  "page": 276,
+  "kind": "expression",
+  "file": "196_overlapping_of_three_scenarios.pss",
+  "lines": 29
+ },
+ {
+  "num": 197,
+  "title": "Illustration of behavioral coverage concepts",
+  "page": 277,
+  "kind": "expression",
+  "file": "197_illustration_of_behavioral_coverage_concepts.pss",
+  "lines": 1
+ },
+ {
+  "num": 198,
+  "title": "Empty scenarios",
+  "page": 278,
+  "kind": "expression",
+  "file": "198_empty_scenarios.pss",
+  "lines": 22
+ },
+ {
+  "num": 199,
+  "title": "Degenerate scenario",
+  "page": 279,
+  "kind": "expression",
+  "file": "199_degenerate_scenario.pss",
+  "lines": 27
+ },
+ {
+  "num": 200,
+  "title": "Scheduling scenario",
+  "page": 280,
+  "kind": "expression",
+  "file": "200_scheduling_scenario.pss",
+  "lines": 16
+ },
+ {
+  "num": 201,
+  "title": "Scheduling scenario with common actions",
+  "page": 281,
+  "kind": "expression",
+  "file": "201_scheduling_scenario_with_common_actions.pss",
+  "lines": 56
+ },
+ {
+  "num": 202,
+  "title": "Monitor traversal",
+  "page": 283,
+  "kind": "expression",
+  "file": "202_monitor_traversal.pss",
+  "lines": 34
+ },
+ {
+  "num": 203,
+  "title": "Data constraint at monitor instantiation",
+  "page": 284,
+  "kind": "expression",
+  "file": "203_data_constraint_at_monitor_instantiation.pss",
+  "lines": 57
+ },
+ {
+  "num": 204,
+  "title": "Action handles in monitors",
+  "page": 286,
+  "kind": "expression",
+  "file": "204_action_handles_in_monitors.pss",
+  "lines": 14
+ },
+ {
+  "num": 205,
+  "title": "Inlined and standalone constraints in monitors",
+  "page": 287,
+  "kind": "expression",
+  "file": "205_inlined_and_standalone_constraints_in_monitors.pss",
+  "lines": 25
+ },
+ {
+  "num": 206,
+  "title": "Covergroup in a cover statement",
+  "page": 288,
+  "kind": "expression",
+  "file": "206_covergroup_in_a_cover_statement.pss",
+  "lines": 21
+ },
+ {
+  "num": 208,
+  "title": "Covergroup in a cover statement",
+  "page": 290,
+  "kind": "expression",
+  "file": "208_covergroup_in_a_cover_statement.pss",
+  "lines": 36
+ },
+ {
+  "num": 210,
+  "title": "Monitor inheritance and traversal",
+  "page": 293,
+  "kind": "expression",
+  "file": "210_monitor_inheritance_and_traversal.pss",
+  "lines": 42
+ },
+ {
+  "num": 212,
+  "title": "Default pool with inheritance",
+  "page": 296,
+  "kind": "component",
+  "file": "212_default_pool_with_inheritance.pss",
+  "lines": 45
+ },
+ {
+  "num": 213,
+  "title": "Polymorphic function calls",
+  "page": 297,
+  "kind": "component",
+  "file": "213_polymorphic_function_calls.pss",
+  "lines": 42
+ },
+ {
+  "num": 214,
+  "title": "Derived type is also a base type",
+  "page": 298,
+  "kind": "component",
+  "file": "214_derived_type_is_also_a_base_type.pss",
+  "lines": 26
+ },
+ {
+  "num": 215,
+  "title": "Use of comp and this.comp with inheritance",
+  "page": 299,
+  "kind": "component",
+  "file": "215_use_of_comp_and_this_comp_with_inheritance.pss",
+  "lines": 25
+ },
+ {
+  "num": 217,
+  "title": "Type extension",
+  "page": 301,
+  "kind": "component",
+  "file": "217_type_extension.pss",
+  "lines": 18
+ },
+ {
+  "num": 219,
+  "title": "Action type extension",
+  "page": 303,
+  "kind": "component",
+  "file": "219_action_type_extension.pss",
+  "lines": 41
+ },
+ {
+  "num": 220,
+  "title": "Enum type extensions",
+  "page": 304,
+  "kind": "component",
+  "file": "220_enum_type_extensions.pss",
+  "lines": 44
+ },
+ {
+  "num": 221,
+  "title": "Template type extension",
+  "page": 306,
+  "kind": "declaration",
+  "file": "221_template_type_extension.pss",
+  "lines": 27
+ },
+ {
+  "num": 222,
+  "title": "Combining inheritance and extension",
+  "page": 307,
+  "kind": "component",
+  "file": "222_combining_inheritance_and_extension.pss",
+  "lines": 24
+ },
+ {
+  "num": 226,
+  "title": "Type inheritance and overrides",
+  "page": 311,
+  "kind": "action",
+  "file": "226_type_inheritance_and_overrides.pss",
+  "lines": 33
+ },
+ {
+  "num": 227,
+  "title": "Hierarchical declaration of nested package",
+  "page": 314,
+  "kind": "expression",
+  "file": "227_hierarchical_declaration_of_nested_package.pss",
+  "lines": 5
+ },
+ {
+  "num": 229,
+  "title": "Declaration of nested package before outer package",
+  "page": 314,
+  "kind": "package",
+  "file": "229_declaration_of_nested_package_before_outer_packa.pss",
+  "lines": 48
+ },
+ {
+  "num": 230,
+  "title": "Importing the name of a nested package",
+  "page": 316,
+  "kind": "package",
+  "file": "230_importing_the_name_of_a_nested_package.pss",
+  "lines": 17
+ },
+ {
+  "num": 232,
+  "title": "Illegal package alias declarations",
+  "page": 317,
+  "kind": "package",
+  "file": "232_illegal_package_alias_declarations.pss",
+  "lines": 27
+ },
+ {
+  "num": 235,
+  "title": "Reference to local variable after declaration",
+  "page": 318,
+  "kind": "component",
+  "file": "235_reference_to_local_variable_after_declaration.pss",
+  "lines": 21
+ },
+ {
+  "num": 237,
+  "title": "Name resolution to declaration in nested namespace",
+  "page": 320,
+  "kind": "component",
+  "file": "237_name_resolution_to_declaration_in_nested_namespa.pss",
+  "lines": 14
+ },
+ {
+  "num": 240,
+  "title": "Name resolution to declaration in imported package in encapsulating package",
+  "page": 321,
+  "kind": "component",
+  "file": "240_name_resolution_to_declaration_in_imported_packa.pss",
+  "lines": 29
+ },
+ {
+  "num": 244,
+  "title": "Resolution of enum item references",
+  "page": 323,
+  "kind": "component",
+  "file": "244_resolution_of_enum_item_references.pss",
+  "lines": 35
+ },
+ {
+  "num": 245,
+  "title": "Resolution in presence of package alias",
+  "page": 324,
+  "kind": "component",
+  "file": "245_resolution_in_presence_of_package_alias.pss",
+  "lines": 75
+ },
+ {
+  "num": 246,
+  "title": "Data initialization in a component",
+  "page": 328,
+  "kind": "component",
+  "file": "246_data_initialization_in_a_component.pss",
+  "lines": 14
+ },
+ {
+  "num": 247,
+  "title": "init_down and init_up exec blocks",
+  "page": 329,
+  "kind": "component",
+  "file": "247_init_down_and_init_up_exec_blocks.pss",
+  "lines": 37
+ },
+ {
+  "num": 248,
+  "title": "Accessing component data field from an action",
+  "page": 330,
+  "kind": "component",
+  "file": "248_accessing_component_data_field_from_an_action.pss",
+  "lines": 30
+ },
+ {
+  "num": 249,
+  "title": "Inheritance and shadowing",
+  "page": 331,
+  "kind": "action",
+  "file": "249_inheritance_and_shadowing.pss",
+  "lines": 18
+ },
+ {
+  "num": 250,
+  "title": "Using super",
+  "page": 332,
+  "kind": "action",
+  "file": "250_using_super.pss",
+  "lines": 22
+ },
+ {
+  "num": 251,
+  "title": "Type extension contributes an exec block",
+  "page": 333,
+  "kind": "action",
+  "file": "251_type_extension_contributes_an_exec_block.pss",
+  "lines": 21
+ },
+ {
+  "num": 252,
+  "title": "exec blocks added via extension",
+  "page": 334,
+  "kind": "action",
+  "file": "252_exec_blocks_added_via_extension.pss",
+  "lines": 37
+ },
+ {
+  "num": 253,
+  "title": "Function availability",
+  "page": 337,
+  "kind": "package",
+  "file": "253_function_availability.pss",
+  "lines": 18
+ },
+ {
+  "num": 254,
+  "title": "Reactive control flow",
+  "page": 338,
+  "kind": "component",
+  "file": "254_reactive_control_flow.pss",
+  "lines": 40
+ },
+ {
+  "num": 256,
+  "title": "const parameter declaration",
+  "page": 340,
+  "kind": "component",
+  "file": "256_const_parameter_declaration.pss",
+  "lines": 30
+ },
+ {
+  "num": 260,
+  "title": "Pure function",
+  "page": 343,
+  "kind": "action",
+  "file": "260_pure_function.pss",
+  "lines": 18
+ },
+ {
+  "num": 261,
+  "title": "Calling functions",
+  "page": 344,
+  "kind": "component",
+  "file": "261_calling_functions.pss",
+  "lines": 31
+ },
+ {
+  "num": 262,
+  "title": "Function calls restrictions",
+  "page": 345,
+  "kind": "component",
+  "file": "262_function_calls_restrictions.pss",
+  "lines": 80
+ },
+ {
+  "num": 263,
+  "title": "Parameter passing semantics",
+  "page": 348,
+  "kind": "component",
+  "file": "263_parameter_passing_semantics.pss",
+  "lines": 65
+ },
+ {
+  "num": 264,
+  "title": "Explicit specification of the implementation language",
+  "page": 350,
+  "kind": "package",
+  "file": "264_explicit_specification_of_the_implementation_lan.pss",
+  "lines": 15
+ },
+ {
+  "num": 266,
+  "title": "Referencing PSS variables using mustache notation",
+  "page": 352,
+  "kind": "component",
+  "file": "266_referencing_pss_variables_using_mustache_notatio.pss",
+  "lines": 15
+ },
+ {
+  "num": 267,
+  "title": "Variable reference used to select the function",
+  "page": 353,
+  "kind": "declaration",
+  "file": "267_variable_reference_used_to_select_the_function.pss",
+  "lines": 3
+ },
+ {
+  "num": 268,
+  "title": "Allowing programmatic declaration of a target variable declaration",
+  "page": 353,
+  "kind": "component",
+  "file": "268_allowing_programmatic_declaration_of_a_target_va.pss",
+  "lines": 58
+ },
+ {
+  "num": 269,
+  "title": "Denoting multi- and single-line comments",
+  "page": 355,
+  "kind": "component",
+  "file": "269_denoting_multi_and_single_line_comments.pss",
+  "lines": 15
+ },
+ {
+  "num": 271,
+  "title": "Procedural return statement",
+  "page": 360,
+  "kind": "expression",
+  "file": "271_procedural_return_statement.pss",
+  "lines": 3
+ },
+ {
+  "num": 272,
+  "title": "Procedural repeat-count statement",
+  "page": 361,
+  "kind": "expression",
+  "file": "272_procedural_repeat_count_statement.pss",
+  "lines": 8
+ },
+ {
+  "num": 273,
+  "title": "Procedural while statement",
+  "page": 362,
+  "kind": "expression",
+  "file": "273_procedural_while_statement.pss",
+  "lines": 9
+ },
+ {
+  "num": 275,
+  "title": "Procedural match statement",
+  "page": 365,
+  "kind": "expression",
+  "file": "275_procedural_match_statement.pss",
+  "lines": 10
+ },
+ {
+  "num": 279,
+  "title": "Export action foreign language implementation",
+  "page": 371,
+  "kind": "component",
+  "file": "279_export_action_foreign_language_implementation.pss",
+  "lines": 25
+ },
+ {
+  "num": 280,
+  "title": "Conditional compilation evaluation",
+  "page": 373,
+  "kind": "package",
+  "file": "280_conditional_compilation_evaluation.pss",
+  "lines": 39
+ },
+ {
+  "num": 282,
+  "title": "Conditional processing (compile if)",
+  "page": 375,
+  "kind": "action",
+  "file": "282_conditional_processing_compile_if.pss",
+  "lines": 12
+ },
+ {
+  "num": 285,
+  "title": "compile assert",
+  "page": 377,
+  "kind": "package",
+  "file": "285_compile_assert.pss",
+  "lines": 92
+ },
+ {
+  "num": 290,
+  "title": "Conversion to and from storage type",
+  "page": 389,
+  "kind": "declaration",
+  "file": "290_conversion_to_and_from_storage_type.pss",
+  "lines": 33
+ },
+ {
+  "num": 291,
+  "title": "Defining an executor group",
+  "page": 392,
+  "kind": "component",
+  "file": "291_defining_an_executor_group.pss",
+  "lines": 24
+ },
+ {
+  "num": 292,
+  "title": "Simple executor assignment",
+  "page": 393,
+  "kind": "component",
+  "file": "292_simple_executor_assignment.pss",
+  "lines": 40
+ },
+ {
+  "num": 293,
+  "title": "Definition and use of executor trait",
+  "page": 395,
+  "kind": "component",
+  "file": "293_definition_and_use_of_executor_trait.pss",
+  "lines": 41
+ },
+ {
+  "num": 294,
+  "title": "Use of resource objects as executor claims",
+  "page": 397,
+  "kind": "component",
+  "file": "294_use_of_resource_objects_as_executor_claims.pss",
+  "lines": 67
+ },
+ {
+  "num": 296,
+  "title": "Contiguous address space in pss_top",
+  "page": 402,
+  "kind": "component",
+  "file": "296_contiguous_address_space_in_pss_top.pss",
+  "lines": 25
+ },
+ {
+  "num": 297,
+  "title": "Example address trait type",
+  "page": 403,
+  "kind": "component",
+  "file": "297_example_address_trait_type.pss",
+  "lines": 13
+ },
+ {
+  "num": 298,
+  "title": "Address space with trait",
+  "page": 404,
+  "kind": "component",
+  "file": "298_address_space_with_trait.pss",
+  "lines": 57
+ },
+ {
+  "num": 300,
+  "title": "Address space allocation example",
+  "page": 410,
+  "kind": "component",
+  "file": "300_address_space_allocation_example.pss",
+  "lines": 36
+ },
+ {
+  "num": 301,
+  "title": "Address space allocation example",
+  "page": 412,
+  "kind": "component",
+  "file": "301_address_space_allocation_example.pss",
+  "lines": 44
+ },
+ {
+  "num": 302,
+  "title": "Address space group",
+  "page": 415,
+  "kind": "component",
+  "file": "302_address_space_group.pss",
+  "lines": 37
+ },
+ {
+  "num": 304,
+  "title": "Packed PSS big-endian struct",
+  "page": 418,
+  "kind": "declaration",
+  "file": "304_packed_pss_big_endian_struct.pss",
+  "lines": 64
+ },
+ {
+  "num": 305,
+  "title": "make_handle_from_claim example",
+  "page": 421,
+  "kind": "action",
+  "file": "305_make_handle_from_claim_example.pss",
+  "lines": 29
+ },
+ {
+  "num": 308,
+  "title": "Mapping of primitive operations to foreign C functions",
+  "page": 426,
+  "kind": "component",
+  "file": "308_mapping_of_primitive_operations_to_foreign_c_fun.pss",
+  "lines": 20
+ },
+ {
+  "num": 310,
+  "title": "Implementing primitive operations in terms of other operations",
+  "page": 427,
+  "kind": "component",
+  "file": "310_implementing_primitive_operations_in_terms_of_ot.pss",
+  "lines": 41
+ },
+ {
+  "num": 311,
+  "title": "Customization of addr_value()",
+  "page": 428,
+  "kind": "component",
+  "file": "311_customization_of_addr_value.pss",
+  "lines": 26
+ },
+ {
+  "num": 312,
+  "title": "Example using complex data structures",
+  "page": 429,
+  "kind": "component",
+  "file": "312_example_using_complex_data_structures.pss",
+  "lines": 28
+ },
+ {
+  "num": 313,
+  "title": "Read-modify-write operations",
+  "page": 433,
+  "kind": "component",
+  "file": "313_read_modify_write_operations.pss",
+  "lines": 45
+ },
+ {
+  "num": 314,
+  "title": "Examples of register declarations",
+  "page": 434,
+  "kind": "declaration",
+  "file": "314_examples_of_register_declarations.pss",
+  "lines": 15
+ },
+ {
+  "num": 315,
+  "title": "Example of register group declaration",
+  "page": 436,
+  "kind": "declaration",
+  "file": "315_example_of_register_group_declaration.pss",
+  "lines": 23
+ },
+ {
+  "num": 316,
+  "title": "Top-level group and address region association",
+  "page": 437,
+  "kind": "component",
+  "file": "316_top_level_group_and_address_region_association.pss",
+  "lines": 25
+ },
+ {
+  "num": 317,
+  "title": "Recommended packaging",
+  "page": 438,
+  "kind": "package",
+  "file": "317_recommended_packaging.pss",
+  "lines": 24
+ }
+]

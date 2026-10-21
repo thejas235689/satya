@@ -166,12 +166,28 @@ impl Lexer {
                 let kind = self.lex_number(line, col)?;
                 out.push(Token { kind, line, col });
             } else if c == '"' {
+                // Triple-quoted string (`"""..."""`) or an ordinary string.
+                let triple = self.peek_at(1) == Some('"') && self.peek_at(2) == Some('"');
                 self.bump();
+                if triple {
+                    self.bump();
+                    self.bump();
+                }
                 let mut s = String::new();
                 loop {
+                    if triple
+                        && self.peek() == Some('"')
+                        && self.peek_at(1) == Some('"')
+                        && self.peek_at(2) == Some('"')
+                    {
+                        self.bump();
+                        self.bump();
+                        self.bump();
+                        break;
+                    }
                     match self.bump() {
                         None => return Err(PssError::new("unterminated string literal", line, col)),
-                        Some('"') => break,
+                        Some('"') if !triple => break,
                         Some('\\') => {
                             if let Some(e) = self.bump() {
                                 s.push(match e {
@@ -192,10 +208,22 @@ impl Lexer {
                     col,
                 });
             } else if c == '\'' {
-                // Sized literal prefix such as 4'b1010 or 8'hFF.
-                self.bump();
-                let kind = self.lex_number(line, col)?;
-                out.push(Token { kind, line, col });
+                // A sized literal prefix (4'b1010, 8'hFF) — but a lone quote,
+                // as in `'{ ... }` aggregate literals or quoted text, is just
+                // punctuation.
+                let nxt = self.peek_at(1);
+                if matches!(nxt, Some(ch) if ch.is_ascii_digit() || "bBoOdDhH".contains(ch)) {
+                    self.bump();
+                    let kind = self.lex_sized_number(line, col)?;
+                    out.push(Token { kind, line, col });
+                } else {
+                    self.bump();
+                    out.push(Token {
+                        kind: TokKind::Punct("'".to_string()),
+                        line,
+                        col,
+                    });
+                }
             } else {
                 // Operator / punctuation, greedy longest match.
                 let rest: String = self.chars[self.pos..].iter().take(3).collect();
@@ -219,6 +247,37 @@ impl Lexer {
                 });
             }
         }
+    }
+
+    /// A sized literal after `'`: `4'b1010`, `8'hFF`, `16'd42`.
+    fn lex_sized_number(&mut self, line: usize, col: usize) -> PssResult<TokKind> {
+        let radix = match self.peek() {
+            Some('b') | Some('B') => 2,
+            Some('o') | Some('O') => 8,
+            Some('d') | Some('D') => 10,
+            Some('h') | Some('H') => 16,
+            _ => 10,
+        };
+        if matches!(
+            self.peek(),
+            Some('b') | Some('B') | Some('o') | Some('O') | Some('d') | Some('D') | Some('h') | Some('H')
+        ) {
+            self.bump();
+        }
+        let mut digits = String::new();
+        while let Some(ch) = self.peek() {
+            if ch == '_' {
+                self.bump();
+            } else if ch.is_ascii_alphanumeric() {
+                digits.push(ch);
+                self.bump();
+            } else {
+                break;
+            }
+        }
+        i64::from_str_radix(&digits, radix)
+            .map(TokKind::Int)
+            .map_err(|_| PssError::new(format!("invalid sized literal `'{}`", digits), line, col))
     }
 
     fn lex_number(&mut self, line: usize, col: usize) -> PssResult<TokKind> {

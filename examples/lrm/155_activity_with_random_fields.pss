@@ -1,0 +1,22 @@
+// PSS v3.0 LRM — Example 155: Activity with random fields (page 223)
+action A {
+  rand bit[3:0] val;
+}
+
+action my_action {
+  A a, b, c;
+  constraint abc_c {
+    a.val < b.val;
+    b.val < c.val;
+  }
+   activity {
+    a;
+    b;
+    c;
+  }
+}
+
+—
+top_action.s1.a.val < top_action.s1.b.val
+This implies that top.v.val shall be less than 14 to satisfy the top_action.s1.a.val <
+top_action.s1.b.val constraint.

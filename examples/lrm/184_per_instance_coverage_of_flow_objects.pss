@@ -1,0 +1,31 @@
+// PSS v3.0 LRM — Example 184: Per-instance coverage of flow objects (page 253)
+enum mode_e { M0, M1, M2 }
+buffer b1 {
+rand mode_e mode;
+covergroup {
+option.per_instance = true;
+coverpoint mode;
+} cs;
+}
+component pss_top {
+pool b1 b1_p;
+bind b1_p *;
+action P_a {
+output b1 b1_out;
+}
+action C_a {
+input b1 b1_in;
+}
+action entry {
+activity {
+repeat (10) {
+do C_a;
+}
+}
+}
+}
+
+Also in Example 185, a contiguous path of named handles does not exist from the root action to the
+covergroup instance inside the action traversal by type (do A). In this case, coverage data collected during
+the 10 traversals of action A by type (do A) are placed in the per-type coverage collection associated with
+covergroup type A::cg.

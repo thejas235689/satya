@@ -1,0 +1,52 @@
+// PSS v3.0 LRM — Example 111: Locking and sharing arrays of resource objects (page 185)
+resource DMA_channel_s {
+  rand bit[3:0] priority;
+};
+resource CPU_core_s {...};
+action two_chan_transfer {
+  lock DMA_channel_s chan_A;
+  lock DMA_channel_s chan_B;
+  share CPU_core_s ctrl_core;
+};
+resource config {}
+component foo_c {
+  pool[16] config config_p;
+  bind config_p *;
+  action baz_lock_a {
+    lock config  config_object[8];
+  }
+  action baz_share_a {
+    share config config_object[16];
+  }
+  action entry_a {
+    activity {
+      parallel {
+        do baz_share_a;
+        do baz_share_a;
+      }
+      parallel {
+        do baz_lock_a;
+        do baz_lock_a;
+      }
+    }
+  }
+}
+
+15. Pools
+Pools are used to determine possible assignment of objects to actions, and thus shape the space of legal test
+scenarios. Pools represent collections of resources, state variables, and connectivity for data flow purposes.
+Flow object exchange is always mediated by a pool. One action outputs an object to a pool and another
+action inputs it from that same pool. Similarly, actions lock or share a resource object within some pool.
+Pools are structural entities instantiated under components. They are used to determine the accessibility that
+actions (see Clause 10) have to flow and resource objects. This is done by binding object reference fields of
+action types to pools of the respective object types. Bind directives in the component scope associate
+resource references with a specific resource pool, state references with a specific state pool (or state
+variable), and buffer/stream object references with a specific data flow object pool (see 15.3).
+15.1 Syntax
+Syntax 51—Pool instantiation
+In Syntax 51, type_identifier refers to a flow/resource object type, i.e., a buffer, stream, state, or resource
+struct type.
+The expression applies only to pools of resource type; it specifies the number of resource instances in the
+pool. If omitted, the size of the resource pool defaults to 1.
+The following also apply:
+a)

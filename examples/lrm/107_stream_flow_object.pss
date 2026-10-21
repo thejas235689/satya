@@ -1,0 +1,23 @@
+// PSS v3.0 LRM — Example 107: stream flow object (page 181)
+struct mem_segment_s {...};
+buffer data_buff_s {
+rand mem_segment_s seg;
+};
+action cons_mem_a {
+input  data_buff_s in_data;
+};
+action prod_mem_a {
+output data_buff_s out_data;
+};
+struct mem_segment_s {...};
+stream data_stream_s {
+  rand mem_segment_s seg;
+};
+action cons_mem_a {
+  input  data_stream_s in_data;
+};
+action prod_mem_a {
+  output data_stream_s out_data;
+};
+
+.

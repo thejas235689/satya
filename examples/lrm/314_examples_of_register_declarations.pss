@@ -1,0 +1,16 @@
+// PSS v3.0 LRM — Example 314: Examples of register declarations (page 434)
+struct my_reg0_s : packed_s<> { // (1)
+   bit [16] fld0;
+  bit [16] fld1;
+};
+pure component my_reg0_c : reg_c<my_reg0_s> {} // (2)
+struct my_reg1_s : packed_s<> {
+   bit     fld0;
+   bit [2] fld1;
+  bit [2] fld2[5];                 // (3)
+};
+pure component my_reg1_c : reg_c<my_reg1_s, READWRITE, 32> {} // (4)
+
+It is recommended to declare the register type as pure. This allows the PSS implementation to optimally
+handle large static register components.
+24.11.2 PSS register group definition

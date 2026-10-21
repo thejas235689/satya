@@ -1,0 +1,59 @@
+// PSS v3.0 LRM — Example 21: Set operators and methods (page 84)
+component pss_top {
+  set <string> foo_set1, foo_set2;
+  list<string> foo_list1;
+  exec init_up {
+    foo_set1 = {"a","b","c","d"}; // Set initialization with aggregate literal
+    foo_set2.insert("a");
+    foo_set2.insert("b");
+    foo_list1 = foo_set1.to_list();
+    foreach (e:foo_set2) foo_list1.push_back(e);
+  }
+  action A{}
+  action B{}
+  action C{rand string character;}
+  action traverse_set_a {
+    rand int lower_size;
+    set <string> foo_set3;
+    list<string> foo_list2;
+    exec pre_solve {
+      foo_set3 = pss_top.foo_set1;
+      foo_set3.insert("z");
+      foo_set3.insert("e");
+      foo_set3.delete("d");
+      foo_list2 = foo_set3.to_list();
+    }
+    constraint lower_size < foo_set3.size() + comp.foo_list1.size();
+    activity {
+      if (comp.foo_set1 == comp.foo_set2)   // Use == operator on sets
+        do A;
+      else foreach (e:foo_set3)             // Use "foreach" on set
+        if (e in comp.foo_set2)             // Use [] operator on set
+          do A;
+        else if ("b" in comp.foo_set1)      // Use "in" operator on set
+          do B;
+        else
+          replicate (j:foo_list2.size())
+            do C with {character == foo_list2[j];};
+    }
+  }
+}
+
+7.10.1 Syntax
+Syntax 16—ref declaration
+The following also apply:
+a)
+Reference types, declared with the ref modifier, and collections thereof can be used in the declara-
+tion of local variables, function parameters, and function return values. In addition, component ref-
+erence types only (but not action or flow/resource object reference types) and collections thereof can
+be used to declare fields in the scope of components. Reference types shall not be used to declare
+fields in the scope of actions, monitors, flow/resource objects, or structs. It shall be illegal to declare
+static constants of reference types and collections thereof.
+b)
+Fields and instance functions can be accessed through a reference expression in the same way as
+through an instance path, using the dot (‘.’) operator.
+c)
+An expression of reference type may evaluate to the special value null, indicating that it does not
+reference any entity. It shall be an error to access members of an entity through a null reference. See
+also 8.3 and 8.5.3.
+d)

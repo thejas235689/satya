@@ -1,0 +1,16 @@
+// PSS v3.0 LRM — Example 85: match statement (page 162)
+action my_test {
+  rand security_data in_security_data;
+  my_action1 action1;
+  my_action2 action2;
+  my_action3 action3;
+  activity {
+    match (in_security_data.val) {
+      [LEVEL2..LEVEL4]:
+        action1;
+      [LEVEL3..LEVEL5]:
+        action2;
+      default:
+        action3;
+    }
+}

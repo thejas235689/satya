@@ -1,0 +1,46 @@
+// PSS v3.0 LRM — Example 313: Read-modify-write operations (page 433)
+struct CR : packed_s<> {
+    bit          en;
+    bit[11]      pad;
+    bit[4]       mode;
+    bit[16]      coeff;
+}
+pure component dut_regs_c : reg_group_c {
+    reg_c<CR>    cr;
+}
+component dut_c {
+    dut_regs_c         regs;
+
+    action cfg_a {
+        rand bit[4]  mode;
+        rand bit[16] coeff;
+        exec body {
+            // Three equivalent ways to modify the 'mode' and 'coeff' fields
+            comp.regs.cr.write_masked(
+                {.mode=~0, .coeff=~0}, {.mode=mode, .coeff=coeff});
+            comp.regs.cr.write_val_masked(
+                0xFFFFF000, (coeff << 16) | (mode << 12));
+            comp.regs.cr.write_fields({"mode", "coeff"}, {mode, coeff});
+        }
+    }
+    action enable_a {
+        exec body {
+            // Two equivalent ways to set the 'en' bit
+            comp.regs.cr.write_masked({.en=~0}, {.en=1});
+            comp.regs.cr.write_field("en", 1);
+        }
+    }
+}
+
+In Example 313, a register is defined in terms of a packed struct with three operational fields and a reserved
+unused region (pad). In the action cfg_a, three different ways are shown to ensure that the mode and
+coeff fields are set to specific values while leaving the en field unmodified:
+a)
+Mask and value parameters are formulated using struct literal expressions and passed to the
+write_masked() method. Fields in the mask parameter are set to the negation of 0 (all bits set)
+in order to cause the value of the corresponding register bits to be set. Unspecified fields in the mask
+parameter take on the default value, which PSS specifies as 0 for integer data types.
+b)
+Numeric mask and value parameters are computed using shift and composition operations and
+passed to the write_val_masked() method.
+c)

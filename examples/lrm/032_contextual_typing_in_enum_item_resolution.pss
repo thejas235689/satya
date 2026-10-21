@@ -1,0 +1,44 @@
+// PSS v3.0 LRM — Example 32: Contextual typing in enum_item resolution (page 97)
+component my_ip_c {
+ struct my_struct { rand int a; };
+ action my_op {
+ rand my_struct s;
+ }
+}
+component pss_top {
+my_ip_c my_ip;
+ struct your_struct { rand int a; };
+ action test {
+ rand your_struct s;
+ constraint s == {.a = 2};    // pss_top::your_struct literal
+
+my_ip_c::my_op op;
+ constraint op.s == {.a = 3}; // my_ip_c::my_struct literal
+ activity {
+ op;
+ }
+ }
+}
+enum color_e {RED, GREEN, ORANGE};
+function void print_color(color_e c);
+function void print_num(int n);
+component pss_top {
+  enum fruit_e {APPLE, ORANGE};
+  exec init_down {
+    color_e c = ORANGE;
+// OK – expected type is color_e
+    print_color(RED);
+// OK – same as above
+    print_num((int)ORANGE);
+// Error – 'ORANGE' unresolved -
+// no enum type expected here
+    print_num((int)fruit_e::ORANGE); // OK – qualified reference
+  }
+}
+
+evaluated. All other operators shall not use short-circuit evaluation. In other words, all of their operand
+expressions are always evaluated.
+8.5 Operator descriptions
+The following sections describe each of the operator categories. The legal operand types for each operator
+are listed in Table 9.
+8.5.1 Arithmetic operators

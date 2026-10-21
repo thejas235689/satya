@@ -1,0 +1,43 @@
+// PSS v3.0 LRM — Example 210: Monitor inheritance and traversal (page 293)
+component pss_top {
+    action A { }
+    action B { }
+    action C { }
+    monitor base {
+        activity {
+            do A;
+        }
+    }
+    monitor ext1 : base {
+        activity {
+            do B;
+        }
+    }
+    monitor ext2 : base {
+        activity {
+            super;
+            do C;
+        }
+    }
+}
+
+20. Type inheritance, extension, and overrides
+PSS supports the concepts of object-oriented inheritance and type extension to maximize reuse and
+portability of the model. Type inheritance allows the declaration of model entities such as actions, objects,
+components and struct types to be derived from a base type (or supertype), where the new derived type (or
+subtype) includes all attributes and other members of the base type, and allows the declaration of the derived
+type to add new members or mask the definition of existing members. Type extension allows the declaration
+of additional fields in an existing type using a separate declaration. Type inheritance is described in 20.1,
+and type extension is described in 20.2. Type overrides allow type-specific and instance-specific
+replacement of the declared type of a field with a specified subtype, and are described in 20.5.
+20.1 Type inheritance
+For actions, monitors, components, structs, data flow and resource objects, the declaration may include an
+optional super-spec qualifier to declare a base type of the same type category (action, monitor, component,
+struct, buffer, stream, state, resource), from which the element is to be derived. The only exception is that
+data flow and resource objects may inherit from an element of the same type category or from a struct.
+A derived type includes all elements from the base type, and may declare new elements that may or may not
+have the same name as a corresponding element in the base type. For fields declared in a derived type with
+the same name as a field in the base type, the derived type’s field shadows (masks) the base type’s field, and
+the base type’s field may be referenced as “super.<name>”. Certain unnamed elements, such as activities
+and procedural exec blocks, may invoke the corresponding element(s) from the base type by the “super;”
+statement.

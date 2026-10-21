@@ -1,0 +1,19 @@
+// PSS v3.0 LRM — Example 260: Pure function (page 343)
+(void)function_call();
+Calling a nonvoid function as if has no return value shall be legal, but it is recommended to explicitly
+discard the return value by casting the function call to void, as shown above.
+Example 261 demonstrates calling various functions. In this example, the mem_segment_s buffer object
+captures information about a memory buffer with a random size. The specific address in an instance of the
+mem_segment_s object is computed using the alloc_addr function. alloc_addr is called after the
+solver has selected random values for the rand fields (specifically, size in this case) to select a specific
+address for the addr field.
+pure function int factorial(int n);
+action A {
+rand int vals[10];
+int factorial_vals[10];
+exec post_solve {
+foreach (vals[i]) {
+factorial_vals[i] = factorial(vals[i]);
+}
+}
+}

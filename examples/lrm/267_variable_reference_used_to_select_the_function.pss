@@ -1,0 +1,4 @@
+// PSS v3.0 LRM — Example 267: Variable reference used to select the function (page 353)
+func_1(4);
+Example 268 shows how a procedural pre_solve exec block is used along with a target-template declaration
+exec block to allow programmatic declaration of a target variable declaration.

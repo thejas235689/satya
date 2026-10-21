@@ -1,0 +1,55 @@
+// PSS v3.0 LRM — Example 67: Scheduling block with sequential sub-blocks (page 141)
+action A {}
+action B {}
+action C {}
+action D {}
+action my_test {
+activity {
+schedule {
+{do A; do B;}
+{do C; do D;}
+}
+}
+}
+
+12.3.6.1 Syntax
+Syntax 34—Activity join specification
+The following also apply:
+a)
+join_branch accepts a list of labels referring to labeled activity statements. The activity statement
+following the fine-grained scheduling block is scheduled after all the listed activity statements have
+completed.
+1)
+The label_identifier used in the join_branch specification must be the label of a top-level
+branch within the parallel or schedule block to which the join_branch specification is
+applied.
+2)
+When the label_identifier used in the join_branch specification applies to traversal of an array,
+the activity statement following the fine-grained scheduling block is scheduled after all actions
+in the array have completed.
+b)
+join_select accepts an expression specifying the number of top-level activity statements within the
+fine-grained scheduling block on which to condition execution of the activity statement following
+the fine-grained scheduling block. The specific activity statements shall be selected randomly. Exe-
+cution of the activity statement following the fine-grained scheduling block is scheduled after the
+selected activity statements.
+1)
+The expression shall be of an integer type. The value of the expression must be determinable at
+solve time. If the value is 0, the join_select is equivalent to join_none.
+2)
+When an action array is traversed, each element of the array is considered a separate action that
+may be selected independently.
+c)
+join_none specifies that the activity statement following the fine-grained scheduling block has no
+scheduling dependency on activity statements within the block.
+d)
+join_first specifies that the activity statement following the fine-grained scheduling block has a run-
+time execution dependency on the first N activity statements within the fine-grained scheduling
+block to complete execution. The activity statement following the fine-grained scheduling block has
+no scheduling dependency on activity statements within the block, only a runtime dependency.
+1)
+The expression shall be of an integer type. The value of the expression must be determinable at
+solve time. If the value is 0, the join_first is equivalent to join_none.
+2)
+When an action array is traversed, each element of the array is considered a separate action that
+may be selected independently.

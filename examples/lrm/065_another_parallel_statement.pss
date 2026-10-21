@@ -1,0 +1,50 @@
+// PSS v3.0 LRM — Example 65: Another parallel statement (page 138)
+action my_test {
+   A a;
+   B b;
+   C c;
+   activity {
+      a;
+      parallel {
+         b;
+         c;
+      }
+   }
+};
+resource R{...}
+pool [4] R R_pool;
+bind R_pool *;
+action A { lock R r; }
+action B {}
+action C {}
+action D { lock R r; }
+action my_test {
+activity {
+parallel {
+{do A; do B;}
+{do C; do D;}
+}
+}
+}
+
+12.3.5.1 Syntax
+Syntax 33—Schedule statement
+The following also apply:
+a)
+All activities inside the schedule block shall execute, but the PSS processing tool is free to execute
+them in any order that satisfies their other scheduling requirements.
+b)
+Formally, the schedule statement specifies that any scheduling of the combined sets of action execu-
+tions per the evaluation of activity_stmt1 .. activity_stmtn is permissible, as long as it keeps all sched-
+uling dependencies within the sets and introduces (at least) the necessary scheduling dependencies
+across the sets in order to comply with the rules of input-output binding of actions and resource
+assignments.
+c)
+In the absence of an activity_join_spec (see 12.3.6), execution of the activity statement following the
+schedule block is scheduled to begin after all statements within the block have completed. When an
+activity_join_spec is specified, execution of the activity statement following the schedule block is
+scheduled based on the join specification.
+12.3.5.2 Examples
+Consider the code in Example 66, which is similar to Example 64, but uses a schedule block instead of a
+parallel block. In this case, the following executions are valid:
+a)

@@ -1,0 +1,25 @@
+// PSS v3.0 LRM — Example 317: Recommended packaging (page 438)
+// In my_IP_regs.pss
+package my_IP_regs {
+   import addr_reg_pkg::*;
+ struct my_reg0_s : packed_s<> { ... };
+  pure component my_reg0_c : reg_c<my_reg0_s, READWRITE, 32> { ... };
+   // ... etc: other registers
+  pure component my_reg_group_c : reg_group_c {
+     my_reg0_c r0;
+     // ... etc: other registers
+  };
+}
+
+Annex A
+(informative)
+Bibliography
+[B1] IEEE 100, The Authoritative Dictionary of IEEE Standards Terms, Seventh Edition. New York: Insti-
+tute of Electrical and Electronics Engineers, Inc.
+
+Annex B
+(normative)
+Formal syntax
+The PSS formal syntax is described using Backus-Naur Form (BNF). The syntax of the PSS source is
+derived from the starting symbol Model. If there is a conflict between a grammar element shown anywhere
+in this standard and the material in this annex, the material shown in this annex shall take precedence.

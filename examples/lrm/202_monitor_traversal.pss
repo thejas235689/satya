@@ -1,0 +1,35 @@
+// PSS v3.0 LRM — Example 202: Monitor traversal (page 283)
+action idle {}
+action read {}
+action write {}
+monitor rw {
+  activity {
+    do read;
+    do write;
+  }
+}
+monitor irw {
+  idle i;
+  read r;
+  write w;
+  activity {
+    i;
+    r;
+    w;
+  }
+}
+monitor irw1 {
+  idle i;
+  activity {
+    i;
+    do rw;
+  }
+}
+monitor irw2 {
+  idle i;
+  rw m;
+  activity {
+    i;
+    m;
+  }
+}

@@ -1,0 +1,45 @@
+// PSS v3.0 LRM — Example 220: Enum type extensions (page 304)
+package mem_defs_pkg { // reusable definitions
+enum mem_block_tag_e {}; // initially empty
+buffer mem_buff_s {
+rand mem_block_tag_e mem_block;
+}
+}
+package AB_subsystem_pkg {
+import mem_defs_pkg ::*;
+extend enum mem_block_tag_e {A_MEM, B_MEM};
+}
+package soc_config_pkg {
+import mem_defs_pkg ::*;
+extend enum mem_block_tag_e {SYS_MEM, DDR};
+}
+component dma_c {
+  import mem_defs_pkg::*;
+  action mem2mem_xfer {
+    input mem_buff_s src_buff;
+    output mem_buff_s dst_buff;
+ }
+}
+extend component dma_c {
+import AB_subsystem_pkg::*; // wildcard-importing the package
+import soc_config_pkg::*;   // grants access to enum items
+action dma_test {
+activity {
+do mem2mem_xfer with {
+src_buff.mem_block == A_MEM;
+dst_buff.mem_block == DDR;
+};
+}
+}
+}
+
+From a semantics point of view, order would be visible in the following cases:
+—
+Invocation order of exec blocks of the same kind
+—
+Multiple default value constraints, default disable constraints, and type override declarations occur-
+ring in a scope of the same type
+—
+Integer values associated with enum items that do not explicitly have a value assignment
+The initial definition always comes first in ordering of members. The order of extensions conforms to the
+order in which packages are processed by a PSS implementation.
