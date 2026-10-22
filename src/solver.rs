@@ -165,6 +165,17 @@ pub fn eval(expr: &Expr, values: &BTreeMap<String, i64>, env: &Env) -> Option<i6
             }
             env.lookup(last)
         }
+        Expr::Slice(base, msb, lsb) => {
+            let b = eval(base, values, env)?;
+            let hi = eval(msb, values, env)?;
+            let lo = eval(lsb, values, env)?;
+            if hi < lo || lo < 0 || hi - lo + 1 > 62 {
+                return None;
+            }
+            let width = (hi - lo + 1) as u32;
+            let mask = (1i64 << width) - 1;
+            Some((b >> lo) & mask)
+        }
         Expr::Unary(op, e) => {
             let v = eval(e, values, env)?;
             match op.as_str() {
@@ -353,7 +364,7 @@ pub fn solve_with(
                 if !a {
                     satisfied += 1; // vacuously true
                 } else {
-                    let ok = cons.iter().all(|c| check_atom(c, &check_values, &env));
+                    let ok = cons.iter().all(|c| check_atom(c, &check_values, &env, &class_domain));
                     if ok {
                         satisfied += 1;
                     } else {
@@ -378,7 +389,7 @@ pub fn solve_with(
             }
             other => {
                 total += 1;
-                if check_atom(other, &check_values, &env) {
+                if check_atom(other, &check_values, &env, &class_domain) {
                     satisfied += 1;
                 } else {
                     unsupported.push(render_atom(other));
@@ -415,9 +426,14 @@ fn repair(
     class_domain: &HashMap<String, Domain>,
     uf: &UnionFind,
 ) {
+    // Fit a computed value into a variable's domain. For an unsigned bit field
+    // the value wraps (two's-complement truncation), which is what bit-wise
+    // operations such as `~` mean on a `bit[N]` — clamping would turn `~x` into
+    // 0 for every 32-bit x.
     let clamp = |name: &str, v: i64| -> i64 {
         match class_domain.get(name) {
             Some(d) if v >= d.lo && v <= d.hi => v,
+            Some(d) if d.lo == 0 && d.hi > 0 => v & d.hi,
             Some(d) => v.clamp(d.lo, d.hi),
             None => v,
         }
@@ -430,7 +446,7 @@ fn repair(
                     // If the antecedent holds, the consequent must too.
                     if eval(ante, values, env).unwrap_or(0) != 0 {
                         for c in cons {
-                            if check_atom(c, values, env) {
+                            if check_atom(c, values, env, class_domain) {
                                 continue;
                             }
                             if let Atom::Rel(v, Op::Eq, rhs) = c {
@@ -548,7 +564,12 @@ fn repair(
     let _ = uf;
 }
 
-fn check_atom(atom: &Atom, values: &BTreeMap<String, i64>, env: &Env) -> bool {
+fn check_atom(
+    atom: &Atom,
+    values: &BTreeMap<String, i64>,
+    env: &Env,
+    domains: &HashMap<String, Domain>,
+) -> bool {
     match atom {
         Atom::Rel(var, op, rhs) => {
             let x = match values.get(var) {
@@ -558,6 +579,16 @@ fn check_atom(atom: &Atom, values: &BTreeMap<String, i64>, env: &Env) -> bool {
             let y = match eval(rhs, values, env) {
                 Some(v) => v,
                 None => return true,
+            };
+            // A bit-wise expression (`~x`, `x << n`, ...) yields a value at the
+            // width of the field it is assigned to, so compare it at that width.
+            let y = if contains_bitwise(rhs) {
+                match domains.get(var) {
+                    Some(d) if d.lo == 0 && d.hi > 0 => y & d.hi,
+                    _ => y,
+                }
+            } else {
+                y
             };
             match op {
                 Op::Eq => x == y,
@@ -676,6 +707,22 @@ fn collect_unknowns(
     out
 }
 
+/// Does this expression involve a bit-wise operator (whose result is taken at
+/// the width of the target field rather than as a 64-bit integer)?
+fn contains_bitwise(e: &Expr) -> bool {
+    match e {
+        Expr::Unary(op, x) => op == "~" || contains_bitwise(x),
+        Expr::Binary(op, a, b) => {
+            matches!(op.as_str(), "&" | "|" | "^" | "<<" | ">>")
+                || contains_bitwise(a)
+                || contains_bitwise(b)
+        }
+        Expr::Cast(_, x) => contains_bitwise(x),
+        Expr::Slice(_, _, _) => true,
+        _ => false,
+    }
+}
+
 /// Render an atom as a constraint string, for diagnostics.
 fn render_atom(a: &Atom) -> String {
     match a {
@@ -757,6 +804,8 @@ fn invert_eq(
         }
         Expr::Unary(op, x) if op == "-" => invert_eq(x, -target, unknown, values, env),
         Expr::Unary(op, x) if op == "+" => invert_eq(x, target, unknown, values, env),
+        // Bitwise complement: `~x == target` means `x == !target`.
+        Expr::Unary(op, x) if op == "~" => invert_eq(x, !target, unknown, values, env),
         Expr::Cast(_, x) => invert_eq(x, target, unknown, values, env),
         Expr::Binary(op, l, r) => {
             let lh = contains_var(l, unknown);
@@ -883,7 +932,9 @@ fn expand_field(
         TypeCategory::Scalar => {
             let hi = field
                 .bits
-                .map(|b| (1i64 << b.min(20)) - 1)
+                // Use the declared width (up to 62 bits); a narrower cap would
+                // truncate bit-wise results such as `~x` on a `bit[32]`.
+                .map(|b| (1i64 << b.clamp(1, 62)) - 1)
                 .unwrap_or(DEFAULT_INT_MAX);
             out.insert(
                 path,

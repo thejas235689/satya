@@ -1,0 +1,214 @@
+//////////////////////////////////////////////////////////////////////////////////
+// OpenTitan AES — a PSS model of the lowRISC/opentitan `aes` IP.
+//
+// Register and field names, bit ranges and software-access attributes are taken
+// from  hw/ip/aes/data/aes.hjson  (OpenTitan, Apache-2.0).
+//
+// AES is a deliberately harder target than UART, because it uses:
+//   * MULTIREGS   — KEY_SHARE0/1 (x8), IV (x4), DATA_IN (x4), DATA_OUT (x4)
+//   * SHADOWED registers — CTRL_SHADOWED, CTRL_AUX_SHADOWED, CTRL_GCM_SHADOWED,
+//                   which must be written twice (value, then its complement)
+//   * a REGWEN gate — CTRL_AUX_REGWEN (swaccess rw0c)
+//   * enum-typed fields — OPERATION, MODE, KEY_LEN, PRNG_RESEED_RATE
+//
+// Where the model has to work around the tool, it says so in a comment; see
+// docs/OPENTITAN.md for the analysis.
+//////////////////////////////////////////////////////////////////////////////////
+
+package ot_aes_pkg {
+
+   // AES0 base address in the OpenTitan top level (top_earlgrey).
+   static const int AES0_BASE = 0x41100000;
+
+   // Multireg counts, from the IP parameters (NumRegsKey / NumRegsIv / NumRegsData).
+   static const int NUM_REGS_KEY  = 8;
+   static const int NUM_REGS_IV   = 4;
+   static const int NUM_REGS_DATA = 4;
+
+   // --- enum-typed fields -------------------------------------------------
+
+   enum operation_e { AES_ENC = 0, AES_DEC = 1 };                      // CTRL.OPERATION[1:0]
+   enum mode_e {                                                       // CTRL.MODE[7:2]
+      AES_ECB = 1, AES_CBC = 2, AES_CFB = 4, AES_OFB = 8, AES_CTR = 16, AES_GCM = 32
+   };
+   enum key_len_e { AES_128 = 1, AES_192 = 2, AES_256 = 4 };           // CTRL.KEY_LEN[10:8]
+   enum reseed_rate_e { PER_1 = 0, PER_64 = 1 };                       // CTRL.PRNG_RESEED_RATE[14:12]
+
+   // --- CTRL_SHADOWED (rw, shadowed) --------------------------------------
+   struct aes_ctrl_shadowed_s {
+      rand operation_e operation;      // OPERATION[1:0]
+      rand mode_e mode;                // MODE[7:2]
+      rand key_len_e key_len;          // KEY_LEN[10:8]
+      rand bit[1] sideload;            // SIDELOAD[11]
+      rand reseed_rate_e reseed_rate;  // PRNG_RESEED_RATE[14:12]
+      rand bit[1] manual_operation;    // MANUAL_OPERATION[15]
+
+      constraint sideload == 0;                 // use the software key path
+      constraint manual_operation == 1;         // software starts the operation
+      constraint operation == AES_ENC;
+      constraint key_len == AES_256;
+      // GCM with a 192-bit key is not a valid combination.
+      constraint mode == AES_GCM -> key_len == AES_256;
+      constraint mode == AES_CBC -> key_len == AES_128;
+   };
+
+   // --- CTRL_GCM_SHADOWED (rw, shadowed) ----------------------------------
+   struct aes_ctrl_gcm_shadowed_s {
+      rand bit[6] phase;            // PHASE[5:0]
+      rand bit[5] num_valid_bytes;  // NUM_VALID_BYTES[10:6]
+      constraint num_valid_bytes <= 15;
+   };
+
+   // --- STATUS (ro) -------------------------------------------------------
+   struct aes_status_s {
+      rand bit[1] idle;                          // IDLE[0]
+      rand bit[1] stall;                         // STALL[1]
+      rand bit[1] output_lost;                   // OUTPUT_LOST[2]
+      rand bit[1] output_valid;                  // OUTPUT_VALID[3]
+      rand bit[1] input_ready;                   // INPUT_READY[4]
+      rand bit[1] alert_recov_ctrl_update_err;   // ALERT_RECOV_CTRL_UPDATE_ERR[5]
+      rand bit[1] alert_fatal_fault;             // ALERT_FATAL_FAULT[6]
+   };
+
+   // --- TRIGGER (wo) ------------------------------------------------------
+   struct aes_trigger_s {
+      rand bit[1] start;               // START[0]
+      rand bit[1] key_iv_data_in_clear; // KEY_IV_DATA_IN_CLEAR[1]
+      rand bit[1] data_out_clear;      // DATA_OUT_CLEAR[2]
+      rand bit[1] prng_reseed;         // PRNG_RESEED[3]
+   };
+
+   // --- KEY_SHARE0, a multireg of 8 x 32-bit words -------------------------
+   //
+   // AES declares this as a multireg (`count: "NumRegsKey"`), i.e. an array of
+   // registers. Satya's PSS subset parses array types but the engine gives them
+   // no semantics, so the array form is kept here for the parser and a
+   // hand-unrolled struct is used for the parts that must actually solve.
+   struct aes_key_share0_array_s {
+      rand array<bit[32], NUM_REGS_KEY> words;   // parses; opaque to the solver
+   };
+
+   struct aes_key_share0_s {
+      rand bit[32] word0;   // KEY_SHARE0_0
+      rand bit[32] word1;   // KEY_SHARE0_1
+      rand bit[32] word2;   // KEY_SHARE0_2
+      rand bit[32] word3;   // KEY_SHARE0_3
+      rand bit[32] word4;   // KEY_SHARE0_4
+      rand bit[32] word5;   // KEY_SHARE0_5
+      rand bit[32] word6;   // KEY_SHARE0_6
+      rand bit[32] word7;   // KEY_SHARE0_7
+   };
+
+   // A shadowed write: the register value and its bitwise complement.
+   struct aes_shadowed_write_s {
+      rand bit[32] value;
+      rand bit[32] complement;
+      constraint complement == ~value;
+   };
+
+   // --- flow objects ------------------------------------------------------
+
+   buffer aes_ctrl_b {
+      rand aes_ctrl_shadowed_s ctrl;
+      constraint ctrl.mode == AES_GCM;
+   };
+
+   buffer aes_block_b {
+      rand bit[32] data_in[4];    // DATA_IN is a x4 multireg
+   };
+}
+
+component aes_c {
+
+   // Unlock the auxiliary control register (CTRL_AUX_REGWEN, rw0c: writing 0
+   // clears the write-enable, so the unlock is a write of 1).
+   action unlock_aux {
+      rand bit[1] regwen;
+      constraint regwen == 1;
+   };
+
+   // Program CTRL_SHADOWED. Shadowed registers need the value written, then
+   // its complement, and the two must agree.
+   action program_ctrl {
+      rand aes_ctrl_b cfg;
+      rand aes_shadowed_write_s shadow;
+      constraint shadow.value == 0x12348d01;     // the CONTROL word to write
+      constraint shadow.value[15:0] == 0x8d01;   // part-select (PSS 8.6.1)
+   };
+
+   // Write the 8 key-share words (multireg, unrolled).
+   action load_key {
+      rand aes_key_share0_s key;
+      output aes_ctrl_b cfg;
+   };
+
+   // Write a 128-bit block into DATA_IN.
+   action write_block {
+      output aes_block_b block;
+   };
+
+   // Fire TRIGGER.START.
+   action start {
+      rand aes_trigger_s trigger;
+      constraint trigger.start == 1;
+   };
+
+   // Poll STATUS until the unit is idle again.
+   action poll_idle {
+      rand aes_status_s status;
+      constraint status.idle == 1;
+      constraint status.alert_fatal_fault == 0;
+   };
+
+   // Read DATA_OUT (multireg, ro) — modelled as a plain 32-bit word.
+   action read_output {
+      rand bit[32] data_out;
+   };
+}
+
+component ot_aes_top {
+
+   aes_c aes;
+
+   pool aes_ctrl_b aes_ctrl_pool;
+   bind aes_ctrl_pool *;
+
+   // The AES address window.
+   exec init_up {
+      aes_region.addr = 0x41100000;
+      aes_region.size = 0x100;
+   };
+
+   // A full software-driven encryption:
+   //   unlock -> program -> load key -> write block -> start -> wait -> read
+   action aes_encrypt_block {
+      activity {
+         do aes_c::unlock_aux;
+         do aes_c::program_ctrl;
+         do aes_c::load_key;
+         do aes_c::write_block;
+         do aes_c::start;
+         repeat (4) {
+            do aes_c::poll_idle;
+         };
+         do aes_c::read_output;
+      };
+   };
+
+   // Back-to-back blocks, exercising the pipeline.
+   action aes_stream_blocks {
+      rand int in [2..8] num_blocks;
+      activity {
+         do aes_c::unlock_aux;
+         do aes_c::program_ctrl;
+         do aes_c::load_key;
+         parallel {
+            repeat (num_blocks) {
+               do aes_c::write_block;
+            };
+            do aes_c::poll_idle;
+         };
+         do aes_c::read_output;
+      };
+   };
+};

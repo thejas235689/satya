@@ -330,7 +330,7 @@ satya/
     demo.json        the same model in JSON
     pss_mini.rs      single-file library walkthrough
     lrm/             197 code examples extracted from the PSS v3.0 standard
-    opentitan/       a PSS model of OpenTitan's UART IP
+    opentitan/       PSS models of OpenTitan's UART and AES IPs
   tools/
     lrm_extract.py   extract examples from the LRM PDF text
     lrm_examples.py  run Satya over every extracted example

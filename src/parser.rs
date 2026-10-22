@@ -1619,9 +1619,16 @@ impl Parser {
             }
             if self.at_punct("[") {
                 self.bump();
-                let idx = self.parse_expr(0)?;
+                let first = self.parse_expr(0)?;
+                if self.eat_punct(":") {
+                    // Part-select: `identifier[msb:lsb]` (PSS 8.6.1).
+                    let lsb = self.parse_expr(0)?;
+                    self.expect_punct("]")?;
+                    e = Expr::Slice(Box::new(e), Box::new(first), Box::new(lsb));
+                    continue;
+                }
                 self.expect_punct("]")?;
-                e = Expr::Index(Box::new(e), Box::new(idx));
+                e = Expr::Index(Box::new(e), Box::new(first));
                 continue;
             }
             if self.at_punct("(") {

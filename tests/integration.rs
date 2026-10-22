@@ -644,3 +644,58 @@ component C { action a { output outer_b o; }; };
     let outer = out.find("} outer_b_t;").expect("outer typedef emitted");
     assert!(inner < outer, "inner_s_t must be defined before outer_b_t");
 }
+
+// ---------------------------------------------------------------------------
+// Found by modelling OpenTitan's AES (multiregs, shadowed writes, wide fields).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn part_select_parses_and_evaluates() {
+    // PSS 8.6.1: `identifier[msb:lsb]`.
+    let src = r#"
+component C {
+  action a {
+    rand bit[32] v;
+    rand bit[32] c;
+    constraint v == 0x12348d01;
+    constraint v[15:0] == 0x8d01;
+    constraint c == ~v;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    assert_eq!(s.steps[0].satisfied, s.steps[0].total, "all constraints must hold");
+    let v = s.steps[0].fields.iter().find(|(k, _)| k == "v").map(|(_, x)| *x).unwrap();
+    assert_eq!(v, 0x12348d01);
+}
+
+#[test]
+fn bitwise_complement_solves_at_field_width() {
+    // `~x` on a bit[32] is a 32-bit value, not a 64-bit one.
+    let src = r#"
+component C {
+  action a {
+    rand bit[32] v;
+    rand bit[32] c;
+    constraint v == 0x0000000f;
+    constraint c == ~v;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let c = s.steps[0].fields.iter().find(|(k, _)| k == "c").map(|(_, x)| *x).unwrap();
+    assert_eq!(c, 0xfffffff0, "32-bit complement expected, got {:#x}", c);
+    assert_eq!(s.steps[0].satisfied, s.steps[0].total);
+}
+
+#[test]
+fn bit_width_domains_are_not_truncated() {
+    // A bit[32] field must be able to hold values above 2^20.
+    let src = "component C { action a { rand bit[32] v; constraint v >= 3000000000; }; };";
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let v = s.steps[0].fields.iter().find(|(k, _)| k == "v").map(|(_, x)| *x).unwrap();
+    assert!(v >= 3_000_000_000, "bit[32] must not be capped at 20 bits, got {}", v);
+}

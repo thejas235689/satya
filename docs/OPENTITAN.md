@@ -2,7 +2,8 @@
 
 [lowRISC/opentitan](https://github.com/lowRISC/opentitan) is a large open-source
 silicon root-of-trust project: SystemVerilog RTL, UVM DV, C firmware, Rust host
-tools. It was used as a real-world target to exercise Satya.
+tools. It was used as a real-world target to exercise Satya — first a simple IP
+(**UART**, section 2), then a deliberately hard one (**AES**, section 5).
 
 ## 1. OpenTitan contains no PSS
 
@@ -123,3 +124,64 @@ Two further improvements came out of the same work:
 After the fixes the model solves cleanly — all 13 steps report `9/9 satisfied`,
 the generated C compiles and replays the scenario, and the generated bench
 driver runs.
+
+---
+
+## 5. A harder target: AES
+
+`examples/opentitan/ot_aes.pss` models the `aes` IP from the same
+`hw/ip/aes/data/aes.hjson` source. AES is a much harder model than UART because
+it uses four constructs UART does not:
+
+| Feature | Where | Modelled? |
+|---|---|---|
+| **Multiregs** (register arrays) | `KEY_SHARE0/1` ×8, `IV` ×4, `DATA_IN` ×4, `DATA_OUT` ×4 | **partly** — see below |
+| **Shadowed** registers (write value, then its complement) | `CTRL_SHADOWED`, `CTRL_AUX_SHADOWED`, `CTRL_GCM_SHADOWED` | yes |
+| **REGWEN gate** (`rw0c`) | `CTRL_AUX_REGWEN` | yes |
+| **Enum-typed fields** | `OPERATION`, `MODE`, `KEY_LEN`, `PRNG_RESEED_RATE` | yes |
+
+The model parses (4 enums, 9 types, 9 actions) and both scenarios schedule — 10
+steps, 0 warnings, all constraints satisfied. The shadowed-write protocol is
+expressed as an activity plus a constraint (`complement == ~value`), and the
+REGWEN gate as an action ordering. All six backends generate, and the generated
+C compiles and runs.
+
+### Where it strains
+
+**Multiregs are the limit.** AES declares `KEY_SHARE0` as a multireg with
+`count: "NumRegsKey"` — eight registers, not one. Satya's PSS subset *parses*
+`array<T, N>` and the array-suffix form `rand bit[32] data_in[4];`, but the
+engine gives arrays **no semantics**: such a field collapses to a single scalar
+(`data_in` solves to one 32-bit value, not four). Modelling a multireg means
+hand-unrolling it into `word0 … word7`, which is what the model does for
+`KEY_SHARE0` and documents in a comment.
+
+That is the honest answer to *"where would it break on a large production
+model?"* — not the parser, and not the scheduler, but **anywhere the register
+file is an array**. AES has 20 multireg words; a memory controller or a large
+accelerator would have far more. Closing it needs array semantics in the solver
+(per-element domains and `foreach` over an array variable), which Satya does not
+have.
+
+### Three defects AES exposed
+
+1. **Part-selects were not parsed.** PSS 8.6.1 defines
+   `identifier [ constant_expression : constant_expression ]`. Satya parsed
+   `x[i]` but not `x[msb:lsb]`, so `shadow.value[15:0]` was a syntax error.
+   Now parsed, and evaluated as a slice of a known value.
+2. **Bit-wise complement could not be solved.** `complement == ~value` was left
+   unsatisfied — and fixing it needed three separate corrections:
+   * the repair pass *clamped* the computed value into the field's domain, so
+     `~x` became `0` for every 32-bit `x`; it now **wraps** into an unsigned
+     field (two's-complement truncation), which is what `~` means on a `bit[N]`;
+   * `bit[N]` domains were capped at 20 bits, which truncated the wrap — they
+     now use the declared width (up to 62 bits);
+   * the checker evaluated `~` as a 64-bit value while the assignment produced a
+     32-bit one, so the two disagreed; bit-wise results are now compared at the
+     field's width.
+3. **Nothing else.** The scheduler, pools, arbitration and the six backends all
+   handled AES unchanged.
+
+After the fixes `program_ctrl` reports `10/10 satisfied`, with
+`value = 0x12348d01` and `complement = 0xedcb72fe` — the correct 32-bit
+complement.

@@ -310,6 +310,8 @@ pub enum Expr {
     },
     /// `a[i]`
     Index(Box<Expr>, Box<Expr>),
+    /// A bit part-select: `base[msb:lsb]` (PSS 8.6.1).
+    Slice(Box<Expr>, Box<Expr>, Box<Expr>),
     /// `{a, b, c}`
     List(Vec<Expr>),
     /// `x inside { ... }` / `x dist { ... }` — captured, not solved.

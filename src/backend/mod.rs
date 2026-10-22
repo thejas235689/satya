@@ -90,6 +90,9 @@ pub fn render_sv(expr: &Expr) -> String {
             }
         }
         Expr::Ternary(c, t, e) => format!("({} ? {} : {})", render_sv(c), render_sv(t), render_sv(e)),
+        Expr::Slice(base, msb, lsb) => {
+            format!("{}[{}:{}]", render_sv(base), render_sv(msb), render_sv(lsb))
+        }
         Expr::Call(f, args) => {
             let a: Vec<String> = args.iter().map(render_sv).collect();
             format!("{}({})", f, a.join(", "))
