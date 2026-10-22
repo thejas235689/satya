@@ -13,6 +13,20 @@ approximated.
 
 ---
 
+## 0.11.0 — 2026-10-22
+
+Address handles and the memory model
+
+- `addr_handle_t` handles (24.10.3), with `make_handle_from_claim` and
+  `make_handle_from_handle` offsetting one.
+- `addr_value` (24.10.5), `addr_value_solve` (24.10.6) and `addr_value_abs`
+  (24.10.7).
+- Primitive read/write over a byte-addressable store (24.10.9.1, 24.10.9.2):
+  `read8`/`read16`/`read32`/`read64` and their writes, little-endian — the first
+  byte written goes into bits [7:0].
+
+Feature matrix: 88 implemented / 43 partial / 15 not.
+
 ## 0.10.0 — 2026-10-22
 
 [Notes](https://github.com/thejas235689/satya/releases/tag/v0.10.0) · registers and `sizeof_s`

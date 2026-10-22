@@ -332,6 +332,40 @@ pub fn eval(expr: &Expr, values: &BTreeMap<String, i64>, env: &Env) -> Option<i6
                 // instance-varying, so a run is reproducible yet different
                 // instances draw different numbers.
                 "urandom" => Some(((hash_values(values) ^ env.seed) & 0xFFFF_FFFF) as i64),
+                // Address handles (PSS 24.10.3-24.10.8). A handle is an index
+                // into the instance's handle table, held in `values`.
+                "addr_value" | "addr_value_solve" => {
+                    let h = arg(0)?;
+                    values.get(&format!("__h.{}.addr", h)).copied()
+                }
+                "addr_value_abs" => {
+                    let h = arg(0)?;
+                    Some(values.get(&format!("__h.{}.abs", h)).copied().unwrap_or(1))
+                }
+                "get_tag" => {
+                    // The tag is a string and the engine has no string values,
+                    // so the region's tag index is returned (see SEMANTICS §2).
+                    let h = arg(0)?;
+                    Some(values.get(&format!("__h.{}.tag", h)).copied().unwrap_or(0))
+                }
+                // Primitive reads (PSS 24.10.9.1): little-endian, the first byte
+                // going into bits [7:0].
+                "read8" | "read16" | "read32" | "read64" => {
+                    let h = arg(0)?;
+                    let addr = values.get(&format!("__h.{}.addr", h)).copied()?;
+                    let n = match name.as_str() {
+                        "read8" => 1,
+                        "read16" => 2,
+                        "read32" => 4,
+                        _ => 8,
+                    };
+                    let mut v = 0i64;
+                    for i in 0..n {
+                        v |= values.get(&format!("__mem.{}", addr + i)).copied().unwrap_or(0)
+                            << (8 * i);
+                    }
+                    Some(v)
+                }
                 _ if false => None,
                 "urandom_range" => {
                     let (lo, hi) = (arg(0)?, arg(1)?);

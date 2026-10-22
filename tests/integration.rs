@@ -1478,3 +1478,75 @@ package p {
     // 0xFF with mode replaced by (9 & 7) << 1 == 0b010
     assert_eq!(get("v4"), 0xF3, "field write is masked to the field width");
 }
+
+// ---------------------------------------------------------------------------
+// Address handles and the memory model (Syntax 133-142).
+// ---------------------------------------------------------------------------
+
+const ADDR_MODEL: &str = r#"
+package p {
+  component C {
+    exec init_up {
+      mem_region.addr = 0x400;
+      mem_region.size = 4096;
+    }
+    action a {
+      addr_handle_t h0; addr_handle_t h1; addr_handle_t h2;
+      int addr0; int addr1; int addr2; int abs0;
+      int r32; int r8; int r16; int r64;
+      int tag0;
+      exec pre_solve {
+        h0 = make_handle_from_claim(mem_region, 0x10);
+        h1 = make_handle_from_handle(h0, 4);
+        h2 = make_handle_from_claim(mem_region, 0x20);
+        addr0 = addr_value(h0);
+        addr1 = addr_value_solve(h1);
+        addr2 = addr_value(h2);
+        abs0  = addr_value_abs(h0);
+        tag0  = get_tag(h0);
+        write32(h0, 0xDEADBEEF);
+        r32 = read32(h0);
+        r8  = read8(h0);                 // the low byte, bits [7:0]
+        write16(h1, 0x1234);
+        r16 = read16(h1);
+        write64(h2, 0x0102030405060708);
+        r64 = read64(h2);
+      }
+      rand int x;
+    };
+  };
+};
+"#;
+
+#[test]
+fn address_handles_carry_absolute_addresses() {
+    let m = compile_pss(ADDR_MODEL).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| s.steps[0].fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v).unwrap();
+    assert_eq!(get("addr0"), 0x410, "0x400 + 0x10");
+    assert_eq!(get("addr1"), 0x414, "handle plus an offset");
+    assert_eq!(get("addr2"), 0x420);
+    assert_eq!(get("abs0"), 1, "a region of an address space is transparent");
+}
+
+#[test]
+fn memory_primitives_are_little_endian() {
+    let m = compile_pss(ADDR_MODEL).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| s.steps[0].fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v).unwrap();
+    assert_eq!(get("r32"), 0xDEADBEEF);
+    // The first byte written goes into bits [7:0] (PSS 24.10.9.1).
+    assert_eq!(get("r8"), 0xEF);
+    assert_eq!(get("r16"), 0x1234);
+    assert_eq!(get("r64"), 0x0102030405060708);
+    // Each primitive round-trips through the byte-addressable store.
+    let mem: Vec<(String, i64)> = s.steps[0]
+        .fields
+        .iter()
+        .filter(|(k, _)| k.starts_with("__mem."))
+        .cloned()
+        .collect();
+    let at = |a: i64| mem.iter().find(|(k, _)| k == &format!("__mem.{}", a)).map(|(_, v)| *v);
+    assert_eq!(at(0x410), Some(0xEF), "low byte at the starting address");
+    assert_eq!(at(0x411), Some(0xBE));
+}

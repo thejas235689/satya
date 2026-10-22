@@ -17,9 +17,9 @@ were not.
 
 | Status | Count |
 |---|---|
-| yes | 80 |
-| partial | 40 |
-| no | 26 |
+| yes | 88 |
+| partial | 43 |
+| no | 15 |
 | **total** | **146** |
 
 ## Every construct
@@ -158,17 +158,17 @@ were not.
 | 130 | Address space group | no |  |
 | 131 | packed_s base struct | partial | parsed; the packed little-endian layout drives register field packing (24.10.1) |
 | 132 | sizeof_s struct | yes | `sizeof_s<T>::nbits` / `::nbytes` for packed structs, bit vectors and scalars |
-| 133 | Address space handle | no |  |
-| 134 | make_handle_from_claim function | no |  |
-| 135 | make_handle_from_handle function | no |  |
-| 136 | addr_value function | no |  |
-| 137 | addr_value_solve function | no |  |
-| 138 | addr_value_abs function | no |  |
-| 139 | get_tag function | no |  |
-| 140 | Primitive read operations for byte addressable spaces | no |  |
-| 141 | Primitive write operations for byte addressable spaces | no |  |
-| 142 | Read and write series of bytes | no |  |
+| 133 | Address space handle | yes | a handle is an index into the instance's handle table, holding its absolute address |
+| 134 | make_handle_from_claim function | yes | a handle at the claim's address plus an offset |
+| 135 | make_handle_from_handle function | yes | a handle at another handle's address plus an offset |
+| 136 | addr_value function | yes | the handle's absolute address |
+| 137 | addr_value_solve function | yes | as addr_value: regions of an address space are transparent, so the absolute address is known |
+| 138 | addr_value_abs function | yes | true for a transparent region, which every region added to an address space is |
+| 139 | get_tag function | partial | the region's tag *index* is returned; the engine has no string values, so the name itself is not comparable |
+| 140 | Primitive read operations for byte addressable spaces | yes | `read8` / `read16` / `read32` / `read64`, little-endian over a byte-addressable store |
+| 141 | Primitive write operations for byte addressable spaces | yes | `write8` / `write16` / `write32` / `write64`, little-endian over a byte-addressable store |
+| 142 | Read and write series of bytes | partial | `write_bytes` takes a literal list; `read_bytes` into a list is not supported |
 | 143 | Read and write packed structs | no |  |
-| 144 | Primitive operation implementation functions | no |  |
+| 144 | Primitive operation implementation functions | partial | the primitives are implemented in the engine rather than delegated to an executor instance |
 | 145 | PSS register definition | yes | `reg_c<R, ACC, SZ>` declarations plus read / read_val / write / write_val / write_masked / write_field, over a register store |
 | 146 | PSS register group definition | partial | `reg_group_c` is parsed; offsets come from the group's own get_offset_of_* functions, which are not evaluated |

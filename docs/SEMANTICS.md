@@ -86,6 +86,9 @@ With `:/`, `[100..102 :/ 6, 200 := 2]` gives 25.3 / 25.5 / 24.8 / 24.3 % against
 | `sizeof_s<T>::nbits` / `::nbytes` | 24.10.2 | computed for packed structs, bit vectors, enums and scalars |
 | `reg_c<R, ACC, SZ>` registers | 24.11.1 | declared, with `read`, `read_val`, `write`, `write_val`, `write_masked`, `write_val_masked`, `write_field` and `write_fields` over a register store |
 | packed little-endian layout | 24.10.1 | register fields pack from the least-significant bit in declaration order |
+| address handles | 24.10.3 | a handle holds an absolute address; `make_handle_from_claim` and `make_handle_from_handle` offset it |
+| `addr_value` / `addr_value_solve` / `addr_value_abs` | 24.10.5-24.10.7 | the handle's address; a region added to an address space is transparent, so the absolute address is known |
+| primitive read/write | 24.10.9.1, 24.10.9.2 | `read8`/`read16`/`read32`/`read64` and their writes, little-endian over a byte-addressable store |
 | array operators `==`, `!=`, `in` | 7.9.2.1 | element-wise equality and set membership are solved |
 | array properties `arr.size`, `arr.sum` | 7.9.2.4 | the deprecated property forms evaluate like the methods |
 | `exec init_down` / `init_up` | 22.1 | run for the component hierarchy before the scenario, `init_down` top-down and `init_up` bottom-up |
@@ -127,6 +130,10 @@ methods for arrays (7.9.2.2). The real list is below.
 | register group offsets | 24.11.2 | `reg_group_c` is parsed, but the offsets come from the group's own `get_offset_of_instance` / `get_offset_of_instance_array` / `get_offset_of_path` functions, which are not evaluated |
 | address traits and claims | 24.6-24.8 | address *regions* are modelled; traits, claims and handles are not |
 | register read/write primitives | 24.10.9 | register access is modelled over a register store, not translated into the primitive byte-level read/write operations on an address |
+| `get_tag` | 24.10.8 | returns the region's tag *index*; the engine has no string values, so the tag name itself is not comparable |
+| `read_bytes` | 24.10.9.3 | `write_bytes` takes a literal list; reading a series into a list is not supported |
+| `read_struct` / `write_struct` | 24.10.9.4 | not implemented — packed-struct access goes through the byte primitives only |
+| executor-based customisation | 24.10.9.5 | the primitives are implemented in the engine rather than delegated to an executor instance |
 | target-code templates (`exec declaration` bodies) | 22.2 | carried through to the backends verbatim, not interpreted |
 
 ## 3. How this is checked

@@ -163,6 +163,8 @@ struct Engine<'a> {
     in_cover: bool,
     /// The action whose `exec` block is running, so `randomize` can re-solve it.
     exec_action: Option<crate::ir::Action>,
+    /// Next address-handle index (PSS 24.10.3).
+    handle_seq: i64,
     /// Text emitted by the standard library's messaging functions.
     messages: Vec<String>,
     /// Values established by component `init_down`/`init_up` blocks, visible to
@@ -251,6 +253,7 @@ pub fn run_scenario(model: &Model, root_action: &str, seed: u64) -> Scenario {
         messages: Vec::new(),
         globals: BTreeMap::new(),
         exec_action: None,
+        handle_seq: 0,
         coverage: BTreeMap::new(),
         coverage_bins: BTreeMap::new(),
     };
@@ -869,6 +872,15 @@ impl<'a> Engine<'a> {
                     values.insert(format!("{}.size", base), items.len() as i64);
                     return Flow::Normal;
                 }
+                // Address operations that allocate a handle (PSS 24.7.1.2.1,
+                // 24.10.4) run here, where the engine can extend its handle
+                // table.
+                if let Expr::Call(name, args) = rhs {
+                    if let Some(v) = self.alloc_handle(name, args, values) {
+                        values.insert(base, v);
+                        return Flow::Normal;
+                    }
+                }
                 if let Some(v) = eval_value(rhs, values, self.model, self.seed) {
                     values.insert(base, v);
                 }
@@ -996,6 +1008,107 @@ impl<'a> Engine<'a> {
             .map(|(_, v)| v)
     }
 
+    /// `write8` / `write16` / `write32` / `write64` / `write_bytes` — store
+    /// bytes little-endian at the handle's address (PSS 24.10.9.2, 24.10.9.3).
+    fn exec_mem_write(&mut self, name: &str, args: &[Expr], values: &mut BTreeMap<String, i64>) {
+        let method = name.rsplit_once('.').map(|(_, m)| m).unwrap_or(name).to_string();
+        let method = method.as_str();
+        let arg = |k: usize| args.get(k).and_then(|a| eval_value(a, values, self.model, self.seed));
+        let h = match arg(0) {
+            Some(h) => h,
+            None => return,
+        };
+        let base = match values.get(&format!("__h.{}.addr", h)).copied() {
+            Some(a) => a,
+            None => return,
+        };
+        let bytes: Vec<i64> = match method {
+            "write8" => vec![arg(1).unwrap_or(0) & 0xFF],
+            "write16" => (0..2).map(|i| (arg(1).unwrap_or(0) >> (8 * i)) & 0xFF).collect(),
+            "write32" => (0..4).map(|i| (arg(1).unwrap_or(0) >> (8 * i)) & 0xFF).collect(),
+            "write64" => (0..8).map(|i| (arg(1).unwrap_or(0) >> (8 * i)) & 0xFF).collect(),
+            "write_bytes" => match args.get(1) {
+                Some(Expr::List(items)) => items
+                    .iter()
+                    .filter_map(|i| eval_value(i, values, self.model, self.seed))
+                    .map(|v| v & 0xFF)
+                    .collect(),
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        };
+        for (i, b) in bytes.iter().enumerate() {
+            values.insert(format!("__mem.{}", base + i as i64), *b);
+        }
+    }
+
+    /// Allocate an address handle: `add_region`, `add_nonallocatable_region`,
+    /// `make_handle_from_claim` and `make_handle_from_handle` (PSS 24.7.1.2,
+    /// 24.10.4). Returns the new handle's index.
+    fn alloc_handle(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        values: &mut BTreeMap<String, i64>,
+    ) -> Option<i64> {
+        let arg = |k: usize| args.get(k).and_then(|a| eval_value(a, values, self.model, self.seed));
+        let (addr, tag) = match name {
+            "add_region" | "add_nonallocatable_region" => {
+                let region = match args.first() {
+                    Some(Expr::Path(p)) => p.segments.join("."),
+                    _ => return None,
+                };
+                let leaf = region.rsplit('.').next().unwrap_or(&region).to_string();
+                let found = self
+                    .model
+                    .addr_regions
+                    .iter()
+                    .position(|r| r.name == leaf || r.name.ends_with(&format!(".{}", leaf)));
+                let base = found
+                    .map(|i| self.model.addr_regions[i].base)
+                    .or_else(|| values.get(&format!("{}.addr", region)).copied())
+                    .unwrap_or(0);
+                (base, found.map(|i| i as i64).unwrap_or(0))
+            }
+            "make_handle_from_claim" => {
+                let claim = match args.first() {
+                    Some(Expr::Path(p)) => p.segments.join("."),
+                    _ => return None,
+                };
+                let base = values
+                    .get(&format!("{}.addr", claim))
+                    .copied()
+                    .or_else(|| {
+                        let leaf = claim.rsplit('.').next().unwrap_or(&claim);
+                        self.model
+                            .addr_regions
+                            .iter()
+                            .find(|r| r.name == leaf)
+                            .map(|r| r.base)
+                    })
+                    .unwrap_or(0);
+                (base, 0)
+            }
+            "make_handle_from_handle" => {
+                let h = arg(0)?;
+                (values.get(&format!("__h.{}.addr", h)).copied().unwrap_or(0), 0)
+            }
+            _ => return None,
+        };
+        let offset = match name {
+            "make_handle_from_claim" | "make_handle_from_handle" => arg(1).unwrap_or(0),
+            _ => 0,
+        };
+        let idx = self.handle_seq;
+        self.handle_seq += 1;
+        values.insert(format!("__h.{}.addr", idx), addr + offset);
+        // Regions added to an address space are transparent, so the absolute
+        // address is known (PSS 24.10.7).
+        values.insert(format!("__h.{}.abs", idx), 1);
+        values.insert(format!("__h.{}.tag", idx), tag);
+        Some(idx)
+    }
+
     /// The register component a path names, if it names a register
     /// (`reg_c<R, ACC, SZ>`, PSS 24.11.1).
     fn register_component(&self, path: &str) -> Option<&crate::ir::Component> {
@@ -1120,6 +1233,16 @@ impl<'a> Engine<'a> {
 
     /// One `exec` method call, e.g. `q.push_back(v)`.
     fn exec_call(&mut self, name: &str, args: &[Expr], values: &mut BTreeMap<String, i64>) {
+        // Address-space write primitives (PSS 24.10.9.2, 24.10.9.3).
+        // The primitives are free functions (`write32(h, v)`), not methods.
+        if matches!(
+            name.rsplit_once('.').map(|(_, m)| m).unwrap_or(name),
+            "write8" | "write16" | "write32" | "write64" | "write_bytes"
+        ) {
+            self.exec_mem_write(name, args, values);
+            return;
+        }
+
         // Register access functions (PSS 24.11.1, Syntax 145).
         if matches!(
             name.rsplit_once('.').map(|(_, m)| m),
