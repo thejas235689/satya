@@ -76,7 +76,13 @@ With `:/`, `[100..102 :/ 6, 200 := 2]` gives 25.3 / 25.5 / 24.8 / 24.3 % against
 | covergroups, coverpoints, `cover { … }` | 18, 19.2 | sampled while the `cover` block's activity executes; a coverage summary is reported |
 | `cross` items | 18.4 | sampled as a value tuple, once every referenced coverpoint is known |
 | explicit `bins` | 18.3 | coverage is reported against the declared bins (`bins hit/declared`) |
-| `cover <type>;` | 19.2 | observes the rest of the enclosing activity |
+| `cover <type>;` | 19.2 | matches the named monitor's scenario against the executed stream and samples its covergroups over the matched steps |
+| monitor declarations | 19.1 | parsed, with their action handles and covergroups |
+| monitor activity: action traversal | 19.3.1 | matches the *earliest* step of that action at or after the checkpoint, subject to the inline constraint |
+| `sequence` / `concat` | 19.3.2, 19.3.3 | `sequence` requires the sub-scenarios to be contiguous; `concat` allows gaps, and the realization is the matched steps only — a gap is not part of it |
+| `eventually` | 19.3.4 | matches from any checkpoint at or after the start |
+| `select` | 19.3.6 | takes the first arm whose guard holds |
+| nested monitors | 19.3.9 | matched by name |
 | array operators `==`, `!=`, `in` | 7.9.2.1 | element-wise equality and set membership are solved |
 | array properties `arr.size`, `arr.sum` | 7.9.2.4 | the deprecated property forms evaluate like the methods |
 | `exec init_down` / `init_up` | 22.1 | run for the component hierarchy before the scenario, `init_down` top-down and `init_up` bottom-up |
@@ -107,7 +113,9 @@ methods for arrays (7.9.2.2). The real list is below.
 | array methods `join`, `str_from_chars` | 7.9.2.2 | not evaluated — they produce strings, which the engine does not model as values |
 | `to_list`, `to_set` conversions | 7.9.2.2, 7.9.3.2 | not evaluated |
 | collection mutators inside a *constraint* | 16.1 | only `exec` mutates a collection; a constraint can read one but not change it |
-| `monitor` scenario matching | 19.1 | a monitor's covergroups are collected and `cover <type>` observes the enclosing activity, but the monitor's *activity* is not matched against the executed stream |
+| `overlap` / `schedule` monitor statements | 19.3.5, 19.3.8 | each branch is matched independently from the checkpoint; true interleaving of concurrent branches is not modelled |
+| monitor constraints | 19.4 | parsed, but a monitor constraint does not filter which steps match |
+| monitor inheritance | 19.6 | a monitor's base type is parsed but not applied |
 | `exec` statements other than assignment, `if` and method calls | 10.4 | `for`/`while` loops and target-code templates are passed through to the backends, not executed |
 | `join_first(n)`'s run-time dependency | 12.3.6.1d | imposes no *scheduling* order (correct), but there is no runtime, so the "first n to complete" part is not simulated |
 | multiple `dist` directives on one attribute | 16.1.9 | weights are summed; the LRM leaves the resulting distribution undefined |

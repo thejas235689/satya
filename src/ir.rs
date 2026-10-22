@@ -169,6 +169,8 @@ pub struct Model {
     pub duplicates: Vec<String>,
     /// Covergroups declared in the model (PSS 18).
     pub covergroups: Vec<crate::ast::Covergroup>,
+    /// Monitor declarations in the model (PSS 19.1).
+    pub monitors: Vec<crate::ast::Monitor>,
 }
 
 impl Model {
@@ -202,6 +204,7 @@ impl Model {
         lw.collect(file.items.iter(), None);
         lw.finish();
         lw.model.covergroups = file.covergroups.clone();
+        lw.model.monitors = file.monitors.clone();
         Ok(lw.model)
     }
 

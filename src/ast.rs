@@ -256,6 +256,8 @@ pub struct SourceFile {
     pub items: Vec<Item>,
     /// Covergroups declared anywhere in the file (PSS 18).
     pub covergroups: Vec<Covergroup>,
+    /// Monitor declarations anywhere in the file (PSS 19.1).
+    pub monitors: Vec<Monitor>,
 }
 
 // ---------------------------------------------------------------------------
@@ -306,6 +308,45 @@ pub struct Covergroup {
     pub items: Vec<CoverItem>,
 }
 
+/// A monitor's activity pattern (PSS 19.3, Syntax 69-78).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MonStmt {
+    /// `do type [with constraint];` or a named action handle.
+    Traverse {
+        action: String,
+        handle: Option<String>,
+        cond: Option<Expr>,
+    },
+    /// `sequence { .. }` — consecutive in the trace (19.3.2).
+    Sequence(Vec<MonStmt>),
+    /// `concat { .. }` — ordered, but gaps are allowed (19.3.3).
+    Concat(Vec<MonStmt>),
+    /// `eventually { .. }` — matches at any checkpoint at or after the start (19.3.4).
+    Eventually(Vec<MonStmt>),
+    /// `overlap { .. }` / `schedule { .. }` — concurrent branches (19.3.5, 19.3.8).
+    Concurrent(Vec<MonStmt>),
+    /// `select { guard: { .. } .. }` (19.3.6).
+    Select(Vec<(Option<Expr>, Vec<MonStmt>)>),
+    /// `do <monitor_type>` — a nested monitor (19.3.9).
+    MonitorRef(String),
+    /// `constraint <set>` inside a monitor (19.4).
+    Constraint(Expr),
+    /// The empty scenario, which matches anything (19.3.7).
+    Empty,
+}
+
+/// A monitor declaration (PSS 19.1, Syntax 68).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Monitor {
+    pub name: String,
+    /// A monitor declared inside a component is scoped to it.
+    pub component: Option<String>,
+    pub pattern: MonStmt,
+    pub covergroups: Vec<crate::ast::Covergroup>,
+}
+
+
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActivityStmt {
     /// `do SomeAction;` — optionally component-qualified.
@@ -354,6 +395,8 @@ pub enum ActivityStmt {
     Cover {
         label: Option<String>,
         body: Option<Activity>,
+        /// `cover <monitor_type>;` — the monitor to match against the stream.
+        monitor: Option<String>,
     },
     If {
         cond: Expr,

@@ -1317,3 +1317,94 @@ component C {
         assert_eq!(step.satisfied, step.total, "seed {seed}: {:?}", step.unsatisfied);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Monitors (Syntax 68-78).
+// ---------------------------------------------------------------------------
+
+const MONITORS: &str = r#"
+package p {
+  enum core_e {c0, c1};
+  component C {
+    action start {};
+    action nop {};
+    action write { rand core_e core; };
+    action read  { rand core_e core; };
+    monitor m_concat {
+      write w;
+      activity { concat { do start; w; do read; } }
+      covergroup { c: coverpoint w.core; } cc;
+    };
+    monitor m_sequence {
+      write w;
+      activity { sequence { do start; w; do read; } }
+      covergroup { c: coverpoint w.core; } cs;
+    };
+    monitor m_eventually {
+      write w;
+      activity { eventually { w; } }
+      covergroup { c: coverpoint w.core; } ce;
+    };
+    monitor m_select {
+      activity { select { 1: { do start; } default: { do read; } } }
+      covergroup { c: coverpoint 1; } csel;
+    };
+    action t {
+      activity {
+        do start; do nop; do write; do read;
+        cover m_concat;
+        cover m_sequence;
+        cover m_eventually;
+        cover m_select;
+      }
+    };
+  };
+};
+"#;
+
+fn coverage_total(s: &engine::Scenario, name: &str) -> Option<usize> {
+    s.coverage
+        .iter()
+        .find(|c| c.name == name)
+        .map(|c| c.values.iter().map(|(_, n)| *n).sum())
+}
+
+#[test]
+fn concat_matches_across_a_gap_but_sequence_does_not() {
+    let m = compile_pss(MONITORS).unwrap();
+    let s = engine::run_scenario(&m, "t", 1);
+    // `concat { start; write; read }` tolerates the `nop` between them, and the
+    // realization is the three matched steps - the gap is not part of it.
+    assert_eq!(coverage_total(&s, "cc.c"), Some(3), "{:?}", s.coverage);
+    // `sequence` requires contiguity, so the same pattern must not match.
+    assert_eq!(coverage_total(&s, "cs.c"), None, "sequence must not match across a gap");
+}
+
+#[test]
+fn eventually_finds_a_later_match() {
+    let m = compile_pss(MONITORS).unwrap();
+    let s = engine::run_scenario(&m, "t", 1);
+    // `eventually { w; }` matches the single write step.
+    assert_eq!(coverage_total(&s, "ce.c"), Some(1), "{:?}", s.coverage);
+}
+
+#[test]
+fn monitor_select_takes_the_first_matching_arm() {
+    let m = compile_pss(MONITORS).unwrap();
+    let s = engine::run_scenario(&m, "t", 1);
+    // Guard `1` is true, so the `start` arm is taken and sampled once.
+    assert_eq!(coverage_total(&s, "csel.c"), Some(1), "{:?}", s.coverage);
+}
+
+#[test]
+fn cover_of_an_unknown_monitor_falls_back_to_the_enclosing_activity() {
+    let src = r#"
+component C {
+  action gen { rand int in [0..3] v; covergroup { c: coverpoint v; } cs; };
+  action t { activity { cover no_such_monitor; do gen; do gen; } };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "t", 1);
+    assert_eq!(coverage_total(&s, "cs.c"), Some(2), "{:?}", s.coverage);
+}

@@ -9,16 +9,17 @@ Legend: **yes** — parsed *and* implemented with its defined semantics;
 **no** — not implemented (in most cases not yet parsed either).
 
 Every "yes" is exercised by a test or by the corpora in `docs/LRM-EXAMPLES.md`
-and `docs/OPENTITAN.md`. The statuses below were checked against the
-implementation rather than assumed.
+and `docs/OPENTITAN.md`. The statuses were checked against the implementation
+rather than assumed — which has twice caught constructs marked implemented that
+were not.
 
 ## Summary
 
 | Status | Count |
 |---|---|
-| yes | 71 |
-| partial | 35 |
-| no | 40 |
+| yes | 78 |
+| partial | 38 |
+| no | 30 |
 | **total** | **146** |
 
 ## Every construct
@@ -92,17 +93,17 @@ implementation rather than assumed.
 | 65 | coverpoint declaration | yes |  |
 | 66 | bins declaration | yes |  |
 | 67 | cross declaration | yes |  |
-| 68 | Cover statement and monitor declaration | partial | covergroups are sampled; a monitor scenario is not matched |
-| 69 | Monitor activity | no |  |
-| 70 | Action traversal statement | no |  |
-| 71 | Sequence monitor activity statement | no |  |
-| 72 | Concat monitor activity statement | no |  |
-| 73 | Eventually monitor activity statement | no |  |
-| 74 | Overlap monitor activity statement | no |  |
-| 75 | Select monitor activity statement | no |  |
-| 76 | Schedule monitor activity statement | no |  |
-| 77 | Monitor traversal statement | no |  |
-| 78 | Monitor constraints | no |  |
+| 68 | Cover statement and monitor declaration | yes | monitors are declared and matched; see 69-78 |
+| 69 | Monitor activity | yes |  |
+| 70 | Action traversal statement | yes |  |
+| 71 | Sequence monitor activity statement | yes |  |
+| 72 | Concat monitor activity statement | yes |  |
+| 73 | Eventually monitor activity statement | yes |  |
+| 74 | Overlap monitor activity statement | partial | branches are matched independently; true interleaving is not modelled |
+| 75 | Select monitor activity statement | yes |  |
+| 76 | Schedule monitor activity statement | partial | as overlap: branches are matched independently |
+| 77 | Monitor traversal statement | partial | nested monitors are matched by name; monitor inheritance is not applied |
+| 78 | Monitor constraints | partial | parsed; a monitor constraint does not filter the matched steps |
 | 79 | type extension | yes |  |
 | 80 | override declaration | no | parsed; overrides are not applied |
 | 81 | package declaration | yes |  |

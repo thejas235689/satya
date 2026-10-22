@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::ast::{Activity, ActivityStmt, ExecStmt, Expr, JoinSpec, Path};
+use crate::ast::{Activity, ActivityStmt, Covergroup, ExecStmt, Expr, JoinSpec, MonStmt, Path};
 use crate::ir::{Action, Field, FieldKind, Model};
 use crate::solver::{self, Env};
 
@@ -375,8 +375,55 @@ impl<'a> Engine<'a> {
         let mut covered_from_here = false;
         while i < stmts.len() {
             let stmt = &stmts[i];
-            if let ActivityStmt::Cover { body: None, .. } = peel_label(stmt).0 {
-                covered_from_here = true;
+            if let ActivityStmt::Cover {
+                body: None,
+                monitor,
+                ..
+            } = peel_label(stmt).0
+            {
+                // `cover <monitor_type>;` — match the monitor's scenario against
+                // the stream executed so far, and sample its covergroups over
+                // the steps that realize it (PSS 19.2).
+                let named = monitor
+                    .clone()
+                    .and_then(|n| self.model.monitors.iter().find(|m| m.name == n).cloned());
+                match named {
+                    Some(m) => {
+                        let mut binds: BTreeMap<String, usize> = BTreeMap::new();
+                        let mut hits: Vec<usize> = Vec::new();
+                        let hit = self.match_monitor(&m.pattern, 0, 0, &mut binds, &mut hits);
+                        if hit.is_some() {
+                            let cgs = m.covergroups.clone();
+                            // Only the steps the pattern actually matched — a
+                            // gap allowed by `concat` is not part of the
+                            // realization.
+                            hits.sort_unstable();
+                            hits.dedup();
+                            let mut observed: Vec<BTreeMap<String, i64>> = hits
+                                .iter()
+                                .filter_map(|i| self.steps.get(*i))
+                                .map(|st| st.fields.iter().cloned().collect())
+                                .collect();
+                            // Coverpoints in a monitor refer to its action
+                            // handles (`w.core`), so bind those too.
+                            for (h, idx) in &binds {
+                                if let Some(st) = self.steps.get(*idx) {
+                                    for v in observed.iter_mut() {
+                                        for (k, val) in &st.fields {
+                                            v.insert(format!("{}.{}", h, k), *val);
+                                        }
+                                    }
+                                }
+                            }
+                            for v in observed {
+                                self.sample_covergroups(&cgs, &v);
+                            }
+                        }
+                    }
+                    // No monitor of that name: observe the rest of the
+                    // enclosing activity.
+                    None => covered_from_here = true,
+                }
                 i += 1;
                 continue;
             }
@@ -1066,6 +1113,211 @@ impl<'a> Engine<'a> {
             .join(" ")
     }
 
+    /// Match a monitor's activity pattern against the executed stream,
+    /// starting at step `from`. Returns the half-open range of steps that
+    /// realize the pattern (PSS 19.3).
+    ///
+    /// The base statements are: an action traversal picks the *earliest*
+    /// matching step at or after the checkpoint (19.3.1); `sequence` requires
+    /// the sub-scenarios to be contiguous, `concat` allows gaps between them
+    /// (19.3.2, 19.3.3); `eventually` accepts a match from any checkpoint at or
+    /// after the start (19.3.4); `overlap`/`schedule` match their branches
+    /// concurrently (19.3.5, 19.3.8).
+    fn match_monitor(
+        &self,
+        pat: &MonStmt,
+        from: usize,
+        depth: usize,
+        bindings: &mut BTreeMap<String, usize>,
+        matched: &mut Vec<usize>,
+    ) -> Option<(usize, usize)> {
+        if depth > 12 {
+            return None;
+        }
+        let end = self.steps.len();
+        match pat {
+            MonStmt::Empty => Some((from, from)),
+            MonStmt::Traverse { action, handle, cond } => {
+                for i in from..end {
+                    if self.steps[i].action != *action {
+                        continue;
+                    }
+                    let mut ctx: BTreeMap<String, i64> =
+                        self.steps[i].fields.iter().cloned().collect();
+                    // A handle bound earlier is visible to this constraint.
+                    for (h, idx) in bindings.iter() {
+                        if let Some(st) = self.steps.get(*idx) {
+                            for (k, v) in &st.fields {
+                                ctx.insert(format!("{}.{}", h, k), *v);
+                            }
+                        }
+                    }
+                    if let Some(c) = cond {
+                        if eval_condition_opt(c, &ctx, self.model, self.seed) != Some(true) {
+                            continue;
+                        }
+                    }
+                    if let Some(h) = handle {
+                        bindings.insert(h.clone(), i);
+                    }
+                    matched.push(i);
+                    return Some((i, i + 1));
+                }
+                None
+            }
+            MonStmt::Sequence(items) => {
+                let mut at = from;
+                for it in items {
+                    let (start, next) = self.match_monitor(it, at, depth + 1, bindings, matched)?;
+                    if start != at {
+                        return None; // a sequence must be contiguous
+                    }
+                    at = next;
+                }
+                Some((from, at))
+            }
+            MonStmt::Concat(items) | MonStmt::Eventually(items) => {
+                let mut at = from;
+                for it in items {
+                    let (_, next) = self.match_monitor(it, at, depth + 1, bindings, matched)?;
+                    at = next;
+                }
+                Some((from, at))
+            }
+            MonStmt::Concurrent(items) => {
+                let mut last = from;
+                for it in items {
+                    let (_, next) = self.match_monitor(it, from, depth + 1, bindings, matched)?;
+                    last = last.max(next);
+                }
+                Some((from, last))
+            }
+            MonStmt::Select(arms) => {
+                for (guard, body) in arms {
+                    let hit = match guard {
+                        None => true,
+                        Some(g) => {
+                            let ctx: BTreeMap<String, i64> = self
+                                .steps
+                                .get(from)
+                                .map(|s| s.fields.iter().cloned().collect())
+                                .unwrap_or_default();
+                            eval_condition_opt(g, &ctx, self.model, self.seed) == Some(true)
+                        }
+                    };
+                    if !hit {
+                        continue;
+                    }
+                    let mut at = from;
+                    let mut ok = true;
+                    for it in body {
+                        match self.match_monitor(it, at, depth + 1, bindings, matched) {
+                            Some((_, next)) => at = next,
+                            None => {
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+                    if ok {
+                        return Some((from, at));
+                    }
+                }
+                None
+            }
+            MonStmt::MonitorRef(name) => {
+                let inner = self
+                    .model
+                    .monitors
+                    .iter()
+                    .find(|m| &m.name == name)
+                    .map(|m| m.pattern.clone())?;
+                self.match_monitor(&inner, from, depth + 1, bindings, matched)
+            }
+            // A monitor constraint does not affect which steps are matched.
+            MonStmt::Constraint(_) => Some((from, from)),
+        }
+    }
+
+    /// Sample a set of covergroups against one instance's values
+    /// (PSS 18.3, 18.4).
+    fn sample_covergroups(&mut self, cgs: &[Covergroup], solved: &BTreeMap<String, i64>) {
+        for cg in cgs {
+            // Values sampled for each labelled coverpoint, so a cross can
+            // combine them.
+            let mut sampled: BTreeMap<String, i64> = BTreeMap::new();
+            for item in &cg.items {
+                if let crate::ast::CoverItem::Coverpoint { label, expr, iff, bins } = item {
+                    if let Some(cond) = iff {
+                        if eval_condition_opt(cond, solved, self.model, self.seed) != Some(true) {
+                            continue;
+                        }
+                    }
+                    if let Some(v) = eval_value(expr, solved, self.model, self.seed) {
+                        let point = match label {
+                            Some(l) => format!("{}.{}", cg.name, l),
+                            None => format!("{}.{}", cg.name, crate::solver::render_expr(expr)),
+                        };
+                        if let Some(l) = label {
+                            sampled.insert(l.clone(), v);
+                        }
+                        *self
+                            .coverage
+                            .entry(point.clone())
+                            .or_default()
+                            .entry(v.to_string())
+                            .or_insert(0) += 1;
+                        // Record the declared bins so coverage can be
+                        // reported against them (18.3).
+                        if !bins.is_empty() {
+                            let decl = self.coverage_bins.entry(point).or_default();
+                            if decl.len() != bins.len() {
+                                decl.clear();
+                                for (_, bexpr) in bins {
+                                    decl.push(bin_values(bexpr, solved, self.model, self.seed));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            for item in &cg.items {
+                if let crate::ast::CoverItem::Cross { label, refs, iff } = item {
+                    if let Some(cond) = iff {
+                        if eval_condition_opt(cond, solved, self.model, self.seed) != Some(true) {
+                            continue;
+                        }
+                    }
+                    // A cross needs every referenced coverpoint to have been
+                    // sampled for this instance.
+                    let mut parts = Vec::new();
+                    for r in refs {
+                        match sampled.get(r) {
+                            Some(v) => parts.push(v.to_string()),
+                            None => {
+                                parts.clear();
+                                break;
+                            }
+                        }
+                    }
+                    if parts.is_empty() {
+                        continue;
+                    }
+                    let point = match label {
+                        Some(l) => format!("{}.{}", cg.name, l),
+                        None => format!("{}.cross({})", cg.name, refs.join(",")),
+                    };
+                    *self
+                        .coverage
+                        .entry(point)
+                        .or_default()
+                        .entry(parts.join(","))
+                        .or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
     fn record_step(
         &mut self,
         action: &Action,
@@ -1118,80 +1370,8 @@ impl<'a> Engine<'a> {
         // Sample the model's coverpoints and crosses against this instance
         // (PSS 18.3, 18.4).
         if self.in_cover {
-            for cg in &self.model.covergroups {
-                // Values sampled for each labelled coverpoint, so a cross can
-                // combine them.
-                let mut sampled: BTreeMap<String, i64> = BTreeMap::new();
-                for item in &cg.items {
-                    if let crate::ast::CoverItem::Coverpoint { label, expr, iff, bins } = item {
-                        if let Some(cond) = iff {
-                            if eval_condition_opt(cond, &solved, self.model, self.seed) != Some(true) {
-                                continue;
-                            }
-                        }
-                        if let Some(v) = eval_value(expr, &solved, self.model, self.seed) {
-                            let point = match label {
-                                Some(l) => format!("{}.{}", cg.name, l),
-                                None => format!("{}.{}", cg.name, crate::solver::render_expr(expr)),
-                            };
-                            if let Some(l) = label {
-                                sampled.insert(l.clone(), v);
-                            }
-                            *self
-                                .coverage
-                                .entry(point.clone())
-                                .or_default()
-                                .entry(v.to_string())
-                                .or_insert(0) += 1;
-                            // Record the declared bins so coverage can be
-                            // reported against them (18.3).
-                            if !bins.is_empty() {
-                                let decl = self.coverage_bins.entry(point).or_default();
-                                if decl.len() != bins.len() {
-                                    decl.clear();
-                                    for (_, bexpr) in bins {
-                                        decl.push(bin_values(bexpr, &solved, self.model, self.seed));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                for item in &cg.items {
-                    if let crate::ast::CoverItem::Cross { label, refs, iff } = item {
-                        if let Some(cond) = iff {
-                            if eval_condition_opt(cond, &solved, self.model, self.seed) != Some(true) {
-                                continue;
-                            }
-                        }
-                        // A cross needs every referenced coverpoint to have been
-                        // sampled for this instance.
-                        let mut parts = Vec::new();
-                        for r in refs {
-                            match sampled.get(r) {
-                                Some(v) => parts.push(v.to_string()),
-                                None => {
-                                    parts.clear();
-                                    break;
-                                }
-                            }
-                        }
-                        if parts.is_empty() {
-                            continue;
-                        }
-                        let point = match label {
-                            Some(l) => format!("{}.{}", cg.name, l),
-                            None => format!("{}.cross({})", cg.name, refs.join(",")),
-                        };
-                        *self
-                            .coverage
-                            .entry(point)
-                            .or_default()
-                            .entry(parts.join(","))
-                            .or_insert(0) += 1;
-                    }
-                }
-            }
+            let cgs = self.model.covergroups.clone();
+            self.sample_covergroups(&cgs, &solved);
         }
 
         // Allocate / consume flow objects and claim resources. A flow object

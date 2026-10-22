@@ -14,6 +14,8 @@ pub struct Parser {
     pos: usize,
     /// Covergroups declared so far (PSS 18).
     covergroups: Vec<Covergroup>,
+    /// Monitors declared so far (PSS 19.1).
+    monitors: Vec<Monitor>,
 }
 
 impl Parser {
@@ -22,6 +24,7 @@ impl Parser {
             toks,
             pos: 0,
             covergroups: Vec::new(),
+            monitors: Vec::new(),
         }
     }
 
@@ -205,6 +208,7 @@ impl Parser {
         Ok(SourceFile {
             items,
             covergroups: std::mem::take(&mut self.covergroups),
+            monitors: std::mem::take(&mut self.monitors),
         })
     }
 
@@ -488,6 +492,11 @@ impl Parser {
             if self.at_ident("covergroup") {
                 let cg = self.parse_covergroup()?;
                 self.covergroups.push(cg);
+                continue;
+            }
+            if self.at_ident("monitor") {
+                let m = self.parse_monitor()?;
+                self.monitors.push(m);
                 continue;
             }
             if self.at_ident("function") || self.at_ident("task") {
@@ -1219,6 +1228,11 @@ impl Parser {
             self.covergroups.push(cg);
             return Ok(CompItem::Raw("covergroup".into()));
         }
+        if self.at_ident("monitor") {
+            let m = self.parse_monitor()?;
+            self.monitors.push(m);
+            return Ok(CompItem::Raw("monitor".into()));
+        }
         if self.at_ident("function") || self.at_ident("task") {
             self.bump();
             self.skip_to_semicolon();
@@ -1312,6 +1326,11 @@ impl Parser {
             if self.at_ident("covergroup") {
                 let cg = self.parse_covergroup()?;
                 self.covergroups.push(cg);
+                continue;
+            }
+            if self.at_ident("monitor") {
+                let m = self.parse_monitor()?;
+                self.monitors.push(m);
                 continue;
             }
             if self.at_ident("function") || self.at_ident("task") {
@@ -1591,12 +1610,13 @@ impl Parser {
                 }
                 self.expect_punct("}")?;
                 self.eat_punct(";");
-                return Ok(Some(ActivityStmt::Cover { label: None, body }));
+                return Ok(Some(ActivityStmt::Cover { label: None, body, monitor: None }));
             }
-            // `cover <type>;`
-            let _ = self.parse_scoped_path()?;
+            // `cover <monitor_type>;` — match the named monitor (PSS 19.2).
+            let ty = self.parse_scoped_path()?;
             self.eat_punct(";");
             return Ok(Some(ActivityStmt::Cover {
+                monitor: Some(ty.leaf().to_string()),
                 label: None,
                 body: None,
             }));
@@ -2200,6 +2220,192 @@ impl Parser {
                 Ok(Expr::Unknown(token_text(&t)))
             }
         }
+    }
+
+    /// `monitor NAME { activity { .. } covergroup { .. } }` (PSS 19.1,
+    /// Syntax 68).
+    fn parse_monitor(&mut self) -> PssResult<Monitor> {
+        self.expect_ident_named("monitor")?;
+        let name = self.expect_ident()?;
+        // Optional base monitor type.
+        if self.at_punct(":") {
+            self.bump();
+            let _ = self.parse_type_ref();
+        }
+        self.expect_punct("{")?;
+        let mut pattern = MonStmt::Empty;
+        let mut covergroups = Vec::new();
+        let mut handles: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        while !self.at_punct("}") && !self.at_eof() {
+            if self.eat_punct(";") {
+                continue;
+            }
+            if self.at_ident("activity") {
+                self.bump();
+                pattern = self.parse_monitor_list(&mut handles)?;
+                continue;
+            }
+            // `<type> <handle>;` declares an action handle for the activity.
+            if matches!(self.peek().kind, TokKind::Ident(_))
+                && matches!(self.peek_at(1).kind, TokKind::Ident(_))
+            {
+                let ty = self.expect_ident()?;
+                let h = self.expect_ident()?;
+                self.eat_punct(";");
+                handles.insert(h, ty);
+                continue;
+            }
+            if self.at_ident("covergroup") {
+                covergroups.push(self.parse_covergroup()?);
+                continue;
+            }
+            self.skip_braced_or_semicolon();
+        }
+        self.expect_punct("}")?;
+        self.eat_punct(";");
+        Ok(Monitor {
+            name,
+            component: None,
+            pattern,
+            covergroups,
+        })
+    }
+
+    /// `{ stmt; stmt; }` inside a monitor — a sequence of sub-scenarios.
+    fn parse_monitor_list(
+        &mut self,
+        handles: &mut std::collections::HashMap<String, String>,
+    ) -> PssResult<MonStmt> {
+        self.expect_punct("{")?;
+        let mut items = Vec::new();
+        while !self.at_punct("}") && !self.at_eof() {
+            if self.eat_punct(";") {
+                continue;
+            }
+            items.push(self.parse_monitor_stmt(handles)?);
+        }
+        self.expect_punct("}")?;
+        Ok(match items.len() {
+            0 => MonStmt::Empty,
+            1 => items.pop().unwrap(),
+            _ => MonStmt::Sequence(items),
+        })
+    }
+
+    fn parse_monitor_stmt(
+        &mut self,
+        handles: &mut std::collections::HashMap<String, String>,
+    ) -> PssResult<MonStmt> {
+        // Optional `label :`.
+        if matches!(self.peek().kind, TokKind::Ident(_)) && self.peek_at(1).is_punct(":") {
+            let _ = self.expect_ident()?;
+            self.bump();
+        }
+        for (kw, make) in [
+            ("sequence", 0usize),
+            ("concat", 1),
+            ("eventually", 2),
+            ("overlap", 3),
+            ("schedule", 4),
+        ] {
+            if self.at_ident(kw) {
+                self.bump();
+                let items = self.parse_monitor_list(handles)?;
+                let list = match items {
+                    MonStmt::Sequence(v) => v,
+                    MonStmt::Empty => Vec::new(),
+                    other => vec![other],
+                };
+                return Ok(match make {
+                    0 => MonStmt::Sequence(list),
+                    1 => MonStmt::Concat(list),
+                    2 => MonStmt::Eventually(list),
+                    _ => MonStmt::Concurrent(list),
+                });
+            }
+        }
+        if self.at_ident("select") {
+            self.bump();
+            self.expect_punct("{")?;
+            let mut arms = Vec::new();
+            while !self.at_punct("}") && !self.at_eof() {
+                if self.eat_punct(";") {
+                    continue;
+                }
+                let guard = if self.eat_ident("default") {
+                    None
+                } else {
+                    Some(self.parse_expr(0)?)
+                };
+                self.expect_punct(":")?;
+                let body = self.parse_monitor_list(handles)?;
+                let body = match body {
+                    MonStmt::Sequence(v) => v,
+                    MonStmt::Empty => Vec::new(),
+                    other => vec![other],
+                };
+                arms.push((guard, body));
+            }
+            self.expect_punct("}")?;
+            self.eat_punct(";");
+            return Ok(MonStmt::Select(arms));
+        }
+        if self.at_ident("constraint") {
+            self.bump();
+            let c = self.parse_constraint_set()?;
+            self.eat_punct(";");
+            return Ok(MonStmt::Constraint(c));
+        }
+        if self.at_ident("do") {
+            self.bump();
+            // `do <monitor_type>` — a nested monitor (19.3.9).
+            if let Ok(ty) = self.parse_type_ref() {
+                let tname = ty.name();
+                let leaf = tname.rsplit("::").next().unwrap_or(&tname).to_string();
+                if self.at_punct(";") || self.at_punct("with") {
+                    let cond = if self.eat_ident("with") {
+                        Some(self.parse_constraint_set()?)
+                    } else {
+                        None
+                    };
+                    self.eat_punct(";");
+                    return Ok(MonStmt::Traverse {
+                        action: leaf,
+                        handle: None,
+                        cond,
+                    });
+                }
+                let _ = leaf;
+            }
+            self.eat_punct(";");
+            return Ok(MonStmt::Empty);
+        }
+        // `<type> <handle>;` declares a handle; `<handle>;` traverses it.
+        let first = self.expect_ident()?;
+        if matches!(self.peek().kind, TokKind::Ident(_)) {
+            let handle = self.expect_ident()?;
+            self.eat_punct(";");
+            handles.insert(handle.clone(), first.clone());
+            return Ok(MonStmt::Traverse {
+                action: first,
+                handle: Some(handle),
+                cond: None,
+            });
+        }
+        self.eat_punct(";");
+        if let Some(ty) = handles.get(&first).cloned() {
+            return Ok(MonStmt::Traverse {
+                action: ty,
+                handle: Some(first),
+                cond: None,
+            });
+        }
+        Ok(MonStmt::Traverse {
+            action: first,
+            handle: None,
+            cond: None,
+        })
     }
 
     fn parse_foreach_expr(&mut self) -> PssResult<Expr> {
