@@ -13,87 +13,98 @@ examples, with their stated expected results, and check the tool produces them.*
 
 ## 1. Implemented per the standard
 
-### Default constraints (PSS 16.1.10.1)
+### Scheduling (Clause 12)
 
-| Rule | Clause | Status |
+| Construct | Clause | Behaviour |
 |---|---|---|
-| A default behaves as an equality constraint unless disabled | 16.1.10.1a | implemented |
-| Conflict between a default and a hard constraint is a contradiction, flagged | 16.1.10.1a | implemented |
-| `constraint default disable <attr>` removes the defaults on `<attr>` | 16.1.10.1b | implemented |
-| Only one default per attribute survives; higher-level context beats lower, derived beats base, otherwise later wins | 16.1.10.1d | implemented |
-| Defaults may target an aggregate's attributes | 16.1.10.1e | approximated — treated as a constraint on the whole attribute |
+| `join_all` (default) | 12.3.6.1 | the following statement is scheduled after every branch |
+| `join_none` | 12.3.6.1c | no scheduling dependency — the following statement is scheduled independently (and is emitted first, to make the absence of a dependency visible) |
+| `join_branch(L1, …)` | 12.3.6.1a | the following statement waits for the named top-level branches |
+| `join_select(n)` | 12.3.6.1b | the following statement waits for *n* randomly selected branches; `n = 0` behaves as `join_none` |
+| `join_first(n)` | 12.3.6.1d | a run-time dependency only, so it imposes no scheduling order |
+| `replicate (n) L: stmt` | 12.5 | expands in place into *n* labelled copies, distinct from `repeat` |
+| labelled statements | 12.1 | labels are kept and drive `join_branch` |
 
-Verified against the LRM's own examples:
-
-**Example 133** — the standard states the expected outcome: `s1.attr1` resolves
-to 0, `s2.attr1` to 2 (the action-level default overriding the type-level one),
-`s3.attr1` randomised in 1..2 because its default was disabled, and
-`attr1 < attr2` throughout. Satya produces exactly that, on every seed tried.
-
-```
-solved: s1.attr1=0 s1.attr2=1 s2.attr1=2 s2.attr2=3 s3.attr1=1 s3.attr2=3
-constraints: 12/12 satisfied
-```
-
-**Example 134** — `default attr1 == -1` is disabled and `attr1 == 0` applies
-(→ 0); `default attr2 == -1` conflicts with the hard `attr2 == 0`, which the
-standard says has no consistent assignment. Satya reports the contradiction
-rather than silently picking a side:
+Checked against the LRM's Examples 68, 71 and 72, which state the expected
+ordering. For Example 71 (`parallel join_select(1) { L2: do A; L3: do B; } L4: do C;`)
+the selected branch, then `C`, then the other branch:
 
 ```
-solved: attr1=0 attr2=0
-constraints: 2/3 satisfied
-  not satisfied: conflicting constraints on `attr2`
+0. B   [parallel g1]  L3
+1. Cc  [parallel g1]  L4
+2. A   [parallel g1]  L2
 ```
 
-Before this work Satya treated *every* default as a hard constraint. It happened
-to get Example 133's `s1` and `s2` right, but would have produced a spurious
-contradiction whenever two defaults targeted one attribute, and it ignored
-`default disable` entirely.
+### Constraints (Clause 16)
 
-### Other semantics
+| Construct | Clause | Behaviour |
+|---|---|---|
+| default constraints | 16.1.10.1 | one default per attribute survives, by precedence; conflicts are flagged |
+| `default disable <attr>` | 16.1.10.1b | removes the defaults on an attribute |
+| `dist` / `:=` / `:/` | 16.1.9 | weighted selection; `:=` gives each value in a range the full weight, `:/` spreads it |
+| `solve … before …` | 16.1.8 | assignment order follows the directive |
+| implications | 8.5 | propagated, not merely checked |
+| ordering between two random variables | — | both domains narrowed before assignment |
 
-* **Implications are propagated, not merely checked** — `p_odd == 1 -> p_enable == 1`
-  forces `p_enable`, rather than being reported unsatisfied.
-* **Ordering between two random variables is solved** — `a < b` narrows both
-  domains (`a` to `[lo, hi_b-1]`, `b` to `[lo_a+1, hi]`) before assignment, so
-  it does not get stuck when one side is pinned by another constraint.
-* **Bit-wise operations take the field's width** — `~x` on a `bit[32]` is a
-  32-bit value; part-selects (`x[msb:lsb]`, PSS 8.6.1) evaluate correctly.
-* **A contradictory model is reported, not fatal** — an empty domain yields
-  `conflicting constraints on \`x\`` and the step reports it. (It previously
-  panicked.)
+**Default constraints.** The LRM's Example 133 states its expected results —
+`s1.attr1` = 0, `s2.attr1` = 2 (the action-level default overriding the type's),
+`s3.attr1` in 1..2 because its default was disabled, `attr1 < attr2` throughout.
+Satya produces exactly that on every seed. Example 134 reports its contradiction
+rather than silently picking a side.
+
+**`dist`.** Measured over 600 seeds, `dist x in [100..102 := 1, 200 := 2, 300 := 5]`
+gives 10.2 / 9.7 / 10.2 / 20.7 / 49.3 % against the specified 10 / 10 / 10 / 20 / 50.
+With `:/`, `[100..102 :/ 6, 200 := 2]` gives 25.3 / 25.5 / 24.8 / 24.3 % against
+25 / 25 / 25 / 25.
+
+### Data and execution
+
+| Construct | Clause | Behaviour |
+|---|---|---|
+| fixed-size arrays `array<T, N>`, `x[N]` | 8.4 | expand into one variable per element, with per-element domains |
+| `arr[i]` indexing | 8.6.2 | resolves to the element variable |
+| `arr.size()`, `sum()`, `product()`, `min()`, `max()` | 8.6 | evaluated |
+| `foreach (arr[i])` | 12.2.6 | iterates the elements |
+| `exec pre_solve` | 16.4.12 | executed **before** the solver; its assignments to non-random fields feed the solve |
+| `exec post_solve` | 16.4.12 | executed **after** the solver, from the solved values |
+| non-`rand` attributes | 8.4 | not randomised — they hold their initial value |
+| flow-object ordering | 13 | an input must be bound to an object produced by an earlier step; a violation is reported |
+| covergroups, coverpoints, `cover { … }` | 18, 19.2 | sampled while the `cover` block's activity executes; a coverage summary is reported |
+
+The array work is what lets a **multireg** be modelled directly: OpenTitan's
+`KEY_SHARE0` is `array<bit[32], 8>`, and it now yields eight modelled registers
+rather than needing to be hand-unrolled (see `docs/OPENTITAN.md` §5).
 
 ---
 
-## 2. Parsed but not implemented semantically
+## 2. Parsed but still approximate
 
-These are accepted by the parser and **do not** affect the scheduled scenario.
-They are listed so the coverage numbers are not read as more than they are.
+Listed so the coverage numbers are not read as more than they are.
 
 | Construct | Clause | What Satya does today |
 |---|---|---|
-| `join_none`, `join_first`, `join_branch`, `join_select` | 12.3.4 | parsed and ignored — a `parallel` block always completes as if `join_all` |
-| `replicate (n) stmt` | 12.5 | treated as `repeat (n) stmt`; the LRM's in-place expansion into *n labelled* statements is not modelled |
-| `solve … before …` | 16.1.8 | not parsed; ordering hints are irrelevant to a deterministic assignment anyway |
-| `dist` weights, `dist_list` | 16.1.9 | not parsed; randomisation is uniform over the domain |
-| `array<T, N>`, `x[4]` (multiregs) | 8.4 | parses, but the engine gives arrays **no semantics** — a multireg collapses to one scalar and must be hand-unrolled |
-| `foreach (c[i])` over an array | 12.2.6 | handled for pools; not over array-typed fields |
-| flow-object producer/consumer ordering | 13 | allocation and pool capacity are modelled, but the rule that a consumer runs after its producer is not enforced |
-| `exec` block ordering (`pre_solve`, `post_solve`, …) | 10.4 | bodies are parsed and passed through to backends; they are not executed at their defined points |
-| `monitor`, `cover`, `covergroup` | 18, 19 | out of scope — Satya is a stimulus engine |
-
-The array limitation is the most consequential: it is what stops AES's 20
-multireg words being modelled directly (see `docs/OPENTITAN.md` §5).
+| `join_first(n)`'s run-time dependency | 12.3.6.1d | imposes no *scheduling* order (correct), but there is no runtime, so the "first n to complete" part is not simulated |
+| array methods `sort`, `reverse`, `unique`, `and`, `or`, `xor` | 8.6 | not evaluated |
+| array aggregate literals `{1, 2, 3}` assigned to an array | 8.5 | element-wise assignment is not applied |
+| `cross` coverage | 18.4 | parsed, but crosses are not sampled — only coverpoints are |
+| explicit `bins` | 18.3 | parsed, but coverage is reported over observed values rather than against the declared bins |
+| `monitor` declarations, `cover <type>` | 19.1 | parsed and skipped; the monitor's scenario is not matched against the executed stream |
+| `exec` statements other than assignment and `if` | 10.4 | method calls and raw statements are passed through to the backends, not executed |
+| `init_up` / `init_down` general effects | 10.4 | address-region declarations are extracted; other statements are not executed |
+| multiple `dist` directives on one attribute | 16.1.9 | weights are summed; the LRM leaves the resulting distribution undefined |
+| stream vs buffer consumption | 13 | a flow object may be referenced by several inputs; consume-once semantics for streams are not enforced |
+| `import`-based scope checking | 9 | name resolution uses `pkg::name` and `Component::action`, not `import` |
 
 ---
 
 ## 3. How this is checked
 
-* `tests/integration.rs` — 42 tests, including the LRM's Example 133 and 134
-  with their stated expected values, and ordering constraints across 12 seeds.
-* `tools/lrm_examples.py` — runs every extracted standard example and reports
-  both a lenient and a strict parse bound plus the engine result.
+* `tests/integration.rs` — 52 tests, including the LRM's Examples 133 and 134
+  with their stated values, the join orderings of Examples 68/71/72, the `dist`
+  distribution, exec ordering, flow-object ordering, arrays, `foreach` and
+  coverage sampling.
+* `tools/lrm_examples.py` — runs every extracted standard example and reports a
+  lenient and a strict parse bound plus the engine result.
 * `tools/ot_regmap_check.py` — diffs the OpenTitan UART model against the IP's
   register specification.
 

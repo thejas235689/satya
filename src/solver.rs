@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::ast::Expr;
-use crate::ir::{Action, Field, Model, TypeCategory};
+use crate::ir::{Action, Field, FieldKind, Model, TypeCategory};
 
 /// Upper bound applied to a bare `int` field when no width is declared.
 const DEFAULT_INT_MAX: i64 = 1023;
@@ -86,13 +86,17 @@ impl Domain {
 }
 
 /// Small, dependency-free linear-congruential RNG so runs are reproducible.
-struct Rng(u64);
+pub struct Rng(u64);
 
 impl Rng {
+    /// A generator seeded deterministically, for use outside the solver.
+    pub fn seeded(seed: u64) -> Self {
+        Rng::new(seed)
+    }
     fn new(seed: u64) -> Self {
         Rng(seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407))
     }
-    fn next_u64(&mut self) -> u64 {
+    pub fn next_u64(&mut self) -> u64 {
         self.0 = self
             .0
             .wrapping_mul(6364136223846793005)
@@ -220,8 +224,88 @@ pub fn eval(expr: &Expr, values: &BTreeMap<String, i64>, env: &Env) -> Option<i6
                 eval(e, values, env)
             }
         }
+        // `arr[i]` — an element of a fixed-size array.
+        Expr::Index(base, idx) => {
+            let i = eval(idx, values, env)?;
+            if let Expr::Path(p) = &**base {
+                let key = format!("{}[{}]", p.segments.join("."), i);
+                if let Some(v) = values.get(&key) {
+                    return Some(*v);
+                }
+            }
+            None
+        }
+        // Array methods that have a value at solve time.
+        Expr::Method(base, name, args) => {
+            let path = match &**base {
+                Expr::Path(p) => p.segments.join("."),
+                _ => return None,
+            };
+            match name.as_str() {
+                // `arr.size()` is the declared extent.
+                "size" if args.is_empty() => {
+                    values.get(&format!("{}.size", path)).copied()
+                }
+                // `arr.sum()` / `arr.product()` fold over the elements.
+                "sum" | "product" => {
+                    let mut acc: Option<i64> = None;
+                    for i in 0..MAX_ARRAY {
+                        match values.get(&format!("{}[{}]", path, i)) {
+                            Some(v) => {
+                                acc = Some(match (acc, name.as_str()) {
+                                    (None, _) => *v,
+                                    (Some(a), "sum") => a + v,
+                                    (Some(a), _) => a * v,
+                                })
+                            }
+                            None => break,
+                        }
+                    }
+                    acc
+                }
+                // `arr.min()` / `arr.max()`.
+                "min" | "max" => {
+                    let mut acc: Option<i64> = None;
+                    for i in 0..MAX_ARRAY {
+                        match values.get(&format!("{}[{}]", path, i)) {
+                            Some(v) => {
+                                acc = Some(match (acc, name.as_str()) {
+                                    (None, _) => *v,
+                                    (Some(a), "min") => a.min(*v),
+                                    (Some(a), _) => a.max(*v),
+                                })
+                            }
+                            None => break,
+                        }
+                    }
+                    acc
+                }
+                _ => None,
+            }
+        }
         _ => None,
     }
+}
+
+/// Largest fixed-size array we will expand, to bound a pathological model.
+const MAX_ARRAY: i64 = 256;
+
+/// The category of a named type, mirroring the IR's classification.
+fn category_for(model: &Model, ty: &str) -> TypeCategory {
+    let leaf = ty.rsplit("::").next().unwrap_or(ty);
+    if matches!(
+        leaf,
+        "int" | "bit" | "bool" | "byte" | "shortint" | "longint" | "integer" | "uint"
+    ) {
+        return TypeCategory::Scalar;
+    }
+    if let Some(v) = model.enums.get(leaf) {
+        return TypeCategory::Enum(v.clone());
+    }
+    if model.types.contains_key(ty) {
+        return TypeCategory::Struct(ty.to_string());
+    }
+    TypeCategory::Scalar
 }
 
 /// Solve the constraints of `action` and return a concrete assignment.
@@ -232,6 +316,116 @@ pub fn solve(model: &Model, action: &Action, seed: u64) -> SolveReport {
 /// Solve the constraints of `action`, additionally applying `extra` (inline
 /// `do … with { … }` constraints) and treating `bindings` as known values
 /// (for example a `repeat (i : n)` index).
+/// Directives pulled out of the constraint list before atom extraction:
+/// `dist` weights (16.1.9) and `solve … before …` ordering (16.1.8).
+#[derive(Default, Debug)]
+struct Directives {
+    /// variable -> [(lo, hi, weight-is-per-value, weight)]
+    dist: Vec<(String, Vec<(i64, i64, bool, f64)>)>,
+    /// (before, after) variable groups
+    order: Vec<(Vec<String>, Vec<String>)>,
+}
+
+/// Remove `dist` and `solve … before` markers from `exprs`, returning them.
+fn take_directives(exprs: &mut Vec<Expr>, env: &Env) -> Directives {
+    let mut out = Directives::default();
+    let mut kept = Vec::new();
+    let const_eval = |e: &Expr| -> Option<i64> { eval(e, &BTreeMap::new(), env) };
+    for e in exprs.drain(..) {
+        match &e {
+            Expr::Call(f, args) if f == "__dist" => {
+                if let Some(Expr::Path(p)) = args.first() {
+                    let var = p.segments.join(".");
+                    let mut items = Vec::new();
+                    for it in &args[1..] {
+                        if let Expr::Call(_, ia) = it {
+                            let (lo, hi) = match &ia[0] {
+                                Expr::InRange(_, lo, hi) => {
+                                    (const_eval(lo), const_eval(hi))
+                                }
+                                single => (const_eval(single), const_eval(single)),
+                            };
+                            let per_value = matches!(ia.get(1), Some(Expr::Bool(true)));
+                            let w = ia.get(2).and_then(|x| const_eval(x)).unwrap_or(1) as f64;
+                            if let (Some(lo), Some(hi)) = (lo, hi) {
+                                items.push((lo, hi, per_value, w));
+                            }
+                        }
+                    }
+                    out.dist.push((var, items));
+                }
+            }
+            Expr::Call(f, args) if f == "__solve_before" => {
+                let names = |e: &Expr| -> Vec<String> {
+                    match e {
+                        Expr::List(items) => items
+                            .iter()
+                            .filter_map(|x| match x {
+                                Expr::Path(p) => Some(p.segments.join(".")),
+                                _ => None,
+                            })
+                            .collect(),
+                        _ => Vec::new(),
+                    }
+                };
+                if args.len() == 2 {
+                    out.order.push((names(&args[0]), names(&args[1])));
+                }
+            }
+            _ => kept.push(e),
+        }
+    }
+    *exprs = kept;
+    out
+}
+
+/// Pick a value from a weighted list, in proportion to the weights.
+fn pick_weighted(items: &[(i64, f64)], rng: &mut Rng) -> Option<i64> {
+    if items.is_empty() {
+        return None;
+    }
+    // Scale the weights to integers so the choice can use the generator's
+    // full range (its output is 47 bits, so a float ratio would be skewed).
+    let scaled: Vec<(i64, i64)> = items
+        .iter()
+        .map(|(v, w)| (*v, (w * 1000.0).round().max(0.0) as i64))
+        .collect();
+    let total: i64 = scaled.iter().map(|(_, w)| *w).sum();
+    if total <= 0 {
+        return items.first().map(|(v, _)| *v);
+    }
+    let mut r = rng.range(0, total - 1);
+    for (v, w) in &scaled {
+        if r < *w {
+            return Some(*v);
+        }
+        r -= *w;
+    }
+    scaled.last().map(|(v, _)| *v)
+}
+
+/// Expand dist items into a per-value weight list restricted to `d`.
+fn dist_values(items: &[(i64, i64, bool, f64)], d: &Domain) -> Vec<(i64, f64)> {
+    let mut out: Vec<(i64, f64)> = Vec::new();
+    for (lo, hi, per_value, w) in items {
+        let n = (hi - lo + 1).max(1) as f64;
+        let each = if *per_value { *w } else { *w / n };
+        for v in *lo..=*hi {
+            if v < d.lo || v > d.hi || !d.contains(v) {
+                continue;
+            }
+            match out.iter_mut().find(|(x, _)| *x == v) {
+                Some(slot) => slot.1 += each,
+                None => out.push((v, each)),
+            }
+        }
+        if out.len() > 4096 {
+            break;
+        }
+    }
+    out
+}
+
 pub fn solve_with(
     model: &Model,
     action: &Action,
@@ -241,7 +435,16 @@ pub fn solve_with(
 ) -> SolveReport {
     let env = Env::new(model);
     let mut vars = collect_variables(model, action);
-    let constraints = collect_constraints(model, action, &vars, extra);
+    // A bound attribute is fixed: `exec pre_solve` assignments to non-random
+    // fields, and values passed in, must survive the solve (PSS 16.4.12).
+    for (k, v) in bindings {
+        if let Some(d) = vars.get_mut(k) {
+            d.lo = *v;
+            d.hi = *v;
+        }
+    }
+    let mut constraints = collect_constraints(model, action, &vars, extra);
+    let directives = take_directives(&mut constraints, &env);
     let atoms = extract_atoms(&constraints);
 
     // Union-find over variables to merge equality classes.
@@ -376,11 +579,43 @@ pub fn solve_with(
         }
     }
 
-    // Assign a value per class.
+    // `dist` restricts the value set to the listed values and biases the pick
+    // by weight (16.1.9). Constraints still win: if the domain does not
+    // overlap the dist list, the domain is left alone.
+    let mut dist_by_root: HashMap<String, Vec<(i64, f64)>> = HashMap::new();
+    for (var, items) in &directives.dist {
+        if let Some(d) = class_domain.get(&uf.find(var)) {
+            let vs = dist_values(items, d);
+            if !vs.is_empty() {
+                dist_by_root.insert(uf.find(var), vs);
+            }
+        }
+    }
+
+    // Assign a value per class, honouring `solve … before …` where possible.
     let mut rng = Rng::new(seed ^ 0x9E37_79B9_7F4A_7C15);
     let mut values: BTreeMap<String, i64> = BTreeMap::new();
     let mut class_value: HashMap<String, i64> = HashMap::new();
-    for name in vars.keys() {
+    let mut order: Vec<String> = vars.keys().cloned().collect();
+    if !directives.order.is_empty() {
+        // Assign the `before` variables first.
+        let rank = |n: &String| -> usize {
+            let mut r: usize = 0;
+            for (before, after) in &directives.order {
+                let is_before = before.iter().any(|b| b == n || n.ends_with(&format!(".{}", b)));
+                let is_after = after.iter().any(|a| a == n || n.ends_with(&format!(".{}", a)));
+                if is_before {
+                    r += 2;
+                }
+                if is_after {
+                    r = r.saturating_sub(1);
+                }
+            }
+            r
+        };
+        order.sort_by_key(|n| std::cmp::Reverse(rank(n)));
+    }
+    for name in order.iter() {
         let root = uf.find(name);
         let v = *class_value.entry(root.clone()).or_insert_with(|| {
             let d = class_domain.get(&root).cloned().unwrap_or(Domain {
@@ -389,7 +624,10 @@ pub fn solve_with(
                 forbidden: HashSet::new(),
                 is_enum: false,
             });
-            pick(&d, &mut rng)
+            match dist_by_root.get(&root) {
+                Some(items) => pick_weighted(items, &mut rng).unwrap_or_else(|| pick(&d, &mut rng)),
+                None => pick(&d, &mut rng),
+            }
         });
         values.insert(name.clone(), v);
     }
@@ -1066,6 +1304,14 @@ fn tighten(vars: &mut BTreeMap<String, Domain>, name: &str, lo: i64, hi: i64) {
 fn as_var(e: &Expr) -> Option<String> {
     match e {
         Expr::Path(p) => Some(p.segments.join(".")),
+        // `arr[i]` names an array element variable (PSS 8.4).
+        Expr::Index(base, idx) => {
+            let i = idx.eval_const(&|_| None)?;
+            match &**base {
+                Expr::Path(p) => Some(format!("{}[{}]", p.segments.join("."), i)),
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
@@ -1099,6 +1345,57 @@ fn expand_field(
     } else {
         format!("{}.{}", prefix, field.name)
     };
+    // A non-`rand` attribute is not randomised (PSS 8.4): it holds its
+    // initial value, so model it as a singleton domain. A `rand` attribute
+    // keeps its declared range.
+    let fixed = if field.kind == FieldKind::Plain {
+        Some(
+            field
+                .init
+                .as_ref()
+                .and_then(|e| e.eval_const(&|n| model.constants.get(n).copied()))
+                .unwrap_or(0),
+        )
+    } else {
+        None
+    };
+    // A fixed-size array expands into one variable per element (PSS 8.4), so a
+    // multireg such as `array<bit[32], 8>` becomes eight modelled registers.
+    if let Some(n) = field.array {
+        let n = n.clamp(0, MAX_ARRAY);
+        let elem_ty = field
+            .elem_type
+            .clone()
+            .unwrap_or_else(|| field.type_name.clone());
+        let elem_bits = field.elem_bits.or(field.bits);
+        for i in 0..n {
+            let sub = Field {
+                name: format!("{}[{}]", field.name, i),
+                kind: field.kind,
+                type_name: elem_ty.clone(),
+                category: category_for(model, &elem_ty),
+                bits: elem_bits,
+                inline_constraint: None,
+                init: None,
+                elem_type: None,
+                elem_bits: None,
+                array: None,
+            };
+            expand_field(model, &sub, prefix, depth + 1, visited, out);
+        }
+        // `arr.size()` is a constant.
+        out.insert(
+            format!("{}.size", path),
+            Domain {
+                lo: n,
+                hi: n,
+                forbidden: HashSet::new(),
+                is_enum: false,
+            },
+        );
+        return;
+    }
+
     match &field.category {
         TypeCategory::Scalar => {
             let hi = field
@@ -1107,10 +1404,14 @@ fn expand_field(
                 // truncate bit-wise results such as `~x` on a `bit[32]`.
                 .map(|b| (1i64 << b.clamp(1, 62)) - 1)
                 .unwrap_or(DEFAULT_INT_MAX);
+            let (lo, hi) = match fixed {
+                Some(v) => (v, v),
+                None => (0, hi),
+            };
             out.insert(
                 path,
                 Domain {
-                    lo: 0,
+                    lo,
                     hi,
                     forbidden: HashSet::new(),
                     is_enum: false,
@@ -1119,10 +1420,14 @@ fn expand_field(
         }
         TypeCategory::Enum(variants) => {
             let hi = (variants.len().saturating_sub(1)) as i64;
+            let (lo, hi) = match fixed {
+                Some(v) => (v, v),
+                None => (0, hi),
+            };
             out.insert(
                 path,
                 Domain {
-                    lo: 0,
+                    lo,
                     hi,
                     forbidden: HashSet::new(),
                     is_enum: true,
@@ -1413,7 +1718,7 @@ fn split_and(expr: &Expr, out: &mut Vec<Atom>) {
     }
 }
 
-fn render_expr(e: &Expr) -> String {
+pub fn render_expr(e: &Expr) -> String {
     match e {
         Expr::Path(p) => p.segments.join("."),
         Expr::Int(v) => v.to_string(),

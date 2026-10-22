@@ -58,6 +58,12 @@ pub struct Field {
     pub inline_constraint: Option<Expr>,
     /// Explicit array extent (pool-like fields).
     pub array: Option<i64>,
+    /// Initialiser at the declaration site, e.g. `int a = 17;`.
+    pub init: Option<Expr>,
+    /// For `array<T, N>` / `list<T>`: the element type's name.
+    pub elem_type: Option<String>,
+    /// For `array<bit[N], M>`: the element's width.
+    pub elem_bits: Option<i64>,
 }
 
 impl Field {
@@ -161,6 +167,8 @@ pub struct Model {
     pub qual_index: HashMap<String, String>,
     /// Leaf names declared in more than one scope (a real ambiguity).
     pub duplicates: Vec<String>,
+    /// Covergroups declared in the model (PSS 18).
+    pub covergroups: Vec<crate::ast::Covergroup>,
 }
 
 impl Model {
@@ -193,6 +201,7 @@ impl Model {
         let mut lw = Lowerer::default();
         lw.collect(file.items.iter(), None);
         lw.finish();
+        lw.model.covergroups = file.covergroups.clone();
         Ok(lw.model)
     }
 
@@ -547,10 +556,31 @@ impl Lowerer {
             .width
             .as_ref()
             .and_then(|w| w.eval_const(&|n| self.model.constants.get(n).copied()));
-        let array = m
+        let mut array = m
             .array
             .as_ref()
             .and_then(|a| a.eval_const(&|n| self.model.constants.get(n).copied()));
+        // `array<T, N>` / `list<T>`: keep the element type, and take N from the
+        // constant template argument if present.
+        let mut elem_type = None;
+        let mut elem_bits = None;
+        let leaf = m.ty.name();
+        if matches!(leaf.as_str(), "array" | "list") {
+            if let Some(t) = m.ty.template_args.first() {
+                elem_type = Some(t.name());
+                elem_bits = t
+                    .width
+                    .as_ref()
+                    .and_then(|w| w.eval_const(&|n| self.model.constants.get(n).copied()));
+            }
+            if array.is_none() {
+                array = m
+                    .ty
+                    .const_args
+                    .first()
+                    .and_then(|c| c.eval_const(&|n| self.model.constants.get(n).copied()));
+            }
+        }
         Field {
             name: m.name.clone(),
             kind: match m.kind {
@@ -565,6 +595,9 @@ impl Lowerer {
             category: self.category_of(&type_name),
             bits,
             inline_constraint: m.inline_constraint.clone(),
+            init: m.init.clone(),
+            elem_type,
+            elem_bits,
             array,
         }
     }

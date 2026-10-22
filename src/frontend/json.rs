@@ -30,7 +30,7 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{Activity, ActivityStmt, Expr, Path};
+use crate::ast::{Activity, ActivityStmt, Expr, Path, JoinSpec};
 use crate::error::{PssError, PssResult};
 use crate::ir::{
     Action, Bind, Component, Constraint, DataType, Field, FieldKind, Model, Pool, TypeCategory,
@@ -43,6 +43,7 @@ pub fn model_from_json(src: &str) -> PssResult<Model> {
     let obj = v.as_obj().ok_or_else(|| PssError::plain("top-level JSON must be an object"))?;
 
     let mut model = Model {
+        covergroups: Vec::new(),
         constants: HashMap::new(),
         enums: HashMap::new(),
         types: HashMap::new(),
@@ -295,6 +296,9 @@ fn build_fields(
             }
         });
         out.push(Field {
+            init: None,
+            elem_type: None,
+            elem_bits: None,
             name,
             kind,
             type_name: type_name.clone(),
@@ -356,10 +360,16 @@ fn build_activity_stmt(item: &Json) -> PssResult<ActivityStmt> {
         return Ok(ActivityStmt::Do(path_from(a)));
     }
     if let Some(b) = obj_get(o, "parallel") {
-        return Ok(ActivityStmt::Parallel(build_branches(b)?));
+        return Ok(ActivityStmt::Parallel {
+            branches: build_branches(b)?,
+            join: JoinSpec::All,
+        });
     }
     if let Some(b) = obj_get(o, "schedule") {
-        return Ok(ActivityStmt::Schedule(build_branches(b)?));
+        return Ok(ActivityStmt::Schedule {
+            branches: build_branches(b)?,
+            join: JoinSpec::All,
+        });
     }
     if let Some(b) = obj_get(o, "select") {
         return Ok(ActivityStmt::Select(
@@ -371,7 +381,12 @@ fn build_activity_stmt(item: &Json) -> PssResult<ActivityStmt> {
     }
     if let Some(b) = obj_get(o, "repeat") {
         let n = obj_get(o, "count").and_then(|v| v.as_i64()).unwrap_or(1);
-        return Ok(ActivityStmt::Repeat { count: Expr::Int(n), index: None, body: build_activity(b)? });
+        return Ok(ActivityStmt::Repeat {
+            count: Expr::Int(n),
+            index: None,
+            body: build_activity(b)?,
+            is_replicate: false,
+        });
     }
     Err(PssError::plain("unrecognised activity item in JSON model"))
 }

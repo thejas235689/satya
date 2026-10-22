@@ -41,6 +41,8 @@ impl std::fmt::Display for Path {
 pub struct TypeRef {
     pub path: Path,
     pub template_args: Vec<TypeRef>,
+    /// Constant template arguments, e.g. the `8` in `array<bit[32], 8>`.
+    pub const_args: Vec<Expr>,
     /// For `bit[N]` / `int in [..]` style widths.
     pub width: Option<Box<Expr>>,
     /// True for `T<>` (template with default args elided).
@@ -52,6 +54,7 @@ impl TypeRef {
         TypeRef {
             path,
             template_args: Vec::new(),
+            const_args: Vec::new(),
             width: None,
             open_template: false,
         }
@@ -227,6 +230,8 @@ pub enum Item {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceFile {
     pub items: Vec<Item>,
+    /// Covergroups declared anywhere in the file (PSS 18).
+    pub covergroups: Vec<Covergroup>,
 }
 
 // ---------------------------------------------------------------------------
@@ -238,17 +243,64 @@ pub enum Activity {
     Sequence(Vec<ActivityStmt>),
 }
 
+/// Fine-grained scheduling specifier on a `parallel`/`schedule` block
+/// (PSS 12.3.6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JoinSpec {
+    /// `join_all` — the default: wait for every branch.
+    All,
+    /// `join_none` — no scheduling dependency on the branches.
+    None,
+    /// `join_first(n)` — a runtime dependency on the first n to finish.
+    First(Expr),
+    /// `join_branch(L1, L2)` — wait for the named branches.
+    Branch(Vec<String>),
+    /// `join_select(n)` — wait for n randomly selected branches.
+    Select(Expr),
+}
+
+/// A coverage point or cross declared in a covergroup (PSS 18.3, 18.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CoverItem {
+    Coverpoint {
+        label: Option<String>,
+        expr: Expr,
+        iff: Option<Expr>,
+        /// `bins <name> = <expr>;` — an explicit bin.
+        bins: Vec<(String, Expr)>,
+    },
+    Cross {
+        label: Option<String>,
+        refs: Vec<String>,
+        iff: Option<Expr>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Covergroup {
+    pub name: String,
+    pub items: Vec<CoverItem>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActivityStmt {
     /// `do SomeAction;` — optionally component-qualified.
     Do(Path),
+    /// `L: <stmt>` — a labelled activity statement (PSS `labeled_activity_stmt`).
+    Labeled { label: String, stmt: Box<ActivityStmt> },
     /// `do SomeAction { ... }` — an inline activity body.
     DoWith { action: Path, body: Option<Activity> },
     /// `do SomeAction with { constraints }` — inline constraints (LRM
     /// `inline_constraints_or_empty`).
     DoConstrained { action: Path, constraints: Vec<Expr> },
-    Parallel(Vec<Activity>),
-    Schedule(Vec<Activity>),
+    Parallel {
+        branches: Vec<Activity>,
+        join: JoinSpec,
+    },
+    Schedule {
+        branches: Vec<Activity>,
+        join: JoinSpec,
+    },
     /// `select { [(guard)][[index]] : branch ... }`
     Select(Vec<(Option<Expr>, Activity)>),
     /// `match (expr) { [range] : branch | default : branch }`
@@ -256,11 +308,14 @@ pub enum ActivityStmt {
         expr: Expr,
         choices: Vec<(Option<Expr>, Activity)>,
     },
-    /// `repeat ( [index :] count ) body` and `replicate`.
+    /// `repeat ( [index :] count ) body` and `replicate ( [index :] count ) body`.
+    /// The two differ: `replicate` expands in place into n labelled copies
+    /// (PSS 12.5) and requires a label; `repeat` is a loop.
     Repeat {
         count: Expr,
         index: Option<String>,
         body: Activity,
+        is_replicate: bool,
     },
     Foreach {
         var: String,
@@ -270,6 +325,12 @@ pub enum ActivityStmt {
     Atomic(Activity),
     /// `constraint <set>` inside an activity (LRM `activity_constraint_stmt`).
     Constraint(Expr),
+    /// `[label:] cover { <monitor body> }` — monitor the executed stream for a
+    /// scenario (PSS 19.2).
+    Cover {
+        label: Option<String>,
+        body: Option<Activity>,
+    },
     If {
         cond: Expr,
         then: Activity,

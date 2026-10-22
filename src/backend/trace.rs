@@ -50,8 +50,13 @@ impl Backend for TraceBackend {
                 String::new()
             };
             let tag = if step.unresolved { " [UNRESOLVED]" } else { "" };
+            let label = match &step.label {
+                Some(l) if step.replicated => format!("  {} (replicated)", l),
+                Some(l) => format!("  {}", l),
+                None => String::new(),
+            };
             s.push_str(&format!(
-                "{}{:>3}. {:<24} @ {:<20} [{}{}{}]{}\n",
+                "{}{:>3}. {:<24} @ {:<20} [{}{}{}]{}{}\n",
                 indent,
                 step.index,
                 step.action,
@@ -59,7 +64,8 @@ impl Backend for TraceBackend {
                 mode,
                 group,
                 if mode.is_empty() && group.is_empty() { "leaf" } else { "" },
-                tag
+                tag,
+                label
             ));
             if !step.fields.is_empty() {
                 let fields: Vec<String> = step
@@ -102,6 +108,19 @@ impl Backend for TraceBackend {
                     if c.exclusive { "lock" } else { "share" },
                     c.resource,
                     c.instance
+                ));
+            }
+        }
+
+        if !scenario.coverage.is_empty() {
+            s.push_str("\nCoverage\n--------\n");
+            for (point, hits) in &scenario.coverage {
+                let total: usize = hits.iter().map(|(_, c)| *c).sum();
+                s.push_str(&format!(
+                    "  {:<28} {} value(s) observed, {} hit(s)\n",
+                    point,
+                    hits.len(),
+                    total
                 ));
             }
         }

@@ -12,11 +12,17 @@ use crate::lexer::{tokenize, TokKind, Token};
 pub struct Parser {
     toks: Vec<Token>,
     pos: usize,
+    /// Covergroups declared so far (PSS 18).
+    covergroups: Vec<Covergroup>,
 }
 
 impl Parser {
     pub fn new(toks: Vec<Token>) -> Self {
-        Parser { toks, pos: 0 }
+        Parser {
+            toks,
+            pos: 0,
+            covergroups: Vec::new(),
+        }
     }
 
     // ---- token helpers -------------------------------------------------
@@ -196,7 +202,115 @@ impl Parser {
 
     pub fn parse_file(&mut self) -> PssResult<SourceFile> {
         let items = self.parse_items()?;
-        Ok(SourceFile { items })
+        Ok(SourceFile {
+            items,
+            covergroups: std::mem::take(&mut self.covergroups),
+        })
+    }
+
+    /// `covergroup NAME (ports) { items }` or the in-line
+    /// `covergroup { items } NAME;` (PSS 18.1, Syntax 63).
+    fn parse_covergroup(&mut self) -> PssResult<Covergroup> {
+        self.expect_ident_named("covergroup")?;
+        let mut name = String::new();
+        if matches!(self.peek().kind, TokKind::Ident(_)) && !self.peek_at(1).is_punct("{") {
+            name = self.expect_ident()?;
+            if self.at_punct("(") {
+                self.skip_parens();
+            }
+        }
+        self.expect_punct("{")?;
+        let mut items = Vec::new();
+        while !self.at_punct("}") && !self.at_eof() {
+            if self.eat_punct(";") {
+                continue;
+            }
+            let label = if matches!(self.peek().kind, TokKind::Ident(_)) && self.peek_at(1).is_punct(":")
+            {
+                let l = self.expect_ident()?;
+                self.bump();
+                Some(l)
+            } else {
+                None
+            };
+            if self.at_ident("coverpoint") {
+                self.bump();
+                let expr = self.parse_expr(0)?;
+                let mut iff = None;
+                if self.eat_ident("iff") {
+                    self.expect_punct("(")?;
+                    iff = Some(self.parse_expr(0)?);
+                    self.expect_punct(")")?;
+                }
+                let mut bins = Vec::new();
+                if self.at_punct("{") {
+                    self.bump();
+                    while !self.at_punct("}") && !self.at_eof() {
+                        if self.eat_punct(";") {
+                            continue;
+                        }
+                        let is_bins = self.at_ident("bins");
+                        if is_bins || self.at_ident("illegal_bins") || self.at_ident("ignore_bins") {
+                            self.bump();
+                            let bn = if matches!(self.peek().kind, TokKind::Ident(_)) {
+                                self.expect_ident()?
+                            } else {
+                                String::new()
+                            };
+                            let bexpr = if self.eat_punct("=") {
+                                self.parse_expr(0)?
+                            } else {
+                                Expr::Bool(true)
+                            };
+                            self.eat_punct(";");
+                            if is_bins {
+                                bins.push((bn, bexpr));
+                            }
+                            continue;
+                        }
+                        self.skip_to_semicolon();
+                    }
+                    self.expect_punct("}")?;
+                }
+                self.eat_punct(";");
+                items.push(CoverItem::Coverpoint {
+                    label,
+                    expr,
+                    iff,
+                    bins,
+                });
+                continue;
+            }
+            if self.at_ident("cross") {
+                self.bump();
+                let mut refs = Vec::new();
+                loop {
+                    refs.push(self.expect_ident()?);
+                    if !self.eat_punct(",") {
+                        break;
+                    }
+                }
+                let mut iff = None;
+                if self.eat_ident("iff") {
+                    self.expect_punct("(")?;
+                    iff = Some(self.parse_expr(0)?);
+                    self.expect_punct(")")?;
+                }
+                if self.at_punct("{") {
+                    self.skip_braced_or_semicolon();
+                }
+                self.eat_punct(";");
+                items.push(CoverItem::Cross { label, refs, iff });
+                continue;
+            }
+            self.skip_to_semicolon();
+        }
+        self.expect_punct("}")?;
+        if name.is_empty() && matches!(self.peek().kind, TokKind::Ident(_)) {
+            name = self.expect_ident()?;
+        }
+        self.eat_punct(";");
+        Ok(Covergroup { name, items })
     }
 
     fn parse_items(&mut self) -> PssResult<Vec<Item>> {
@@ -371,7 +485,12 @@ impl Parser {
                 let _ = self.parse_exec()?;
                 continue;
             }
-            if self.at_ident("function") || self.at_ident("task") || self.at_ident("covergroup") {
+            if self.at_ident("covergroup") {
+                let cg = self.parse_covergroup()?;
+                self.covergroups.push(cg);
+                continue;
+            }
+            if self.at_ident("function") || self.at_ident("task") {
                 self.bump();
                 self.skip_to_semicolon();
                 continue;
@@ -548,6 +667,7 @@ impl Parser {
             return Ok(TypeRef {
                 path: Path::simple("bit"),
                 template_args: Vec::new(),
+                const_args: Vec::new(),
                 width,
                 open_template: false,
             });
@@ -555,6 +675,7 @@ impl Parser {
 
         let path = self.parse_scoped_path()?;
         let mut template_args = Vec::new();
+        let mut const_args: Vec<Expr> = Vec::new();
         let mut open_template = false;
         if self.at_punct("<") {
             self.bump();
@@ -571,7 +692,7 @@ impl Parser {
                     if matches!(self.peek().kind, TokKind::Int(_)) {
                         // Precedence above comparison so the closing `>` is not
                         // swallowed as a `>` operator.
-                        let _ = self.parse_expr(9)?;
+                        const_args.push(self.parse_expr(9)?);
                     } else {
                         template_args.push(self.parse_type_ref()?);
                     }
@@ -594,6 +715,7 @@ impl Parser {
         Ok(TypeRef {
             path,
             template_args,
+            const_args,
             width,
             open_template,
         })
@@ -752,6 +874,69 @@ impl Parser {
 
     /// One constraint body item: an `if`/`else` constraint, or an expression.
     fn parse_constraint_body_item(&mut self) -> PssResult<Expr> {
+        // `dist <expr> in [ item [:= w | :/ w], ... ] ;` (PSS 16.1.9).
+        if self.at_ident("dist") {
+            self.bump();
+            // Above `in`'s precedence, so the target stops before the keyword.
+            let target = self.parse_expr(9)?;
+            self.expect_ident_named("in")?;
+            self.expect_punct("[")?;
+            let mut items: Vec<Expr> = Vec::new();
+            loop {
+                let lo = self.parse_expr(0)?;
+                // A `dist_item` is a single value or a `lo..hi` range.
+                let range = if self.eat_punct("..") {
+                    let hi = self.parse_expr(0)?;
+                    Expr::InRange(Box::new(Expr::Int(0)), Box::new(lo), Box::new(hi))
+                } else {
+                    lo
+                };
+                let mut weight = Expr::Int(1);
+                let mut per_value = true;
+                // `:=` assigns the weight to each value in a range; `:/`
+                // distributes it across the values (16.1.9).
+                if self.at_punct(":") && (self.peek_at(1).is_punct("=") || self.peek_at(1).is_punct("/")) {
+                    self.bump();
+                    per_value = self.peek().is_punct("=");
+                    self.bump();
+                    weight = self.parse_expr(0)?;
+                }
+                items.push(Expr::Call(
+                    "__dist_item".into(),
+                    vec![range, Expr::Bool(per_value), weight],
+                ));
+                if !self.eat_punct(",") {
+                    break;
+                }
+            }
+            self.expect_punct("]")?;
+            let mut args = vec![target];
+            args.extend(items);
+            return Ok(Expr::Call("__dist".into(), args));
+        }
+        // `solve a, b before c, d ;` (PSS 16.1.8).
+        if self.at_ident("solve") && !self.peek_at(1).is_punct("(") {
+            self.bump();
+            let mut before = Vec::new();
+            let mut after = Vec::new();
+            let mut cur = &mut before;
+            loop {
+                let p = self.parse_scoped_path()?;
+                cur.push(Expr::Path(p));
+                if self.eat_punct(",") {
+                    continue;
+                }
+                if self.eat_ident("before") {
+                    cur = &mut after;
+                    continue;
+                }
+                break;
+            }
+            return Ok(Expr::Call(
+                "__solve_before".into(),
+                vec![Expr::List(before), Expr::List(after)],
+            ));
+        }
         if self.at_ident("if") {
             self.bump();
             self.expect_punct("(")?;
@@ -913,7 +1098,12 @@ impl Parser {
                 return Ok(CompItem::StaticConst { name, value });
             }
         }
-        if self.at_ident("function") || self.at_ident("task") || self.at_ident("covergroup") {
+        if self.at_ident("covergroup") {
+            let cg = self.parse_covergroup()?;
+            self.covergroups.push(cg);
+            return Ok(CompItem::Raw("covergroup".into()));
+        }
+        if self.at_ident("function") || self.at_ident("task") {
             self.bump();
             self.skip_to_semicolon();
             return Ok(CompItem::Raw("function".into()));
@@ -1003,7 +1193,12 @@ impl Parser {
                 activity = Some(self.parse_activity()?);
                 continue;
             }
-            if self.at_ident("function") || self.at_ident("task") || self.at_ident("covergroup") {
+            if self.at_ident("covergroup") {
+                let cg = self.parse_covergroup()?;
+                self.covergroups.push(cg);
+                continue;
+            }
+            if self.at_ident("function") || self.at_ident("task") {
                 self.bump();
                 self.skip_to_semicolon();
                 continue;
@@ -1062,19 +1257,45 @@ impl Parser {
         }
     }
 
-    /// Skip an optional `join_branch(..)` / `join_select(..)` / `join_none` /
-    /// `join_first(..)` after `parallel` or `schedule`.
-    fn skip_join_spec(&mut self) {
-        if self.at_ident("join_branch")
-            || self.at_ident("join_select")
-            || self.at_ident("join_none")
-            || self.at_ident("join_first")
-        {
+    /// An optional fine-grained scheduling specifier after `parallel` or
+    /// `schedule` (PSS 12.3.6.1, Syntax 34).
+    fn parse_join_spec(&mut self) -> PssResult<JoinSpec> {
+        if self.at_ident("join_all") {
             self.bump();
-            if self.at_punct("(") {
-                self.skip_parens();
-            }
+            return Ok(JoinSpec::All);
         }
+        if self.at_ident("join_none") {
+            self.bump();
+            return Ok(JoinSpec::None);
+        }
+        if self.at_ident("join_branch") {
+            self.bump();
+            self.expect_punct("(")?;
+            let mut labels = Vec::new();
+            loop {
+                labels.push(self.expect_ident()?);
+                if !self.eat_punct(",") {
+                    break;
+                }
+            }
+            self.expect_punct(")")?;
+            return Ok(JoinSpec::Branch(labels));
+        }
+        if self.at_ident("join_select") {
+            self.bump();
+            self.expect_punct("(")?;
+            let n = self.parse_expr(0)?;
+            self.expect_punct(")")?;
+            return Ok(JoinSpec::Select(n));
+        }
+        if self.at_ident("join_first") {
+            self.bump();
+            self.expect_punct("(")?;
+            let n = self.parse_expr(0)?;
+            self.expect_punct(")")?;
+            return Ok(JoinSpec::First(n));
+        }
+        Ok(JoinSpec::All)
     }
 
     fn skip_parens(&mut self) {
@@ -1133,9 +1354,14 @@ impl Parser {
         if let TokKind::Ident(id) = &self.peek().kind {
             let keyword = is_activity_keyword(id);
             if !keyword && self.peek_at(1).is_punct(":") {
-                self.bump(); // label
+                let label = self.expect_ident()?;
                 self.bump(); // ':'
-                return self.parse_activity_stmt();
+                return Ok(self
+                    .parse_activity_stmt()?
+                    .map(|stmt| ActivityStmt::Labeled {
+                        label,
+                        stmt: Box::new(stmt),
+                    }));
             }
             // A bare action traversal: `a1;`, `a1 with {..};`, `comp::a1;`.
             if !keyword
@@ -1168,21 +1394,66 @@ impl Parser {
             let n = self.parse_expr(0)?;
             self.expect_punct(")")?;
             let body = self.parse_activity_body()?;
-            return Ok(Some(ActivityStmt::Repeat { count: n, index, body }));
+            return Ok(Some(ActivityStmt::Repeat {
+                count: n,
+                index,
+                body,
+                is_replicate: true,
+            }));
         }
         if self.at_ident("parallel") {
             self.bump();
-            self.skip_join_spec();
-            let b = self.parse_activity_branches()?;
+            let join = self.parse_join_spec()?;
+            let branches = self.parse_activity_branches()?;
             self.eat_punct(";");
-            return Ok(Some(ActivityStmt::Parallel(b)));
+            return Ok(Some(ActivityStmt::Parallel { branches, join }));
         }
         if self.at_ident("schedule") {
             self.bump();
-            self.skip_join_spec();
-            let b = self.parse_activity_branches()?;
+            let join = self.parse_join_spec()?;
+            let branches = self.parse_activity_branches()?;
             self.eat_punct(";");
-            return Ok(Some(ActivityStmt::Schedule(b)));
+            return Ok(Some(ActivityStmt::Schedule { branches, join }));
+        }
+        if self.at_ident("cover") {
+            self.bump();
+            if self.at_punct("{") {
+                // `cover { <monitor body> }` — the body may declare an in-line
+                // covergroup and/or an activity to observe.
+                self.bump();
+                let mut body = None;
+                while !self.at_punct("}") && !self.at_eof() {
+                    if self.eat_punct(";") {
+                        continue;
+                    }
+                    if self.at_ident("covergroup") {
+                        let cg = self.parse_covergroup()?;
+                        self.covergroups.push(cg);
+                        continue;
+                    }
+                    if self.at_ident("activity") {
+                        self.bump();
+                        body = Some(self.parse_activity_block()?);
+                        continue;
+                    }
+                    if self.at_ident("monitor") || self.at_ident("constraint") || self.at_ident("rand")
+                    {
+                        self.skip_braced_or_semicolon();
+                        continue;
+                    }
+                    self.skip_to_semicolon();
+                }
+                self.expect_punct("}")?;
+                self.eat_punct(";");
+                return Ok(Some(ActivityStmt::Cover { label: None, body }));
+            }
+            // `cover <type>;`
+            let _ = self.parse_scoped_path()?;
+            self.eat_punct(";");
+            return Ok(Some(ActivityStmt::Cover {
+                label: None,
+                body: None,
+            }));
         }
         if self.at_ident("select") {
             self.bump();
@@ -1307,7 +1578,12 @@ impl Parser {
                 self.skip_parens();
                 self.eat_punct(";");
             }
-            return Ok(Some(ActivityStmt::Repeat { count: n, index, body }));
+            return Ok(Some(ActivityStmt::Repeat {
+                count: n,
+                index,
+                body,
+                is_replicate: false,
+            }));
         }
         if self.at_ident("foreach") {
             self.bump();
@@ -1319,11 +1595,21 @@ impl Parser {
                 var = self.expect_ident()?;
                 self.bump(); // ':' or 'in'
             }
-            let iter = self.parse_expr(0)?;
+            let mut iter = self.parse_expr(0)?;
             if self.at_punct("[") {
                 self.bump();
                 let _ = self.parse_expr(0)?;
                 self.expect_punct("]")?;
+            }
+            // `foreach (arr[i])`: the collection is `arr` and `i` is the loop
+            // variable (PSS 12.2.6).
+            if var.is_empty() {
+                if let Expr::Index(base, idx) = &iter {
+                    if let (Expr::Path(_), Expr::Path(ip)) = (&**base, &**idx) {
+                        var = ip.leaf();
+                        iter = (**base).clone();
+                    }
+                }
             }
             self.expect_punct(")")?;
             let body = self.parse_activity_body()?;

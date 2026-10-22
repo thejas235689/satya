@@ -53,14 +53,16 @@ pub fn compile_pss(src: &str) -> PssResult<ir::Model> {
 /// resolved relative to the project file).
 pub fn compile_files(paths: &[String]) -> PssResult<ir::Model> {
     let mut items: Vec<ast::Item> = Vec::new();
+    let mut covergroups: Vec<ast::Covergroup> = Vec::new();
     for path in expand_projects(paths)? {
         let src = std::fs::read_to_string(&path)
             .map_err(|e| PssError::plain(format!("cannot read `{}`: {}", path, e)))?;
         let file = parser::parse_source(&src)
             .map_err(|e| PssError::plain(format!("{}: {}", path, e.message)))?;
         items.extend(file.items);
+        covergroups.extend(file.covergroups);
     }
-    ir::Model::lower(&ast::SourceFile { items })
+    ir::Model::lower(&ast::SourceFile { items, covergroups })
 }
 
 /// Expand any `.psf` project files into the list of `.pss` files they name.

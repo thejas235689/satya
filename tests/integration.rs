@@ -821,3 +821,208 @@ component C {
         assert_eq!(step.satisfied, step.total);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Semantics implemented in 0.6.0: join specs, replicate, dist, exec ordering,
+// flow-object ordering, arrays and coverage.
+// ---------------------------------------------------------------------------
+
+fn step_names(s: &engine::Scenario) -> Vec<String> {
+    s.steps.iter().map(|x| x.action.clone()).collect()
+}
+
+#[test]
+fn join_none_removes_the_scheduling_dependency() {
+    let src = r#"
+component C {
+  action A {} action B {} action Cc {};
+  action t { activity { L1: parallel join_none { L2: do A; L3: do B; } L4: do Cc; } };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "t", 1);
+    // No dependency: the following statement is scheduled first.
+    assert_eq!(step_names(&s)[0], "Cc", "{:?}", step_names(&s));
+}
+
+#[test]
+fn join_branch_waits_only_for_the_named_branch() {
+    let src = r#"
+component C {
+  action A {} action B {} action Cc {} action D {};
+  action t {
+    activity {
+      L1: parallel join_branch(L2) { L2: do A; L3: do B; }
+      L4: do Cc;
+      L5: do D;
+    }
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "t", 1);
+    let names = step_names(&s);
+    let pos = |n: &str| names.iter().position(|x| x == n).unwrap();
+    // Cc waits for L2 (A); B does not gate it.
+    assert!(pos("A") < pos("Cc"), "{names:?}");
+    assert!(pos("Cc") < pos("D"), "{names:?}");
+}
+
+#[test]
+fn join_select_waits_for_n_branches() {
+    let src = r#"
+component C {
+  action A {} action B {} action Cc {};
+  action t { activity { L1: parallel join_select(1) { L2: do A; L3: do B; } L4: do Cc; } };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    for seed in 1u64..=8 {
+        let s = engine::run_scenario(&m, "t", seed);
+        let names = step_names(&s);
+        let pos = |n: &str| names.iter().position(|x| x == n).unwrap();
+        // Exactly one branch precedes the following statement.
+        let before = ["A", "B"].iter().filter(|n| pos(n) < pos("Cc")).count();
+        assert_eq!(before, 1, "seed {seed}: {names:?}");
+    }
+}
+
+#[test]
+fn replicate_produces_labelled_copies() {
+    let src = r#"
+component C {
+  action A {};
+  action t { activity { replicate (3) R: do A; } };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "t", 1);
+    assert_eq!(s.steps.len(), 3);
+    assert!(s.steps.iter().all(|x| x.replicated));
+    assert!(s.steps.iter().all(|x| x.label.as_deref() == Some("R")));
+}
+
+#[test]
+fn dist_weights_bias_the_value_distribution() {
+    let src = r#"
+component C {
+  action a { rand int x; constraint dist x in [100..102 := 1, 200 := 2, 300 := 5]; };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let mut counts = std::collections::HashMap::new();
+    for seed in 1u64..=400 {
+        let s = engine::run_scenario(&m, "a", seed);
+        let x = s.steps[0].fields.iter().find(|(k, _)| k == "x").map(|(_, v)| *v).unwrap();
+        *counts.entry(x).or_insert(0usize) += 1;
+    }
+    // `:=` gives each value in the range the full weight: 1,1,1,2,5 over 10.
+    let n = |v: i64| *counts.get(&v).unwrap_or(&0) as f64 / 400.0;
+    assert!(n(300) > n(200) && n(200) > n(100), "{counts:?}");
+    assert!((n(300) - 0.5).abs() < 0.12, "300 should be ~50%: {}", n(300));
+    assert!((n(100) - 0.1).abs() < 0.08, "100 should be ~10%: {}", n(100));
+}
+
+#[test]
+fn exec_pre_and_post_solve_run_around_the_solver() {
+    let src = r#"
+component C {
+  action a {
+    rand int r;
+    int limit;
+    int derived;
+    exec pre_solve  { limit = 12; }
+    exec post_solve { derived = r + limit; }
+    constraint r in [0..30];
+    constraint r > limit;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    for seed in 1u64..=5 {
+        let s = engine::run_scenario(&m, "a", seed);
+        let get = |n: &str| s.steps[0].fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v).unwrap();
+        assert_eq!(get("limit"), 12, "pre_solve value must survive");
+        assert_eq!(get("derived"), get("r") + 12, "post_solve must use the solved value");
+    }
+}
+
+#[test]
+fn flow_object_ordering_is_checked() {
+    let src = r#"
+package p { buffer buf { rand int d; }; };
+component C {
+  action prod { output buf b; };
+  action cons { input buf b; };
+  action ok   { activity { do prod; do cons; } };
+  action bad  { activity { do cons; do prod; } };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    assert!(engine::run_scenario(&m, "ok", 1).warnings.is_empty());
+    assert!(engine::run_scenario(&m, "bad", 1)
+        .warnings
+        .iter()
+        .any(|w| w.contains("flow-object ordering")));
+}
+
+#[test]
+fn fixed_size_arrays_expand_into_elements() {
+    let src = r#"
+component C {
+  action a {
+    rand bit[8] arr[4];
+    rand array<bit[8], 3> av;
+    rand int total;
+    constraint arr[0] == 11;
+    constraint av[2] == 99;
+    constraint total == arr.sum();
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| s.steps[0].fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v).unwrap();
+    assert_eq!(get("arr.size"), 4);
+    assert_eq!(get("av.size"), 3);
+    assert_eq!(get("arr[0]"), 11);
+    assert_eq!(get("av[2]"), 99);
+    assert_eq!(get("total"), get("arr[0]") + get("arr[1]") + get("arr[2]") + get("arr[3]"));
+}
+
+#[test]
+fn foreach_iterates_array_elements() {
+    let src = r#"
+component C {
+  action A { rand int in [1..9] v; };
+  action a {
+    rand array<int, 3> items;
+    activity { foreach (items[i]) { do A; } }
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    assert_eq!(s.steps.len(), 3, "foreach must iterate the three elements");
+}
+
+#[test]
+fn coverpoints_are_sampled_inside_a_cover_block() {
+    let src = r#"
+package p { enum color_e {red, green, blue}; };
+component C {
+  action gen {
+    rand color_e color;
+    covergroup { c: coverpoint color; } cs;
+  };
+  action t { activity { L: cover { activity { do gen; do gen; do gen; } } }; };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "t", 1);
+    assert!(!s.coverage.is_empty(), "coverage must be collected");
+    let (point, hits) = &s.coverage[0];
+    assert!(point.ends_with(".c"), "{point}");
+    let total: usize = hits.iter().map(|(_, c)| *c).sum();
+    assert_eq!(total, 3, "three observed instances");
+}

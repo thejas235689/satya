@@ -81,22 +81,10 @@ package ot_aes_pkg {
    // --- KEY_SHARE0, a multireg of 8 x 32-bit words -------------------------
    //
    // AES declares this as a multireg (`count: "NumRegsKey"`), i.e. an array of
-   // registers. Satya's PSS subset parses array types but the engine gives them
-   // no semantics, so the array form is kept here for the parser and a
-   // hand-unrolled struct is used for the parts that must actually solve.
-   struct aes_key_share0_array_s {
-      rand array<bit[32], NUM_REGS_KEY> words;   // parses; opaque to the solver
-   };
-
+   // registers. Satya expands a fixed-size array into one variable per element
+   // (PSS 8.4), so the eight words are modelled directly.
    struct aes_key_share0_s {
-      rand bit[32] word0;   // KEY_SHARE0_0
-      rand bit[32] word1;   // KEY_SHARE0_1
-      rand bit[32] word2;   // KEY_SHARE0_2
-      rand bit[32] word3;   // KEY_SHARE0_3
-      rand bit[32] word4;   // KEY_SHARE0_4
-      rand bit[32] word5;   // KEY_SHARE0_5
-      rand bit[32] word6;   // KEY_SHARE0_6
-      rand bit[32] word7;   // KEY_SHARE0_7
+      rand array<bit[32], NUM_REGS_KEY> words;   // KEY_SHARE0_0 .. KEY_SHARE0_7
    };
 
    // A shadowed write: the register value and its bitwise complement.
@@ -136,9 +124,11 @@ component aes_c {
       constraint shadow.value[15:0] == 0x8d01;   // part-select (PSS 8.6.1)
    };
 
-   // Write the 8 key-share words (multireg, unrolled).
+   // Write the 8 key-share words (a multireg).
    action load_key {
       rand aes_key_share0_s key;
+      constraint key.words[0] == 0x2b7e1516;    // FIPS-197 test vector, first word
+      constraint key.words.sum() >= 1;
       output aes_ctrl_b cfg;
    };
 

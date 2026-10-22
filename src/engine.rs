@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::ast::{Activity, ActivityStmt, Expr, Path};
+use crate::ast::{Activity, ActivityStmt, ExecStmt, Expr, JoinSpec, Path};
 use crate::ir::{Action, Field, FieldKind, Model};
 use crate::solver::{self, Env};
 
@@ -68,6 +68,10 @@ pub struct Step {
     pub mode: StepMode,
     /// Parallel/schedule/select group id (0 when not grouped).
     pub group: u32,
+    /// Label of the enclosing labelled activity statement, if any.
+    pub label: Option<String>,
+    /// True for the copies produced by `replicate` (PSS 12.5).
+    pub replicated: bool,
     /// Solved values for the action's numeric leaf fields.
     pub fields: Vec<(String, i64)>,
     pub satisfied: usize,
@@ -88,6 +92,8 @@ pub struct Scenario {
     pub top_component: Option<String>,
     pub steps: Vec<Step>,
     pub warnings: Vec<String>,
+    /// Coverpoint name -> (observed value, hit count).
+    pub coverage: Vec<(String, Vec<(i64, usize)>)>,
     /// Pools after execution: name, element type, and allocated object count.
     pub pools: Vec<(String, String, usize)>,
     /// Address regions the model declared.
@@ -132,6 +138,36 @@ struct Engine<'a> {
     resources: HashMap<String, ResourceState>,
     /// Bump cursors over the model's address regions.
     addr_cursors: Vec<(i64, i64)>,
+    /// Label of the labelled activity statement being walked, if any.
+    current_label: Option<String>,
+    /// Set while walking the copies of a `replicate` statement.
+    current_replicated: bool,
+    /// Flow objects produced so far: type -> (producing step, id, consumed).
+    flow_produced: HashMap<String, Vec<(usize, usize, bool)>>,
+    /// Identity counter for flow objects that are not bound to a pool.
+    flow_seq: usize,
+    /// True while walking the body of a `cover` statement.
+    in_cover: bool,
+    /// Coverpoint name -> observed value -> hit count.
+    coverage: BTreeMap<String, BTreeMap<i64, usize>>,
+}
+
+/// Peel any `Labeled` wrappers off a statement, returning the inner statement
+/// and the outermost label.
+fn peel_label(stmt: &ActivityStmt) -> (&ActivityStmt, Option<&str>) {
+    match stmt {
+        ActivityStmt::Labeled { label, stmt } => (stmt, Some(label.as_str())),
+        other => (other, None),
+    }
+}
+
+/// The label of a top-level branch, if the branch is a labelled statement.
+fn branch_label(branch: &Activity) -> Option<&str> {
+    let Activity::Sequence(stmts) = branch;
+    match stmts.as_slice() {
+        [ActivityStmt::Labeled { label, .. }] => Some(label.as_str()),
+        _ => None,
+    }
 }
 
 /// Run a scenario rooted at `root_action`.
@@ -150,6 +186,12 @@ pub fn run_scenario(model: &Model, root_action: &str, seed: u64) -> Scenario {
             .iter()
             .map(|r| (r.base, r.base + r.size))
             .collect(),
+        current_label: None,
+        current_replicated: false,
+        flow_produced: HashMap::new(),
+        flow_seq: 0,
+        in_cover: false,
+        coverage: BTreeMap::new(),
     };
     if let Some(t) = &top {
         eng.pools = collect_pools(model, t);
@@ -182,7 +224,18 @@ pub fn run_scenario(model: &Model, root_action: &str, seed: u64) -> Scenario {
         .iter()
         .map(|r| (r.name.clone(), r.base, r.size))
         .collect();
+    let coverage = eng
+        .coverage
+        .iter()
+        .map(|(point, hits)| {
+            (
+                point.clone(),
+                hits.iter().map(|(v, c)| (*v, *c)).collect::<Vec<_>>(),
+            )
+        })
+        .collect();
     Scenario {
+        coverage,
         root_action: root_action.to_string(),
         top_component: top,
         steps: eng.steps,
@@ -233,9 +286,98 @@ impl<'a> Engine<'a> {
         ctx: &BTreeMap<String, i64>,
     ) {
         let Activity::Sequence(stmts) = activity;
-        for stmt in stmts {
+        let mut i = 0;
+        while i < stmts.len() {
+            let stmt = &stmts[i];
+            // A fine-grained scheduling specifier changes what the statement
+            // *after* the block waits for (PSS 12.3.6), so handle the pair here.
+            // A labelled block (`L1: parallel join_branch(..) { .. }`) is the
+            // common form, so peel the label before looking for the spec.
+            let (inner, _) = peel_label(stmt);
+            let join_block = match inner {
+                ActivityStmt::Parallel { branches, join } | ActivityStmt::Schedule { branches, join } => {
+                    Some((branches, join, matches!(inner, ActivityStmt::Schedule { .. })))
+                }
+                _ => None,
+            };
+            if let Some((branches, join, is_schedule)) = join_block {
+                if !matches!(join, JoinSpec::All) {
+                    let continuation = stmts.get(i + 1);
+                    let m = if is_schedule { StepMode::Schedule } else { StepMode::Parallel };
+                    self.walk_joined(branches, join, continuation, &component, depth, m, ctx);
+                    i += if continuation.is_some() { 2 } else { 1 };
+                    continue;
+                }
+            }
             self.walk_stmt(stmt, &component, depth, mode, group, ctx);
+            i += 1;
         }
+    }
+
+    /// Walk a `parallel`/`schedule` block that carries a fine-grained
+    /// scheduling specifier, emitting the branches the following statement
+    /// depends on first, then that statement, then the rest (PSS 12.3.6).
+    #[allow(clippy::too_many_arguments)]
+    fn walk_joined(
+        &mut self,
+        branches: &[Activity],
+        join: &JoinSpec,
+        continuation: Option<&ActivityStmt>,
+        component: &str,
+        depth: usize,
+        mode: StepMode,
+        ctx: &BTreeMap<String, i64>,
+    ) {
+        self.group_counter += 1;
+        let g = self.group_counter;
+        let mark = self.steps.len();
+
+        // Which top-level branches does the following statement wait for?
+        let gating: Vec<bool> = match join {
+            JoinSpec::All => vec![true; branches.len()],
+            // `join_none` has no scheduling dependency, and `join_first` has a
+            // run-time dependency only, so neither gates the schedule.
+            JoinSpec::None | JoinSpec::First(_) => vec![false; branches.len()],
+            JoinSpec::Branch(labels) => branches
+                .iter()
+                .map(|b| {
+                    branch_label(b)
+                        .map(|l| labels.iter().any(|x| x == l))
+                        .unwrap_or(false)
+                })
+                .collect(),
+            JoinSpec::Select(e) => {
+                let n = eval_value(e, ctx, self.model).unwrap_or(branches.len() as i64);
+                let n = n.max(0) as usize;
+                let mut flags = vec![false; branches.len()];
+                // The specific statements are selected randomly (12.3.6.1b).
+                let mut order: Vec<usize> = (0..branches.len()).collect();
+                let mut rng = crate::solver::Rng::seeded(self.seed ^ (g as u64) ^ 0x5bf0_3635);
+                for k in (1..order.len()).rev() {
+                    let j = (rng.next_u64() % (k as u64 + 1)) as usize;
+                    order.swap(k, j);
+                }
+                for &idx in order.iter().take(n.min(order.len())) {
+                    flags[idx] = true;
+                }
+                flags
+            }
+        };
+
+        for (k, b) in branches.iter().enumerate() {
+            if gating[k] {
+                self.walk_activity(b, component.to_string(), depth, mode, g, ctx);
+            }
+        }
+        if let Some(cont) = continuation {
+            self.walk_stmt(cont, component, depth, mode, g, ctx);
+        }
+        for (k, b) in branches.iter().enumerate() {
+            if !gating[k] {
+                self.walk_activity(b, component.to_string(), depth, mode, g, ctx);
+            }
+        }
+        self.enforce_contention(mark, g);
     }
 
     fn walk_stmt(
@@ -260,23 +402,26 @@ impl<'a> Engine<'a> {
             ActivityStmt::DoConstrained { action, constraints } => {
                 self.dispatch_constrained(action, component, depth, mode, group, constraints, ctx);
             }
-            ActivityStmt::Parallel(branches) => {
-                self.group_counter += 1;
-                let g = self.group_counter;
-                let mark = self.steps.len();
-                for b in branches {
-                    self.walk_activity(b, component.to_string(), depth, StepMode::Parallel, g, ctx);
-                }
-                self.enforce_contention(mark, g);
+            ActivityStmt::Parallel { branches, join } => {
+                self.walk_joined(branches, join, None, component, depth, StepMode::Parallel, ctx);
             }
-            ActivityStmt::Schedule(branches) => {
-                self.group_counter += 1;
-                let g = self.group_counter;
-                let mark = self.steps.len();
-                for b in branches {
-                    self.walk_activity(b, component.to_string(), depth, StepMode::Schedule, g, ctx);
+            ActivityStmt::Schedule { branches, join } => {
+                self.walk_joined(branches, join, None, component, depth, StepMode::Schedule, ctx);
+            }
+            ActivityStmt::Cover { body, .. } => {
+                // Everything scheduled inside a `cover` block is observed for
+                // the model's covergroups (PSS 19.2).
+                let saved = self.in_cover;
+                self.in_cover = true;
+                if let Some(b) = body {
+                    self.walk_activity(b, component.to_string(), depth, mode, group, ctx);
                 }
-                self.enforce_contention(mark, g);
+                self.in_cover = saved;
+            }
+            ActivityStmt::Labeled { label, stmt } => {
+                let saved = self.current_label.replace(label.clone());
+                self.walk_stmt(stmt, component, depth, mode, group, ctx);
+                self.current_label = saved;
             }
             ActivityStmt::Select(branches) => {
                 self.group_counter += 1;
@@ -332,23 +477,62 @@ impl<'a> Engine<'a> {
                     )),
                 }
             }
-            ActivityStmt::Repeat { count, index, body } => {
+            ActivityStmt::Repeat {
+                count,
+                index,
+                body,
+                is_replicate,
+            } => {
                 let n = eval_count(count, self.model, ctx).unwrap_or(1);
+                let kind = if *is_replicate { "replicate" } else { "repeat" };
                 if n > MAX_REPEAT {
                     self.warnings
-                        .push(format!("repeat count {} clamped to {}", n, MAX_REPEAT));
+                        .push(format!("{kind} count {} clamped to {}", n, MAX_REPEAT));
                 }
+                // `replicate` expands in place into n labelled copies (12.5),
+                // each of which is a distinct activity statement.
+                let saved_rep = self.current_replicated;
+                self.current_replicated = *is_replicate;
                 for k in 0..n.min(MAX_REPEAT) {
+                    let mut local = ctx.clone();
                     if let Some(name) = index {
-                        let mut local = ctx.clone();
                         local.insert(name.clone(), k);
-                        self.walk_activity(body, component.to_string(), depth, mode, group, &local);
-                    } else {
-                        self.walk_activity(body, component.to_string(), depth, mode, group, ctx);
                     }
+                    if *is_replicate {
+                        // Copies are labelled, and an array-style label carries
+                        // an index (12.3.6.1a2).
+                        local.insert("__replicate_index".to_string(), k);
+                    }
+                    self.walk_activity(body, component.to_string(), depth, mode, group, &local);
                 }
+                self.current_replicated = saved_rep;
             }
             ActivityStmt::Foreach { var, iter, body } => {
+                // `foreach (arr[i])` over a fixed-size array iterates its
+                // elements (PSS 8.4); the extent was recorded as `arr.size`.
+                let iter_path = match iter {
+                    Expr::Path(p) => Some(p.segments.join(".")),
+                    _ => None,
+                };
+                if let Some(path) = iter_path.as_ref() {
+                    if let Some(n) = ctx.get(&format!("{}.size", path)).copied() {
+                        for i in 0..n.max(0) {
+                            let mut local = ctx.clone();
+                            if !var.is_empty() {
+                                local.insert(var.clone(), i);
+                            }
+                            self.walk_activity(
+                                body,
+                                component.to_string(),
+                                depth,
+                                mode,
+                                group,
+                                &local,
+                            );
+                        }
+                        return;
+                    }
+                }
                 // If the collection names a pool, iterate its allocated
                 // objects; otherwise run the body once.
                 if let Some(pool_idx) = self.pool_index_for(iter) {
@@ -469,6 +653,8 @@ impl<'a> Engine<'a> {
             mode,
             group,
             fields: Vec::new(),
+            label: self.current_label.clone(),
+            replicated: self.current_replicated,
             satisfied: 0,
             total: 0,
             unsatisfied: Vec::new(),
@@ -476,6 +662,27 @@ impl<'a> Engine<'a> {
             claims: Vec::new(),
             unresolved: true,
         });
+    }
+
+    /// Execute `exec` statements against an instance's values (PSS 10.4).
+    fn exec_stmts(&self, stmts: &[ExecStmt], values: &mut BTreeMap<String, i64>) {
+        for st in stmts {
+            match st {
+                ExecStmt::Assign(path, rhs) => {
+                    if let Some(v) = eval_value(rhs, values, self.model) {
+                        values.insert(path.segments.join("."), v);
+                    }
+                }
+                ExecStmt::If(cond, then, els) => match eval_condition_opt(cond, values, self.model) {
+                    Some(true) => self.exec_stmts(then, values),
+                    Some(false) => self.exec_stmts(els, values),
+                    None => {}
+                },
+                // Method calls (`push_back`, ...) are passed through to the
+                // backends rather than modelled here.
+                ExecStmt::Call(_, _) | ExecStmt::Raw(_) => {}
+            }
+        }
     }
 
     fn record_step(
@@ -488,30 +695,113 @@ impl<'a> Engine<'a> {
         extra: &[Expr],
         bindings: &BTreeMap<String, i64>,
     ) {
+        // `exec pre_solve` runs before the solver and its assignments to
+        // non-random fields feed the solve (PSS 16.4.12).
+        let mut pre: BTreeMap<String, i64> = bindings.clone();
+        for e in action.execs.iter().filter(|e| e.kind == "pre_solve") {
+            self.exec_stmts(&e.stmts, &mut pre);
+        }
         let report = solver::solve_with(
             self.model,
             action,
             self.seed ^ (self.steps.len() as u64),
             extra,
-            bindings,
+            &pre,
         );
+
+        // `exec post_solve` runs after the solver and sets non-random fields
+        // from the solved values.
+        let mut solved = report.assignment.values.clone();
+        for e in action.execs.iter().filter(|e| e.kind == "post_solve") {
+            self.exec_stmts(&e.stmts, &mut solved);
+        }
+
         let mut fields: Vec<(String, i64)> = Vec::new();
-        for (k, v) in &report.assignment.values {
+        for (k, v) in &solved {
             if k.matches('.').count() <= 1 {
                 fields.push((k.clone(), *v));
             }
         }
 
-        // Allocate / consume flow objects and claim resources.
+        // Sample the model's coverpoints against this instance (PSS 18.3).
+        if self.in_cover {
+            for cg in &self.model.covergroups {
+                for item in &cg.items {
+                    if let crate::ast::CoverItem::Coverpoint { label, expr, iff, .. } = item {
+                        if let Some(cond) = iff {
+                            if eval_condition_opt(cond, &solved, self.model) != Some(true) {
+                                continue;
+                            }
+                        }
+                        if let Some(v) = eval_value(expr, &solved, self.model) {
+                            let point = match label {
+                                Some(l) => format!("{}.{}", cg.name, l),
+                                None => format!("{}.{}", cg.name, crate::solver::render_expr(expr)),
+                            };
+                            *self
+                                .coverage
+                                .entry(point)
+                                .or_default()
+                                .entry(v)
+                                .or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Allocate / consume flow objects and claim resources. A flow object
+        // may only be consumed after it has been produced (PSS 13), so inputs
+        // are bound to the earliest unconsumed object of that type produced by
+        // an earlier step.
         let mut flow = Vec::new();
         let mut claims = Vec::new();
+        let step_no = self.steps.len();
         for f in &action.fields {
             match f.kind {
                 FieldKind::Output => {
-                    flow.push(self.allocate(f, &report.assignment.values, "output"));
+                    let mut rec = self.allocate(f, &solved, "output");
+                    // With no pool bound, give the object an identity so a later
+                    // input can bind to it. A pool that refused the allocation
+                    // keeps `obj_id: None`.
+                    if rec.obj_id.is_none() && rec.pool.is_none() {
+                        rec.obj_id = Some(self.flow_seq);
+                        self.flow_seq += 1;
+                    }
+                    // Record it as produced only if the allocation succeeded;
+                    // a refused allocation produces nothing to bind to.
+                    if let Some(id) = rec.obj_id {
+                        self.flow_produced
+                            .entry(f.type_name.clone())
+                            .or_default()
+                            .push((step_no, id, false));
+                    }
+                    flow.push(rec);
                 }
                 FieldKind::Input => {
-                    flow.push(self.consume(f, "input"));
+                    let mut rec = self.consume(f, "input");
+                    // Several inputs may reference the same flow object (a
+                    // buffer is shared), so the object is not marked used up;
+                    // it only has to have been produced by an earlier step.
+                    let avail = self
+                        .flow_produced
+                        .get(&f.type_name)
+                        .and_then(|v| v.iter().find(|(at, _, _)| *at < step_no));
+                    match avail {
+                        Some((_, id, _)) => {
+                            if rec.obj_id.is_none() {
+                                rec.obj_id = Some(*id);
+                            }
+                        }
+                        None => {
+                            self.warnings.push(format!(
+                                "flow-object ordering: input `{}` of type `{}` has no \
+                                 preceding output (PSS 13)",
+                                f.name, f.type_name
+                            ));
+                        }
+                    }
+                    flow.push(rec);
                 }
                 FieldKind::Lock | FieldKind::Share => {
                     let exclusive = f.kind == FieldKind::Lock;
@@ -535,6 +825,8 @@ impl<'a> Engine<'a> {
             mode,
             group,
             fields,
+            label: self.current_label.clone(),
+            replicated: self.current_replicated,
             satisfied: report.satisfied,
             total: report.total,
             unsatisfied: report.unsupported.clone(),

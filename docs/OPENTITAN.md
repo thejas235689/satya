@@ -148,20 +148,28 @@ C compiles and runs.
 
 ### Where it strains
 
-**Multiregs are the limit.** AES declares `KEY_SHARE0` as a multireg with
-`count: "NumRegsKey"` — eight registers, not one. Satya's PSS subset *parses*
-`array<T, N>` and the array-suffix form `rand bit[32] data_in[4];`, but the
-engine gives arrays **no semantics**: such a field collapses to a single scalar
-(`data_in` solves to one 32-bit value, not four). Modelling a multireg means
-hand-unrolling it into `word0 … word7`, which is what the model does for
-`KEY_SHARE0` and documents in a comment.
+**Multiregs — resolved in 0.6.0.** AES declares `KEY_SHARE0` as a multireg with
+`count: "NumRegsKey"` — eight registers, not one. When this model was first
+written, Satya parsed `array<T, N>` but gave arrays **no semantics**: such a
+field collapsed to a single scalar. The model therefore hand-unrolled it into
+`word0 … word7`.
 
-That is the honest answer to *"where would it break on a large production
+Arrays now expand into one variable per element with per-element domains
+(PSS 8.4), so the model declares the multireg directly:
+
+```pss
+struct aes_key_share0_s {
+   rand array<bit[32], NUM_REGS_KEY> words;   // KEY_SHARE0_0 .. KEY_SHARE0_7
+};
+```
+
+and constrains individual words (`key.words[0] == 0x2b7e1516`) and aggregates
+(`key.words.sum() >= 1`). `foreach (arr[i])` iterates elements.
+
+This was the honest answer to *"where would it break on a large production
 model?"* — not the parser, and not the scheduler, but **anywhere the register
-file is an array**. AES has 20 multireg words; a memory controller or a large
-accelerator would have far more. Closing it needs array semantics in the solver
-(per-element domains and `foreach` over an array variable), which Satya does not
-have.
+file is an array**. It is now closed for fixed-size arrays; what remains is the
+list of approximations in `docs/SEMANTICS.md` §2.
 
 ### Three defects AES exposed
 
