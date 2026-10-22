@@ -120,6 +120,8 @@ pub struct Env<'a> {
     pub variants: HashMap<String, i64>,
     /// The run's seed, so `urandom()` varies between seeds.
     pub seed: u64,
+    /// `sizeof_s<T>::nbits` for every declared type (PSS 24.10.2).
+    pub type_bits: HashMap<String, i64>,
 }
 
 impl<'a> Env<'a> {
@@ -130,8 +132,18 @@ impl<'a> Env<'a> {
                 variants.entry(v.clone()).or_insert(i as i64);
             }
         }
+        let mut type_bits = HashMap::new();
+        for (name, dt) in &model.types {
+            if let Some(n) = type_nbits(model, dt) {
+                type_bits.insert(name.clone(), n);
+                // Also index by leaf name, so `sizeof_s<ctrl_s>` resolves.
+                let leaf = name.rsplit("::").next().unwrap_or(name).to_string();
+                type_bits.entry(leaf).or_insert(n);
+            }
+        }
         Env {
             seed: 0,
+            type_bits,
             constants: &model.constants,
             variants,
         }
@@ -242,12 +254,29 @@ pub fn eval(expr: &Expr, values: &BTreeMap<String, i64>, env: &Env) -> Option<i6
                 _ => None,
             }
         }
+        // Register access: `r.read()` / `r.read_val()` return the register's
+        // current value (PSS 24.11.1). The value lives in the instance's
+        // values under the register's path.
+        Expr::Method(recv, m, args)
+            if args.is_empty() && (m == "read" || m == "read_val") =>
+        {
+            let base = match &**recv {
+                Expr::Path(p) => p.segments.join("."),
+                _ => return None,
+            };
+            Some(values.get(&base).copied().unwrap_or(0))
+        }
         Expr::Ternary(c, t, e) => {
             if eval(c, values, env)? != 0 {
                 eval(t, values, env)
             } else {
                 eval(e, values, env)
             }
+        }
+        // `sizeof_s<T>::nbits` / `::nbytes` (PSS 24.10.2).
+        Expr::Sizeof { ty, bits } => {
+            let n = *env.type_bits.get(ty)?;
+            Some(if *bits { n } else { (n + 7) / 8 })
         }
         // The standard library's `float_pkg` (Annex C.1). A floating-point
         // value is held as its IEEE-754 bit pattern, so the storage functions
@@ -303,6 +332,7 @@ pub fn eval(expr: &Expr, values: &BTreeMap<String, i64>, env: &Env) -> Option<i6
                 // instance-varying, so a run is reproducible yet different
                 // instances draw different numbers.
                 "urandom" => Some(((hash_values(values) ^ env.seed) & 0xFFFF_FFFF) as i64),
+                _ if false => None,
                 "urandom_range" => {
                     let (lo, hi) = (arg(0)?, arg(1)?);
                     if hi <= lo {
@@ -343,6 +373,37 @@ pub fn eval(expr: &Expr, values: &BTreeMap<String, i64>, env: &Env) -> Option<i6
             }
         }
         _ => None,
+    }
+}
+
+/// The size in bits of a declared type (PSS 24.10.2). A packed struct is the
+/// sum of its fields; a bit vector is its width; other scalars use their width.
+fn type_nbits(model: &Model, dt: &crate::ir::DataType) -> Option<i64> {
+    match dt.keyword.as_str() {
+        "struct" => {
+            let mut total = 0i64;
+            for f in &dt.fields {
+                let w = match f.bits {
+                    Some(b) => b,
+                    None => {
+                        let key = model.resolve(&f.type_name);
+                        match model.types.get(&key).and_then(|t| type_nbits(model, t)) {
+                            Some(n) => n,
+                            None => return None,
+                        }
+                    }
+                };
+                let n = f.array.unwrap_or(1).max(1);
+                total += w * n;
+            }
+            Some(total)
+        }
+        "bit" | "int" | "byte" | "shortint" | "longint" | "integer" | "uint" => {
+            Some(dt.fields.first().and_then(|f| f.bits).unwrap_or(32))
+        }
+        "enum" => Some(dt.fields.first().and_then(|f| f.bits).unwrap_or(32)),
+        "bool" => Some(1),
+        _ => dt.fields.first().and_then(|f| f.bits),
     }
 }
 

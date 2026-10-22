@@ -17,9 +17,9 @@ were not.
 
 | Status | Count |
 |---|---|
-| yes | 78 |
-| partial | 38 |
-| no | 30 |
+| yes | 80 |
+| partial | 40 |
+| no | 26 |
 | **total** | **146** |
 
 ## Every construct
@@ -156,8 +156,8 @@ were not.
 | 128 | Contiguous address space claim type | no |  |
 | 129 | Transparent contiguous address space claim type | no |  |
 | 130 | Address space group | no |  |
-| 131 | packed_s base struct | no |  |
-| 132 | sizeof_s struct | no |  |
+| 131 | packed_s base struct | partial | parsed; the packed little-endian layout drives register field packing (24.10.1) |
+| 132 | sizeof_s struct | yes | `sizeof_s<T>::nbits` / `::nbytes` for packed structs, bit vectors and scalars |
 | 133 | Address space handle | no |  |
 | 134 | make_handle_from_claim function | no |  |
 | 135 | make_handle_from_handle function | no |  |
@@ -170,5 +170,5 @@ were not.
 | 142 | Read and write series of bytes | no |  |
 | 143 | Read and write packed structs | no |  |
 | 144 | Primitive operation implementation functions | no |  |
-| 145 | PSS register definition | no |  |
-| 146 | PSS register group definition | no |  |
+| 145 | PSS register definition | yes | `reg_c<R, ACC, SZ>` declarations plus read / read_val / write / write_val / write_masked / write_field, over a register store |
+| 146 | PSS register group definition | partial | `reg_group_c` is parsed; offsets come from the group's own get_offset_of_* functions, which are not evaluated |

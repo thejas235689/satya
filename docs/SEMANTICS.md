@@ -83,6 +83,9 @@ With `:/`, `[100..102 :/ 6, 200 := 2]` gives 25.3 / 25.5 / 24.8 / 24.3 % against
 | `eventually` | 19.3.4 | matches from any checkpoint at or after the start |
 | `select` | 19.3.6 | takes the first arm whose guard holds |
 | nested monitors | 19.3.9 | matched by name |
+| `sizeof_s<T>::nbits` / `::nbytes` | 24.10.2 | computed for packed structs, bit vectors, enums and scalars |
+| `reg_c<R, ACC, SZ>` registers | 24.11.1 | declared, with `read`, `read_val`, `write`, `write_val`, `write_masked`, `write_val_masked`, `write_field` and `write_fields` over a register store |
+| packed little-endian layout | 24.10.1 | register fields pack from the least-significant bit in declaration order |
 | array operators `==`, `!=`, `in` | 7.9.2.1 | element-wise equality and set membership are solved |
 | array properties `arr.size`, `arr.sum` | 7.9.2.4 | the deprecated property forms evaluate like the methods |
 | `exec init_down` / `init_up` | 22.1 | run for the component hierarchy before the scenario, `init_down` top-down and `init_up` bottom-up |
@@ -121,6 +124,9 @@ methods for arrays (7.9.2.2). The real list is below.
 | multiple `dist` directives on one attribute | 16.1.9 | weights are summed; the LRM leaves the resulting distribution undefined |
 | stream vs buffer consumption | 13 | a flow object may be referenced by several inputs; consume-once semantics for streams are not enforced |
 | `import`-based scope checking | 9 | name resolution uses `pkg::name` and `Component::action`, not `import` |
+| register group offsets | 24.11.2 | `reg_group_c` is parsed, but the offsets come from the group's own `get_offset_of_instance` / `get_offset_of_instance_array` / `get_offset_of_path` functions, which are not evaluated |
+| address traits and claims | 24.6-24.8 | address *regions* are modelled; traits, claims and handles are not |
+| register read/write primitives | 24.10.9 | register access is modelled over a register store, not translated into the primitive byte-level read/write operations on an address |
 | target-code templates (`exec declaration` bodies) | 22.2 | carried through to the backends verbatim, not interpreted |
 
 ## 3. How this is checked

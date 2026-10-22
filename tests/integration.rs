@@ -1408,3 +1408,73 @@ component C {
     let s = engine::run_scenario(&m, "t", 1);
     assert_eq!(coverage_total(&s, "cs.c"), Some(2), "{:?}", s.coverage);
 }
+
+// ---------------------------------------------------------------------------
+// Registers and address-space sizing (Syntax 132, 145).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn sizeof_s_reports_the_type_width() {
+    let src = r#"
+package p {
+  struct ctrl_s { bit[1] en; bit[3] mode; bit[4] rsvd; };
+  component C {
+    action a {
+      int bits;
+      int bytes;
+      exec pre_solve {
+        bits  = sizeof_s<ctrl_s>::nbits;    // 1 + 3 + 4
+        bytes = sizeof_s<ctrl_s>::nbytes;
+      }
+      rand int v;
+    };
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| s.steps[0].fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v).unwrap();
+    assert_eq!(get("bits"), 8);
+    assert_eq!(get("bytes"), 1);
+}
+
+#[test]
+fn register_access_functions_follow_the_standard() {
+    // `reg_c<ctrl_s, READWRITE, 8>` — fields pack little-endian from the LSB
+    // (PSS 24.10.1), and write_masked is (cur & ~mask) | (val & mask).
+    let src = r#"
+package p {
+  struct ctrl_s { bit[1] en; bit[3] mode; bit[4] rsvd; };
+  pure component ctrl_reg_c : reg_c<ctrl_s, READWRITE, 8> {};
+  component C {
+    ctrl_reg_c ctrl;
+    action a {
+      int v0; int v1; int v2; int v3; int v4;
+      exec pre_solve {
+        ctrl.write(0x00);
+        ctrl.write_field("mode", 5);      // mode is bits [1..3]
+        v0 = ctrl.read();
+        ctrl.write_masked(0x0F, 0xF0);    // low nibble cleared by the mask
+        v1 = ctrl.read();
+        ctrl.write_field("en", 1);        // en is bit 0
+        v2 = ctrl.read();
+        ctrl.write_val(0xFF);
+        v3 = ctrl.read_val();
+        ctrl.write_field("mode", 9);      // 9 is masked into the 3-bit field
+        v4 = ctrl.read();
+      }
+      rand int x;
+    };
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| s.steps[0].fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v).unwrap();
+    assert_eq!(get("v0"), 0b1010, "mode=5 at offset 1");
+    assert_eq!(get("v1"), 0, "write_masked(0x0F, 0xF0) on 0x0A clears the low nibble");
+    assert_eq!(get("v2"), 1, "en is bit 0");
+    assert_eq!(get("v3"), 0xFF, "write_val/read_val round-trip");
+    // 0xFF with mode replaced by (9 & 7) << 1 == 0b010
+    assert_eq!(get("v4"), 0xF3, "field write is masked to the field width");
+}

@@ -132,6 +132,10 @@ pub struct Bind {
 pub struct Component {
     pub name: String,
     pub base: Option<String>,
+    /// Set when the component is a register: `reg_c<R, ACC, SZ>` (PSS 24.11.1).
+    pub reg_value_type: Option<String>,
+    pub reg_access: String,
+    pub reg_size: Option<i64>,
     /// (instance name, component type leaf)
     pub subcomponents: Vec<(String, String)>,
     pub fields: Vec<Field>,
@@ -261,6 +265,10 @@ struct RawType {
 
 #[derive(Default)]
 struct RawComponent {
+    /// `reg_c<R, ACC, SZ>` template arguments, when this is a register.
+    reg_value_type: Option<String>,
+    reg_access: String,
+    reg_size: Option<i64>,
     name: String,
     base: Option<String>,
     members: Vec<Member>,
@@ -376,10 +384,32 @@ impl Lowerer {
                 .or_insert_with(|| RawComponent {
                     name: c.name.clone(),
                     base: c.base.as_ref().map(|b| b.name()),
+                    reg_access: "READWRITE".to_string(),
                     ..Default::default()
                 });
             if c.base.is_some() {
                 e.base = c.base.as_ref().map(|b| b.name());
+            }
+            // `reg_c<R, ACC, SZ>` — a register declaration (PSS 24.11.1).
+            if let Some(b) = &c.base {
+                let leaf = b.name();
+                let leaf = leaf.rsplit("::").next().unwrap_or(&leaf).to_string();
+                if leaf == "reg_c" || leaf == "reg_group_c" {
+                    if let Some(r) = b.template_args.first() {
+                        e.reg_value_type = Some(r.name());
+                    }
+                    for a in &b.template_args {
+                        let n = a.name();
+                        if n == "READONLY" || n == "WRITEONLY" || n == "READWRITE" {
+                            e.reg_access = n;
+                        }
+                    }
+                    if let Some(ca) = b.const_args.first() {
+                        if let Some(v) = ca.eval_const(&|_| None) {
+                            e.reg_size = Some(v);
+                        }
+                    }
+                }
             }
         }
         for it in &c.items {
@@ -757,6 +787,9 @@ impl Lowerer {
                 Component {
                     name: rc.name.clone(),
                     base: rc.base.clone(),
+                    reg_value_type: rc.reg_value_type.clone(),
+                    reg_access: rc.reg_access.clone(),
+                    reg_size: rc.reg_size,
                     subcomponents,
                     fields,
                     actions,

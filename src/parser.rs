@@ -1134,10 +1134,14 @@ impl Parser {
         };
         if self.at_punct("=") {
             self.bump();
-            if let Ok(rhs) = self.parse_expr(0) {
-                self.eat_punct(";");
-                if let Expr::Path(path) = e {
-                    return Some(ExecStmt::Assign(path, rhs));
+            match self.parse_expr(0) {
+                Ok(rhs) => {
+                    self.eat_punct(";");
+                    if let Expr::Path(path) = e {
+                        return Some(ExecStmt::Assign(path, rhs));
+                    }
+                }
+                Err(er) => {
                 }
             }
             self.pos = save;
@@ -2148,6 +2152,39 @@ impl Parser {
                 Ok(Expr::Str(s))
             }
             TokKind::Ident(id) => {
+                // `sizeof_s<T>::nbits` / `::nbytes` (PSS 24.10.2).
+                if id == "sizeof_s" && self.peek_at(1).is_punct("<") {
+                    // `sizeof_s<T>::nbits` / `::nbytes` (PSS 24.10.2). The type
+                    // argument is read directly, since it sits inside `<>`.
+                    self.bump();
+                    self.bump();
+                    let mut name = self.expect_ident()?;
+                    // A qualified type name may use `::`.
+                    loop {
+                        if self.eat_punct("::") || self.eat_punct(":") {
+                            match self.expect_ident() {
+                                Ok(more) => {
+                                    name.push_str("::");
+                                    name.push_str(&more);
+                                }
+                                Err(_) => break,
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    self.expect_punct(">")?;
+                    // `::nbits` — `::` is one token.
+                    if !self.eat_punct("::") {
+                        self.eat_punct(":");
+                        self.eat_punct(":");
+                    }
+                    let field = self.expect_ident()?;
+                    return Ok(Expr::Sizeof {
+                        ty: name,
+                        bits: field != "nbytes",
+                    });
+                }
                 if id == "true" {
                     self.bump();
                     return Ok(Expr::Bool(true));

@@ -981,8 +981,159 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// A declared type by name: the resolved key first, then any type whose
+    /// leaf name matches.
+    fn lookup_type(&self, name: &str) -> Option<&crate::ir::DataType> {
+        let key = self.model.resolve(name);
+        if let Some(dt) = self.model.types.get(&key) {
+            return Some(dt);
+        }
+        let leaf = name.rsplit("::").next().unwrap_or(name);
+        self.model
+            .types
+            .iter()
+            .find(|(k, _)| k.rsplit("::").next() == Some(leaf))
+            .map(|(_, v)| v)
+    }
+
+    /// The register component a path names, if it names a register
+    /// (`reg_c<R, ACC, SZ>`, PSS 24.11.1).
+    fn register_component(&self, path: &str) -> Option<&crate::ir::Component> {
+        let leaf = path.rsplit('.').next().unwrap_or(path);
+        let by_type = |ty: &str| -> Option<&crate::ir::Component> {
+            let key = self.model.resolve(ty);
+            self.model
+                .components
+                .get(&key)
+                .filter(|rc| rc.reg_value_type.is_some())
+        };
+        for c in self.model.components.values() {
+            // A register instance may be a sub-component or a plain field.
+            for (name, ty) in &c.subcomponents {
+                if name == leaf {
+                    if let Some(rc) = by_type(ty) {
+                        return Some(rc);
+                    }
+                }
+            }
+            for f in &c.fields {
+                if f.name == leaf {
+                    if let Some(rc) = by_type(&f.type_name) {
+                        return Some(rc);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// `(offset, width)` of a field within a register's value type, packed
+    /// little-endian: the first declared field occupies the least-significant
+    /// bits (PSS 24.10.1).
+    fn register_field_layout(&self, path: &str, field: &str) -> Option<(i64, i64)> {
+        let comp = self.register_component(path)?;
+        let vtype = comp.reg_value_type.as_ref()?;
+        let dt = self.lookup_type(vtype)?;
+        let mut off = 0i64;
+        for f in &dt.fields {
+            let w = f.bits.unwrap_or(1);
+            if f.name == field {
+                return Some((off, w));
+            }
+            off += w;
+        }
+        None
+    }
+
+    /// `write`, `write_val`, `write_masked`, `write_val_masked`, `write_field`
+    /// (PSS 24.11.1).
+    fn exec_register_write(&mut self, name: &str, args: &[Expr], values: &mut BTreeMap<String, i64>) {
+        let (recv, method) = match name.rsplit_once('.') {
+            Some(parts) => parts,
+            None => return,
+        };
+        let size = self
+            .register_component(recv)
+            .and_then(|c| c.reg_size)
+            .unwrap_or(64);
+        let full = if size >= 64 { -1i64 } else { (1i64 << size) - 1 };
+        let arg = |k: usize| args.get(k).and_then(|a| eval_value(a, values, self.model, self.seed));
+        let cur = values.get(recv).copied().unwrap_or(0);
+        match method {
+            "write" | "write_val" => {
+                if let Some(v) = arg(0) {
+                    values.insert(recv.to_string(), v & full);
+                }
+            }
+            // REG_VAL(new) = (REG_VAL(current) & ~mask) | (val & mask)
+            "write_masked" | "write_val_masked" => {
+                if let (Some(m), Some(v)) = (arg(0), arg(1)) {
+                    values.insert(recv.to_string(), (cur & !m) | (v & m));
+                }
+            }
+            "write_field" => {
+                let fname = match args.first() {
+                    Some(Expr::Str(s)) => s.clone(),
+                    _ => return,
+                };
+                let (off, width) = self.register_field_layout(recv, &fname).unwrap_or((0, size));
+                let mask = if width >= 64 { -1i64 } else { (1i64 << width) - 1 };
+                if let Some(v) = arg(1) {
+                    values.insert(
+                        recv.to_string(),
+                        (cur & !(mask << off)) | ((v & mask) << off),
+                    );
+                }
+            }
+            "write_fields" => {
+                // `write_fields(list<string>, list<bit[SZ]>)` — pairs from the
+                // two collections the caller built.
+                let names: Vec<String> = match args.first() {
+                    Some(Expr::List(items)) => items
+                        .iter()
+                        .filter_map(|i| match i {
+                            Expr::Str(s) => Some(s.clone()),
+                            _ => None,
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                let vals: Vec<i64> = match args.get(1) {
+                    Some(Expr::List(items)) => items
+                        .iter()
+                        .filter_map(|i| eval_value(i, values, self.model, self.seed))
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                let mut reg = cur;
+                for (fname, v) in names.iter().zip(vals.iter()) {
+                    if let Some((off, width)) = self.register_field_layout(recv, fname) {
+                        let mask = if width >= 64 { -1i64 } else { (1i64 << width) - 1 };
+                        reg = (reg & !(mask << off)) | ((v & mask) << off);
+                    }
+                }
+                values.insert(recv.to_string(), reg);
+            }
+            _ => {}
+        }
+    }
+
     /// One `exec` method call, e.g. `q.push_back(v)`.
     fn exec_call(&mut self, name: &str, args: &[Expr], values: &mut BTreeMap<String, i64>) {
+        // Register access functions (PSS 24.11.1, Syntax 145).
+        if matches!(
+            name.rsplit_once('.').map(|(_, m)| m),
+            Some("write")
+                | Some("write_val")
+                | Some("write_masked")
+                | Some("write_val_masked")
+                | Some("write_field")
+                | Some("write_fields")
+        ) {
+            self.exec_register_write(name, args, values);
+            return;
+        }
+
         // Standard library messaging (PSS Syntax 106-110): recorded so the
         // scenario can report what the model asked to log.
         match name {

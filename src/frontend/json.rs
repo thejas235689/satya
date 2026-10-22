@@ -201,6 +201,9 @@ pub fn model_from_json(src: &str) -> PssResult<Model> {
             model.components.insert(
                 name.clone(),
                 Component {
+                    reg_value_type: None,
+                    reg_access: "READWRITE".to_string(),
+                    reg_size: None,
                     name: name.clone(),
                     base: obj_get(co, "base").and_then(|v| v.as_str()).map(|s| s.to_string()),
                     subcomponents,

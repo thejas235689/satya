@@ -109,6 +109,13 @@ pub fn render_sv(expr: &Expr) -> String {
         Expr::Cast(t, e) => format!("{}({})", t, render_sv(e)),
         Expr::Range(a, b) => format!("{}..{}", render_sv(a), render_sv(b)),
         Expr::Index(a, b) => format!("{}[{}]", render_sv(a), render_sv(b)),
+        Expr::Sizeof { ty, bits } => {
+            if *bits {
+                format!("sizeof_s<{}>::nbits", ty)
+            } else {
+                format!("sizeof_s<{}>::nbytes", ty)
+            }
+        }
         Expr::List(items) => {
             let a: Vec<String> = items.iter().map(render_sv).collect();
             format!("{{{}}}", a.join(", "))

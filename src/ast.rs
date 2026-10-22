@@ -444,6 +444,8 @@ pub enum Expr {
     Slice(Box<Expr>, Box<Expr>, Box<Expr>),
     /// `{a, b, c}`
     List(Vec<Expr>),
+    /// `sizeof_s<T>::nbits` / `::nbytes` (PSS 24.10.2).
+    Sizeof { ty: String, bits: bool },
     /// `x inside { ... }` / `x dist { ... }` — captured, not solved.
     Unknown(String),
 }
