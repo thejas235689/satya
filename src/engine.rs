@@ -50,6 +50,17 @@ pub struct FlowRecord {
     pub addr: Option<i64>,
 }
 
+/// One sampled coverpoint or cross (PSS 18.3, 18.4).
+#[derive(Debug, Clone)]
+pub struct CoveragePoint {
+    /// `covergroup.label`, or `covergroup.<expr>` when unlabelled.
+    pub name: String,
+    /// Observed value (or value tuple, for a cross) -> hit count.
+    pub values: Vec<(String, usize)>,
+    /// `(bins hit, bins declared)` when the coverpoint declared explicit bins.
+    pub bins: Option<(usize, usize)>,
+}
+
 /// A resource claim made by a step (`lock` or `share`).
 #[derive(Debug, Clone)]
 pub struct Claim {
@@ -92,8 +103,8 @@ pub struct Scenario {
     pub top_component: Option<String>,
     pub steps: Vec<Step>,
     pub warnings: Vec<String>,
-    /// Coverpoint name -> (observed value, hit count).
-    pub coverage: Vec<(String, Vec<(i64, usize)>)>,
+    /// Sampled coverpoints and crosses.
+    pub coverage: Vec<CoveragePoint>,
     /// Pools after execution: name, element type, and allocated object count.
     pub pools: Vec<(String, String, usize)>,
     /// Address regions the model declared.
@@ -148,8 +159,13 @@ struct Engine<'a> {
     flow_seq: usize,
     /// True while walking the body of a `cover` statement.
     in_cover: bool,
+    /// Values established by component `init_down`/`init_up` blocks, visible to
+    /// the whole scenario (PSS 22.1).
+    globals: BTreeMap<String, i64>,
     /// Coverpoint name -> observed value -> hit count.
-    coverage: BTreeMap<String, BTreeMap<i64, usize>>,
+    coverage: BTreeMap<String, BTreeMap<String, usize>>,
+    /// Declared bins per coverpoint, for coverage against the declaration.
+    coverage_bins: BTreeMap<String, Vec<Vec<i64>>>,
 }
 
 /// Peel any `Labeled` wrappers off a statement, returning the inner statement
@@ -160,6 +176,29 @@ fn peel_label(stmt: &ActivityStmt) -> (&ActivityStmt, Option<&str>) {
         other => (other, None),
     }
 }
+
+/// The values a `bins` declaration covers: a single value, a `lo..hi` range, or
+/// a `{ ... }` list of those (PSS 18.3).
+fn bin_values(e: &Expr, ctx: &BTreeMap<String, i64>, model: &Model) -> Vec<i64> {
+    match e {
+        Expr::List(items) => items
+            .iter()
+            .flat_map(|i| bin_values(i, ctx, model))
+            .collect(),
+        Expr::InRange(_, lo, hi) => {
+            let lo = eval_value(lo, ctx, model);
+            let hi = eval_value(hi, ctx, model);
+            match (lo, hi) {
+                (Some(lo), Some(hi)) if hi >= lo && hi - lo < 4096 => (lo..=hi).collect(),
+                _ => Vec::new(),
+            }
+        }
+        other => eval_value(other, ctx, model).into_iter().collect(),
+    }
+}
+
+/// Largest collection an `exec` block may build, to bound a pathological model.
+const MAX_LIST: i64 = 256;
 
 /// The label of a top-level branch, if the branch is a labelled statement.
 fn branch_label(branch: &Activity) -> Option<&str> {
@@ -191,12 +230,21 @@ pub fn run_scenario(model: &Model, root_action: &str, seed: u64) -> Scenario {
         flow_produced: HashMap::new(),
         flow_seq: 0,
         in_cover: false,
+        globals: BTreeMap::new(),
         coverage: BTreeMap::new(),
+        coverage_bins: BTreeMap::new(),
     };
     if let Some(t) = &top {
         eng.pools = collect_pools(model, t);
         eng.resources = collect_resources(model, t);
     }
+    // Component `init_down`/`init_up` blocks run before the root action's
+    // `pre_solve`, `init_down` top-down and `init_up` bottom-up (PSS 22.1).
+    if let Some(t) = &top {
+        let mut visited = Vec::new();
+        eng.run_component_inits(t, &mut visited);
+    }
+
     let action = model.find_action(top.as_deref(), root_action).cloned();
     match action {
         Some(act) => {
@@ -228,10 +276,24 @@ pub fn run_scenario(model: &Model, root_action: &str, seed: u64) -> Scenario {
         .coverage
         .iter()
         .map(|(point, hits)| {
-            (
-                point.clone(),
-                hits.iter().map(|(v, c)| (*v, *c)).collect::<Vec<_>>(),
-            )
+            let bins = eng.coverage_bins.get(point).map(|decl| {
+                let hit = decl
+                    .iter()
+                    .filter(|allowed| {
+                        hits.keys().any(|k| {
+                            k.parse::<i64>()
+                                .map(|v| allowed.contains(&v))
+                                .unwrap_or(false)
+                        })
+                    })
+                    .count();
+                (hit, decl.len())
+            });
+            CoveragePoint {
+                name: point.clone(),
+                values: hits.iter().map(|(v, c)| (v.clone(), *c)).collect(),
+                bins,
+            }
         })
         .collect();
     Scenario {
@@ -287,8 +349,16 @@ impl<'a> Engine<'a> {
     ) {
         let Activity::Sequence(stmts) = activity;
         let mut i = 0;
+        // `cover <type>;` has no body: it observes from that point to the end of
+        // the enclosing activity (PSS 19.2).
+        let mut covered_from_here = false;
         while i < stmts.len() {
             let stmt = &stmts[i];
+            if let ActivityStmt::Cover { body: None, .. } = peel_label(stmt).0 {
+                covered_from_here = true;
+                i += 1;
+                continue;
+            }
             // A fine-grained scheduling specifier changes what the statement
             // *after* the block waits for (PSS 12.3.6), so handle the pair here.
             // A labelled block (`L1: parallel join_branch(..) { .. }`) is the
@@ -309,7 +379,12 @@ impl<'a> Engine<'a> {
                     continue;
                 }
             }
+            let saved_cover = self.in_cover;
+            if covered_from_here {
+                self.in_cover = true;
+            }
             self.walk_stmt(stmt, &component, depth, mode, group, ctx);
+            self.in_cover = saved_cover;
             i += 1;
         }
     }
@@ -664,13 +739,59 @@ impl<'a> Engine<'a> {
         });
     }
 
+    /// Evaluate a component hierarchy's `init_down`/`init_up` blocks into the
+    /// scenario's globals (PSS 22.1).
+    fn run_component_inits(&mut self, comp_name: &str, visited: &mut Vec<String>) {
+        if visited.iter().any(|v| v == comp_name) {
+            return;
+        }
+        visited.push(comp_name.to_string());
+        let (subs, downs, ups) = match self.model.components.get(comp_name) {
+            Some(c) => (
+                c.subcomponents.clone(),
+                c.execs.iter().filter(|e| e.kind == "init_down").cloned().collect::<Vec<_>>(),
+                c.execs.iter().filter(|e| e.kind == "init_up").cloned().collect::<Vec<_>>(),
+            ),
+            None => return,
+        };
+        // init_down: this component first, then its children.
+        for e in &downs {
+            let mut g = std::mem::take(&mut self.globals);
+            self.exec_stmts(&e.stmts, &mut g);
+            self.globals = g;
+        }
+        for (_, sub_ty) in &subs {
+            self.run_component_inits(sub_ty, visited);
+        }
+        // init_up: children first, then this component.
+        for e in &ups {
+            let mut g = std::mem::take(&mut self.globals);
+            self.exec_stmts(&e.stmts, &mut g);
+            self.globals = g;
+        }
+    }
+
     /// Execute `exec` statements against an instance's values (PSS 10.4).
     fn exec_stmts(&self, stmts: &[ExecStmt], values: &mut BTreeMap<String, i64>) {
         for st in stmts {
             match st {
                 ExecStmt::Assign(path, rhs) => {
+                    let base = path.segments.join(".");
+                    // `L = {a, b, c};` gives a collection its elements (PSS 8.5).
+                    if let Expr::List(items) = rhs {
+                        for i in 0..MAX_LIST {
+                            values.remove(&format!("{}[{}]", base, i));
+                        }
+                        for (i, it) in items.iter().enumerate() {
+                            if let Some(v) = eval_value(it, values, self.model) {
+                                values.insert(format!("{}[{}]", base, i), v);
+                            }
+                        }
+                        values.insert(format!("{}.size", base), items.len() as i64);
+                        continue;
+                    }
                     if let Some(v) = eval_value(rhs, values, self.model) {
-                        values.insert(path.segments.join("."), v);
+                        values.insert(base, v);
                     }
                 }
                 ExecStmt::If(cond, then, els) => match eval_condition_opt(cond, values, self.model) {
@@ -678,10 +799,109 @@ impl<'a> Engine<'a> {
                     Some(false) => self.exec_stmts(els, values),
                     None => {}
                 },
-                // Method calls (`push_back`, ...) are passed through to the
-                // backends rather than modelled here.
-                ExecStmt::Call(_, _) | ExecStmt::Raw(_) => {}
+                // Collection mutators (PSS 7.9.3.2): the receiver's elements are
+                // kept as `recv[i]` with a `recv.size`, so a list can be built
+                // by an `exec` block and then read by constraints.
+                ExecStmt::Call(name, args) => self.exec_call(name, args, values),
+                ExecStmt::Raw(_) => {}
             }
+        }
+    }
+
+    /// One `exec` method call, e.g. `q.push_back(v)`.
+    fn exec_call(&self, name: &str, args: &[Expr], values: &mut BTreeMap<String, i64>) {
+        let (recv, method) = match name.rsplit_once('.') {
+            Some(parts) => parts,
+            None => return,
+        };
+        let size_key = format!("{}.size", recv);
+        let n = *values.get(&size_key).unwrap_or(&0);
+        let elem = |i: i64| format!("{}[{}]", recv, i);
+        let arg = |k: usize| args.get(k).and_then(|a| eval_value(a, values, self.model));
+        match method {
+            "push_back" => {
+                if let Some(v) = arg(0) {
+                    values.insert(elem(n), v);
+                    values.insert(size_key, n + 1);
+                }
+            }
+            "push_front" => {
+                if let Some(v) = arg(0) {
+                    for i in (0..n).rev() {
+                        if let Some(x) = values.get(&elem(i)).copied() {
+                            values.insert(elem(i + 1), x);
+                        }
+                    }
+                    values.insert(elem(0), v);
+                    values.insert(size_key, n + 1);
+                }
+            }
+            "pop_back" => {
+                if n > 0 {
+                    values.remove(&elem(n - 1));
+                    values.insert(size_key, n - 1);
+                }
+            }
+            "pop_front" => {
+                if n > 0 {
+                    for i in 1..n {
+                        if let Some(x) = values.get(&elem(i)).copied() {
+                            values.insert(elem(i - 1), x);
+                        }
+                    }
+                    values.remove(&elem(n - 1));
+                    values.insert(size_key, n - 1);
+                }
+            }
+            "insert" => {
+                if let (Some(i), Some(v)) = (arg(0), arg(1)) {
+                    if (0..=n).contains(&i) {
+                        for j in (i..n).rev() {
+                            if let Some(x) = values.get(&elem(j)).copied() {
+                                values.insert(elem(j + 1), x);
+                            }
+                        }
+                        values.insert(elem(i), v);
+                        values.insert(size_key, n + 1);
+                    }
+                }
+            }
+            "delete" => {
+                if let Some(i) = arg(0) {
+                    if (0..n).contains(&i) {
+                        for j in i..n - 1 {
+                            if let Some(x) = values.get(&elem(j + 1)).copied() {
+                                values.insert(elem(j), x);
+                            }
+                        }
+                        values.remove(&elem(n - 1));
+                        values.insert(size_key, n - 1);
+                    }
+                }
+            }
+            "clear" => {
+                for i in 0..n {
+                    values.remove(&elem(i));
+                }
+                values.insert(size_key, 0);
+            }
+            "shuffle" => {
+                // Deterministic permutation from the engine's seed.
+                let mut rng = crate::solver::Rng::seeded(self.seed ^ (n as u64) ^ 0x5eed_5eed);
+                let mut order: Vec<i64> = (0..n).collect();
+                for k in (1..order.len()).rev() {
+                    let j = (rng.next_u64() % (k as u64 + 1)) as usize;
+                    order.swap(k, j);
+                }
+                let vals: Vec<i64> = order
+                    .iter()
+                    .filter_map(|&i| values.get(&elem(i)).copied())
+                    .collect();
+                for (i, v) in vals.into_iter().enumerate() {
+                    values.insert(elem(i as i64), v);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -697,7 +917,10 @@ impl<'a> Engine<'a> {
     ) {
         // `exec pre_solve` runs before the solver and its assignments to
         // non-random fields feed the solve (PSS 16.4.12).
-        let mut pre: BTreeMap<String, i64> = bindings.clone();
+        let mut pre: BTreeMap<String, i64> = self.globals.clone();
+        for (k, v) in bindings {
+            pre.insert(k.clone(), *v);
+        }
         for e in action.execs.iter().filter(|e| e.kind == "pre_solve") {
             self.exec_stmts(&e.stmts, &mut pre);
         }
@@ -712,6 +935,11 @@ impl<'a> Engine<'a> {
         // `exec post_solve` runs after the solver and sets non-random fields
         // from the solved values.
         let mut solved = report.assignment.values.clone();
+        // Values an `exec` block established for things the solver does not own
+        // (collection elements and lengths) must survive into the instance.
+        for (k, v) in &pre {
+            solved.entry(k.clone()).or_insert(*v);
+        }
         for e in action.execs.iter().filter(|e| e.kind == "post_solve") {
             self.exec_stmts(&e.stmts, &mut solved);
         }
@@ -723,11 +951,15 @@ impl<'a> Engine<'a> {
             }
         }
 
-        // Sample the model's coverpoints against this instance (PSS 18.3).
+        // Sample the model's coverpoints and crosses against this instance
+        // (PSS 18.3, 18.4).
         if self.in_cover {
             for cg in &self.model.covergroups {
+                // Values sampled for each labelled coverpoint, so a cross can
+                // combine them.
+                let mut sampled: BTreeMap<String, i64> = BTreeMap::new();
                 for item in &cg.items {
-                    if let crate::ast::CoverItem::Coverpoint { label, expr, iff, .. } = item {
+                    if let crate::ast::CoverItem::Coverpoint { label, expr, iff, bins } = item {
                         if let Some(cond) = iff {
                             if eval_condition_opt(cond, &solved, self.model) != Some(true) {
                                 continue;
@@ -738,13 +970,61 @@ impl<'a> Engine<'a> {
                                 Some(l) => format!("{}.{}", cg.name, l),
                                 None => format!("{}.{}", cg.name, crate::solver::render_expr(expr)),
                             };
+                            if let Some(l) = label {
+                                sampled.insert(l.clone(), v);
+                            }
                             *self
                                 .coverage
-                                .entry(point)
+                                .entry(point.clone())
                                 .or_default()
-                                .entry(v)
+                                .entry(v.to_string())
                                 .or_insert(0) += 1;
+                            // Record the declared bins so coverage can be
+                            // reported against them (18.3).
+                            if !bins.is_empty() {
+                                let decl = self.coverage_bins.entry(point).or_default();
+                                if decl.len() != bins.len() {
+                                    decl.clear();
+                                    for (_, bexpr) in bins {
+                                        decl.push(bin_values(bexpr, &solved, self.model));
+                                    }
+                                }
+                            }
                         }
+                    }
+                }
+                for item in &cg.items {
+                    if let crate::ast::CoverItem::Cross { label, refs, iff } = item {
+                        if let Some(cond) = iff {
+                            if eval_condition_opt(cond, &solved, self.model) != Some(true) {
+                                continue;
+                            }
+                        }
+                        // A cross needs every referenced coverpoint to have been
+                        // sampled for this instance.
+                        let mut parts = Vec::new();
+                        for r in refs {
+                            match sampled.get(r) {
+                                Some(v) => parts.push(v.to_string()),
+                                None => {
+                                    parts.clear();
+                                    break;
+                                }
+                            }
+                        }
+                        if parts.is_empty() {
+                            continue;
+                        }
+                        let point = match label {
+                            Some(l) => format!("{}.{}", cg.name, l),
+                            None => format!("{}.cross({})", cg.name, refs.join(",")),
+                        };
+                        *self
+                            .coverage
+                            .entry(point)
+                            .or_default()
+                            .entry(parts.join(","))
+                            .or_insert(0) += 1;
                     }
                 }
             }

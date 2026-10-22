@@ -59,6 +59,8 @@ enum Atom {
     Rel(String, Op, Expr),
     InRange(String, i64, i64),
     InSet(String, Vec<Expr>),
+    /// `x in collection` where the collection is a named array/list (PSS 8.5.9).
+    InArray(String, String),
     Implies(Expr, Vec<Atom>),
     /// A relation between two expressions, neither of which is a bare
     /// variable (e.g. `a + b == c`). Solved by single-unknown inversion.
@@ -150,6 +152,13 @@ pub fn eval(expr: &Expr, values: &BTreeMap<String, i64>, env: &Env) -> Option<i6
             if let Some(v) = values.get(&joined) {
                 return Some(*v);
             }
+            // The deprecated array properties `arr.sum` and `arr.size`
+            // (PSS 7.9.2.4) have the same meaning as the methods.
+            if let Some((base, last)) = joined.rsplit_once('.') {
+                if last == "sum" && values.contains_key(&format!("{}.size", base)) {
+                    return array_sum(base, values);
+                }
+            }
             if p.segments.len() == 1 {
                 let n = &p.segments[0];
                 if let Some(v) = values.get(n) {
@@ -192,6 +201,19 @@ pub fn eval(expr: &Expr, values: &BTreeMap<String, i64>, env: &Env) -> Option<i6
         }
         Expr::Cast(_, e) => eval(e, values, env),
         Expr::Binary(op, a, b) => {
+            // Array operators whose operands are collections rather than values
+            // (PSS 7.9.2.1): set membership and element-wise equality.
+            if matches!(op.as_str(), "in" | "inside") {
+                let x = eval(a, values, env)?;
+                let found = array_contains(b, x, values)?;
+                return Some(if found { 1 } else { 0 });
+            }
+            if matches!(op.as_str(), "==" | "!=") {
+                if let (Some(la), Some(lb)) = (array_base(a, values), array_base(b, values)) {
+                    let equal = arrays_equal(&la, &lb, values)?;
+                    return Some(if (op == "==") == equal { 1 } else { 0 });
+                }
+            }
             let x = eval(a, values, env)?;
             let y = eval(b, values, env)?;
             match op.as_str() {
@@ -246,45 +268,72 @@ pub fn eval(expr: &Expr, values: &BTreeMap<String, i64>, env: &Env) -> Option<i6
                 "size" if args.is_empty() => {
                     values.get(&format!("{}.size", path)).copied()
                 }
-                // `arr.sum()` / `arr.product()` fold over the elements.
-                "sum" | "product" => {
-                    let mut acc: Option<i64> = None;
-                    for i in 0..MAX_ARRAY {
-                        match values.get(&format!("{}[{}]", path, i)) {
-                            Some(v) => {
-                                acc = Some(match (acc, name.as_str()) {
-                                    (None, _) => *v,
-                                    (Some(a), "sum") => a + v,
-                                    (Some(a), _) => a * v,
-                                })
-                            }
-                            None => break,
-                        }
-                    }
-                    acc
-                }
-                // `arr.min()` / `arr.max()`.
-                "min" | "max" => {
-                    let mut acc: Option<i64> = None;
-                    for i in 0..MAX_ARRAY {
-                        match values.get(&format!("{}[{}]", path, i)) {
-                            Some(v) => {
-                                acc = Some(match (acc, name.as_str()) {
-                                    (None, _) => *v,
-                                    (Some(a), "min") => a.min(*v),
-                                    (Some(a), _) => a.max(*v),
-                                })
-                            }
-                            None => break,
-                        }
-                    }
-                    acc
-                }
+                // `arr.sum()` folds over the elements (PSS 7.9.2.2).
+                "sum" if args.is_empty() => array_sum(&path, values),
                 _ => None,
             }
         }
         _ => None,
     }
+}
+
+/// The sum of a fixed-size array's elements, if they are all known.
+fn array_sum(base: &str, values: &BTreeMap<String, i64>) -> Option<i64> {
+    let n = *values.get(&format!("{}.size", base))?;
+    let mut acc = 0i64;
+    for i in 0..n.min(MAX_ARRAY) {
+        acc += *values.get(&format!("{}[{}]", base, i))?;
+    }
+    Some(acc)
+}
+
+/// The array a path names, if it is a known array (has a recorded `.size`).
+fn array_base(e: &Expr, values: &BTreeMap<String, i64>) -> Option<String> {
+    let base = match e {
+        Expr::Path(p) => p.segments.join("."),
+        _ => return None,
+    };
+    if values.contains_key(&format!("{}.size", base)) {
+        Some(base)
+    } else {
+        None
+    }
+}
+
+/// Is `v` an element of the array named by `rhs`? (PSS `in`, 8.5.9.)
+/// `None` while the array's elements are not all known — otherwise a membership
+/// test would be evaluated before assignment and tighten the wrong domain.
+fn array_contains(rhs: &Expr, v: i64, values: &BTreeMap<String, i64>) -> Option<bool> {
+    let base = match rhs {
+        Expr::Path(p) => p.segments.join("."),
+        _ => return None,
+    };
+    let n = *values.get(&format!("{}.size", base))?;
+    let mut found = false;
+    for i in 0..n.min(MAX_ARRAY) {
+        match values.get(&format!("{}[{}]", base, i)) {
+            Some(x) => found |= *x == v,
+            None => return None,
+        }
+    }
+    Some(found)
+}
+
+/// Element-wise equality of two arrays, once both are fully known.
+fn arrays_equal(a: &str, b: &str, values: &BTreeMap<String, i64>) -> Option<bool> {
+    let n = *values.get(&format!("{}.size", a))?;
+    let m = *values.get(&format!("{}.size", b))?;
+    if n != m {
+        return Some(false);
+    }
+    for i in 0..n.min(MAX_ARRAY) {
+        let x = values.get(&format!("{}[{}]", a, i))?;
+        let y = values.get(&format!("{}[{}]", b, i))?;
+        if x != y {
+            return Some(false);
+        }
+    }
+    Some(true)
 }
 
 /// Largest fixed-size array we will expand, to bound a pathological model.
@@ -488,6 +537,33 @@ pub fn solve_with(
                 }
             }
             Atom::InRange(var, lo, hi) => tighten(&mut vars, var, *lo, *hi),
+            Atom::InArray(var, coll) => {
+                // Membership in a named collection (PSS 8.5.9): keep the
+                // elements that fit the domain, and forbid the values between
+                // them so the assignment is uniform over the elements rather
+                // than always the first.
+                if let Some(d) = vars.get(var).cloned() {
+                    let n = *bindings.get(&format!("{}.size", coll)).unwrap_or(&0);
+                    let allowed: Vec<i64> = (0..n.min(MAX_ARRAY))
+                        .filter_map(|i| bindings.get(&format!("{}[{}]", coll, i)).copied())
+                        .filter(|v| *v >= d.lo && *v <= d.hi)
+                        .collect();
+                    if !allowed.is_empty() {
+                        let lo = *allowed.iter().min().unwrap();
+                        let hi = *allowed.iter().max().unwrap();
+                        tighten(&mut vars, var, lo, hi);
+                        if hi - lo < 4096 {
+                            if let Some(dd) = vars.get_mut(var) {
+                                for v in lo..=hi {
+                                    if !allowed.contains(&v) {
+                                        dd.forbidden.insert(v);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             Atom::InSet(var, items) => {
                 let mut allowed = Vec::new();
                 for it in items {
@@ -642,6 +718,12 @@ pub fn solve_with(
         }
     }
 
+    // Bound values (exec-established collection elements, passed-in values) are
+    // fixed, so make them visible to the repair pass as well.
+    for (k, v) in bindings {
+        values.entry(k.clone()).or_insert(*v);
+    }
+
     // Arithmetic repair: try to satisfy relations that domain propagation
     // could not handle (e.g. `a + b == 10`) by adjusting one variable.
     repair(&atoms, &mut values, bindings, &env, &var_domain, &uf);
@@ -762,6 +844,30 @@ fn repair(
                     }
                 }
                 Atom::Rel(var, op, rhs) => {
+                    // `arrA == arrB`: copy the elements of B into A.
+                    if matches!(op, Op::Eq) && !bindings.contains_key(var) {
+                        let lhs = Expr::Path(crate::ast::Path::simple(var));
+                        if let (Some(la), Some(lb)) =
+                            (array_base(&lhs, values), array_base(rhs, values))
+                        {
+                            let n = *values.get(&format!("{}.size", lb)).unwrap_or(&0);
+                            for i in 0..n.min(MAX_ARRAY) {
+                                if let Some(v) = values.get(&format!("{}[{}]", lb, i)).copied() {
+                                    let slot = format!("{}[{}]", la, i);
+                                    if values.get(&slot).copied() != Some(v)
+                                        && class_domain
+                                            .get(&slot)
+                                            .map(|d| v >= d.lo && v <= d.hi)
+                                            .unwrap_or(true)
+                                    {
+                                        values.insert(slot, v);
+                                        changed = true;
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+                    }
                     let x = match values.get(var) {
                         Some(v) => *v,
                         None => continue,
@@ -981,6 +1087,18 @@ fn check_atom(
 ) -> bool {
     match atom {
         Atom::Rel(var, op, rhs) => {
+            // `arrA == arrB` — both sides are collections, compared element-wise.
+            if let Some(la) = array_base(&Expr::Path(crate::ast::Path::simple(var)), values) {
+                if let Some(lb) = array_base(rhs, values) {
+                    if let Some(equal) = arrays_equal(&la, &lb, values) {
+                        return match op {
+                            Op::Eq => equal,
+                            Op::Ne => !equal,
+                            _ => true,
+                        };
+                    }
+                }
+            }
             let x = match values.get(var) {
                 Some(v) => *v,
                 None => return true,
@@ -1008,6 +1126,15 @@ fn check_atom(
                 Op::Gt => x > y,
             }
         }
+        Atom::InArray(var, coll) => match values.get(var) {
+            Some(v) => array_contains(
+                &Expr::Path(crate::ast::Path::simple(coll)),
+                *v,
+                values,
+            )
+            .unwrap_or(true),
+            None => true,
+        },
         Atom::InRange(var, lo, hi) => values.get(var).map(|v| *v >= *lo && *v <= *hi).unwrap_or(true),
         Atom::InSet(var, items) => {
             let x = match values.get(var) {
@@ -1139,6 +1266,7 @@ fn render_atom(a: &Atom) -> String {
         Atom::General(l, op, e) => format!("{} {} {}", render_expr(l), op_str(*op), render_expr(e)),
         Atom::InRange(v, lo, hi) => format!("{} in [{}..{}]", v, lo, hi),
         Atom::InSet(v, items) => format!("{} in {{{}}}", v, items.len()),
+        Atom::InArray(v, c) => format!("{} in {}", v, c),
         Atom::Implies(e, _) => render_expr(e),
         Atom::Unsupported(e) => render_expr(e),
     }
@@ -1684,6 +1812,12 @@ fn split_and(expr: &Expr, out: &mut Vec<Atom>) {
                 out.push(Atom::InSet(name, items.clone()));
             } else {
                 out.push(Atom::Unsupported(expr.clone()));
+            }
+        }
+        Expr::Binary(op, a, b) if op == "in" || op == "inside" => {
+            match (as_var(a), &**b) {
+                (Some(v), Expr::Path(p)) => out.push(Atom::InArray(v, p.segments.join("."))),
+                _ => out.push(Atom::Unsupported(expr.clone())),
             }
         }
         Expr::Binary(op, a, b) if matches!(op.as_str(), "==" | "!=" | "<" | "<=" | ">" | ">=") => {

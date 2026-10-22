@@ -70,6 +70,15 @@ With `:/`, `[100..102 :/ 6, 200 := 2]` gives 25.3 / 25.5 / 24.8 / 24.3 % against
 | non-`rand` attributes | 8.4 | not randomised — they hold their initial value |
 | flow-object ordering | 13 | an input must be bound to an object produced by an earlier step; a violation is reported |
 | covergroups, coverpoints, `cover { … }` | 18, 19.2 | sampled while the `cover` block's activity executes; a coverage summary is reported |
+| `cross` items | 18.4 | sampled as a value tuple, once every referenced coverpoint is known |
+| explicit `bins` | 18.3 | coverage is reported against the declared bins (`bins hit/declared`) |
+| `cover <type>;` | 19.2 | observes the rest of the enclosing activity |
+| array operators `==`, `!=`, `in` | 7.9.2.1 | element-wise equality and set membership are solved |
+| array properties `arr.size`, `arr.sum` | 7.9.2.4 | the deprecated property forms evaluate like the methods |
+| `exec init_down` / `init_up` | 22.1 | run for the component hierarchy before the scenario, `init_down` top-down and `init_up` bottom-up |
+| collection mutators in `exec` | 7.9.3.2 | `push_back`, `push_front`, `pop_back`, `pop_front`, `insert`, `delete`, `clear`, `shuffle` build a list that constraints can then read |
+| collection literal assignment | 8.5 | `L = {a, b, c};` in `exec` gives a collection its elements |
+| `x in <collection>` | 8.5.9 | membership in a named array/list is a solved constraint, uniform over its elements |
 
 The array work is what lets a **multireg** be modelled directly: OpenTitan's
 `KEY_SHARE0` is `array<bit[32], 8>`, and it now yields eight modelled registers
@@ -79,27 +88,27 @@ rather than needing to be hand-unrolled (see `docs/OPENTITAN.md` §5).
 
 ## 2. Parsed but still approximate
 
-Listed so the coverage numbers are not read as more than they are.
+Listed so the coverage numbers are not read as more than they are. The previous
+revision of this list named `sort`, `reverse`, `unique`, `and`, `or` and `xor`
+as unimplemented array methods — **that was wrong**: the standard defines no such
+methods for arrays (7.9.2.2). The real list is below.
 
 | Construct | Clause | What Satya does today |
 |---|---|---|
+| array methods `join`, `str_from_chars` | 7.9.2.2 | not evaluated — they produce strings, which the engine does not model as values |
+| `to_list`, `to_set` conversions | 7.9.2.2, 7.9.3.2 | not evaluated |
+| collection mutators inside a *constraint* | 16.1 | only `exec` mutates a collection; a constraint can read one but not change it |
+| `monitor` scenario matching | 19.1 | a monitor's covergroups are collected and `cover <type>` observes the enclosing activity, but the monitor's *activity* is not matched against the executed stream |
+| `exec` statements other than assignment, `if` and method calls | 10.4 | `for`/`while` loops and target-code templates are passed through to the backends, not executed |
 | `join_first(n)`'s run-time dependency | 12.3.6.1d | imposes no *scheduling* order (correct), but there is no runtime, so the "first n to complete" part is not simulated |
-| array methods `sort`, `reverse`, `unique`, `and`, `or`, `xor` | 8.6 | not evaluated |
-| array aggregate literals `{1, 2, 3}` assigned to an array | 8.5 | element-wise assignment is not applied |
-| `cross` coverage | 18.4 | parsed, but crosses are not sampled — only coverpoints are |
-| explicit `bins` | 18.3 | parsed, but coverage is reported over observed values rather than against the declared bins |
-| `monitor` declarations, `cover <type>` | 19.1 | parsed and skipped; the monitor's scenario is not matched against the executed stream |
-| `exec` statements other than assignment and `if` | 10.4 | method calls and raw statements are passed through to the backends, not executed |
-| `init_up` / `init_down` general effects | 10.4 | address-region declarations are extracted; other statements are not executed |
 | multiple `dist` directives on one attribute | 16.1.9 | weights are summed; the LRM leaves the resulting distribution undefined |
 | stream vs buffer consumption | 13 | a flow object may be referenced by several inputs; consume-once semantics for streams are not enforced |
 | `import`-based scope checking | 9 | name resolution uses `pkg::name` and `Component::action`, not `import` |
-
----
+| target-code templates (`exec declaration` bodies) | 22.2 | carried through to the backends verbatim, not interpreted |
 
 ## 3. How this is checked
 
-* `tests/integration.rs` — 52 tests, including the LRM's Examples 133 and 134
+* `tests/integration.rs` — 57 tests, including the LRM's Examples 133 and 134
   with their stated values, the join orderings of Examples 68/71/72, the `dist`
   distribution, exec ordering, flow-object ordering, arrays, `foreach` and
   coverage sampling.

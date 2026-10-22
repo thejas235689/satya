@@ -1021,8 +1021,143 @@ component C {
     let m = compile_pss(src).unwrap();
     let s = engine::run_scenario(&m, "t", 1);
     assert!(!s.coverage.is_empty(), "coverage must be collected");
-    let (point, hits) = &s.coverage[0];
-    assert!(point.ends_with(".c"), "{point}");
-    let total: usize = hits.iter().map(|(_, c)| *c).sum();
+    let cp = &s.coverage[0];
+    assert!(cp.name.ends_with(".c"), "{}", cp.name);
+    let total: usize = cp.values.iter().map(|(_, c)| *c).sum();
     assert_eq!(total, 3, "three observed instances");
+}
+
+#[test]
+fn array_operators_are_solved() {
+    let src = r#"
+component C {
+  action a {
+    rand bit[8] x[4];
+    rand bit[8] y[4];
+    rand bit[1] in_it;
+    rand int s;
+    constraint x[0] == 5; constraint x[1] == 6;
+    constraint x[2] == 7; constraint x[3] == 8;
+    constraint y == x;                 // element-wise equality
+    constraint in_it == (7 in x);      // set membership
+    constraint s == x.sum;             // deprecated property form
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let step = &s.steps[0];
+    let get = |n: &str| step.fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v).unwrap();
+    assert_eq!(get("in_it"), 1);
+    assert_eq!(get("s"), 26);
+    for i in 0..4 {
+        assert_eq!(get(&format!("y[{i}]")), get(&format!("x[{i}]")), "element {i}");
+    }
+    assert_eq!(step.satisfied, step.total);
+}
+
+#[test]
+fn list_mutators_in_exec_build_a_collection() {
+    let src = r#"
+component C {
+  action a {
+    list<int> q;
+    exec pre_solve {
+      q.push_back(10);
+      q.push_back(20);
+      q.push_back(30);
+    }
+    rand int v;
+    constraint v in q;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| s.steps[0].fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v).unwrap();
+    assert_eq!(get("q.size"), 3);
+    assert_eq!(get("q[0]"), 10);
+    assert_eq!(get("q[2]"), 30);
+    assert!(get("v") == 10 || get("v") == 20 || get("v") == 30, "v must be an element");
+}
+
+#[test]
+fn aggregate_literal_assignment_in_init_up() {
+    // The LRM's own form (Example 269): a component attribute initialised by
+    // `exec init_up`, then read by an action's constraint.
+    let src = r#"
+package p { enum op_mode_e {rx, tx, copy}; };
+component C {
+  list<op_mode_e> modes;
+  exec init_up { modes = {rx, tx}; }
+  action a {
+    rand op_mode_e m;
+    constraint m in modes;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| s.steps[0].fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v).unwrap();
+    assert_eq!(get("modes.size"), 2);
+    assert!(get("m") == 0 || get("m") == 1, "m must be rx or tx");
+}
+
+#[test]
+fn crosses_and_bins_are_sampled() {
+    let src = r#"
+package p { enum color_e {red, green, blue}; };
+component C {
+  action gen {
+    rand color_e color;
+    rand bit[4] pixel_offset;
+    covergroup {
+      c: coverpoint color;
+      Offset: coverpoint pixel_offset {
+        bins low  = {[0..3]};
+        bins high = {[12..15]};
+      }
+      AxC: cross c, Offset;
+    } cs;
+  };
+  action t { activity { L: cover { activity { do gen; do gen; do gen; do gen; } } }; };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "t", 3);
+    let find = |n: &str| s.coverage.iter().find(|c| c.name.ends_with(n));
+    let cross = find(".AxC").expect("cross sampled");
+    // Cross values are tuples, one per observed pair.
+    assert!(cross.values.iter().all(|(v, _)| v.contains(',')), "{:?}", cross.values);
+    let off = find(".Offset").expect("coverpoint sampled");
+    let (hit, total) = off.bins.expect("bins declared");
+    assert_eq!(total, 2, "two bins declared");
+    assert!(hit <= total);
+}
+
+#[test]
+fn cover_type_observes_the_enclosing_activity() {
+    let src = r#"
+package p { enum color_e {red, green, blue}; };
+component C {
+  action gen {
+    rand color_e color;
+    covergroup { c: coverpoint color; } cs;
+  };
+  action t {
+    activity {
+      L1: cover { activity { do gen; } };
+      L2: cover color_mon;
+      do gen;
+      do gen;
+    }
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "t", 1);
+    let cp = s.coverage.iter().find(|c| c.name.ends_with(".c")).expect("sampled");
+    let total: usize = cp.values.iter().map(|(_, c)| *c).sum();
+    // One from the cover block, two from the statements after `cover <type>`.
+    assert_eq!(total, 3, "{:?}", cp.values);
 }

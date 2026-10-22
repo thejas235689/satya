@@ -114,13 +114,18 @@ impl Backend for TraceBackend {
 
         if !scenario.coverage.is_empty() {
             s.push_str("\nCoverage\n--------\n");
-            for (point, hits) in &scenario.coverage {
-                let total: usize = hits.iter().map(|(_, c)| *c).sum();
+            for cp in &scenario.coverage {
+                let total: usize = cp.values.iter().map(|(_, c)| *c).sum();
+                let bins = match cp.bins {
+                    Some((hit, n)) => format!("   bins {hit}/{n}"),
+                    None => String::new(),
+                };
                 s.push_str(&format!(
-                    "  {:<28} {} value(s) observed, {} hit(s)\n",
-                    point,
-                    hits.len(),
-                    total
+                    "  {:<28} {} value(s) observed, {} hit(s){}\n",
+                    cp.name,
+                    cp.values.len(),
+                    total,
+                    bins
                 ));
             }
         }

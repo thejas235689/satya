@@ -1415,6 +1415,36 @@ impl Parser {
             self.eat_punct(";");
             return Ok(Some(ActivityStmt::Schedule { branches, join }));
         }
+        if self.at_ident("monitor") {
+            // A monitor declares a scenario to observe (PSS 19.1). Its
+            // covergroups are collected; the scenario match itself is not
+            // evaluated (see docs/SEMANTICS.md).
+            self.bump();
+            if matches!(self.peek().kind, TokKind::Ident(_)) {
+                let _ = self.expect_ident()?;
+            }
+            if self.at_punct(":") {
+                self.bump();
+                let _ = self.parse_scoped_path()?;
+            }
+            if self.at_punct("{") {
+                self.bump();
+                while !self.at_punct("}") && !self.at_eof() {
+                    if self.eat_punct(";") {
+                        continue;
+                    }
+                    if self.at_ident("covergroup") {
+                        let cg = self.parse_covergroup()?;
+                        self.covergroups.push(cg);
+                        continue;
+                    }
+                    self.skip_braced_or_semicolon();
+                }
+                self.expect_punct("}")?;
+            }
+            self.eat_punct(";");
+            return Ok(None);
+        }
         if self.at_ident("cover") {
             self.bump();
             if self.at_punct("{") {
@@ -2013,18 +2043,33 @@ impl Parser {
                 Ok(e)
             }
             TokKind::Punct(p) if p == "{" => {
-                // A constraint block: `{ item; item; }` — conjoined.
+                // `{ ... }` is either a constraint block (`{ a; b; }`, conjoined)
+                // or a literal list (`{ 1, 2, 3 }`, PSS 8.5). The separator
+                // decides which.
                 self.bump();
                 let mut exprs = Vec::new();
+                let mut saw_comma = false;
                 while !self.at_punct("}") && !self.at_eof() {
                     if self.eat_punct(";") {
                         continue;
                     }
                     exprs.push(self.parse_constraint_body_item()?);
+                    if self.eat_punct(",") {
+                        saw_comma = true;
+                        continue;
+                    }
                     self.eat_punct(";");
                 }
                 self.expect_punct("}")?;
+                if saw_comma {
+                    return Ok(Expr::List(exprs));
+                }
                 Ok(combine_and(exprs))
+            }
+            TokKind::Punct(p) if p == "[" => {
+                // A value set or range in operand position: `[1, 2]`, `[lo..hi]`
+                // (PSS 8.5.9).
+                self.parse_range_or_set()
             }
             _ => {
                 let t = self.bump();
