@@ -176,7 +176,8 @@ every code example in the standard itself, and
 UART) with Satya, and [`docs/SEMANTICS.md`](docs/SEMANTICS.md) for what is
 implemented per the standard's defined behaviour and what is only approximated,
 and [`docs/FEATURES.md`](docs/FEATURES.md) for a per-construct feature matrix
-covering all 146 syntax excerpts the standard defines.
+covering all 146 syntax excerpts the standard defines. [`CHANGELOG.md`](CHANGELOG.md)
+records what each release changed.
 
 ---
 
@@ -343,6 +344,7 @@ replace any commercial tool — see [`NOTICE.md`](NOTICE.md). Known limits:
 satya/
   Cargo.toml
   README.md
+  CHANGELOG.md       what each release changed
   NOTICE.md          relationship to commercial tools; trademarks
   docs/DESIGN.md
   src/
