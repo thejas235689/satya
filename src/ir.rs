@@ -71,6 +71,7 @@ pub struct Constraint {
     pub name: Option<String>,
     pub expr: Expr,
     pub is_default: bool,
+    pub is_disable: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -569,13 +570,52 @@ impl Lowerer {
     }
 
     fn lower_constraints(&self, cs: &[ConstraintBlock]) -> Vec<Constraint> {
-        cs.iter()
-            .map(|c| Constraint {
-                name: c.name.clone(),
-                expr: c.expr.clone(),
-                is_default: c.is_default,
-            })
-            .collect()
+        let mut out = Vec::new();
+        for c in cs {
+            // A constraint block may itself contain `default ...` /
+            // `default disable ...` items; they become their own constraints.
+            let mut inner = Vec::new();
+            let rest = self.split_default_items(&c.expr, &mut inner);
+            if let Some(e) = rest {
+                out.push(Constraint {
+                    name: c.name.clone(),
+                    expr: e,
+                    is_default: c.is_default,
+                    is_disable: c.is_disable,
+                });
+            }
+            out.extend(inner);
+        }
+        out
+    }
+
+    /// Pull `default <attr> == k` / `default disable <attr>` markers out of a
+    /// conjunction, returning the remaining expression (if any).
+    fn split_default_items(&self, e: &Expr, out: &mut Vec<Constraint>) -> Option<Expr> {
+        match e {
+            Expr::Binary(op, l, r) if op == "&&" => {
+                let a = self.split_default_items(l, out);
+                let b = self.split_default_items(r, out);
+                match (a, b) {
+                    (Some(a), Some(b)) => Some(Expr::Binary("&&".into(), Box::new(a), Box::new(b))),
+                    (Some(a), None) => Some(a),
+                    (None, Some(b)) => Some(b),
+                    (None, None) => None,
+                }
+            }
+            Expr::Call(f, args) if f == "default" || f == "default_disable" => {
+                if let Some(t) = args.first() {
+                    out.push(Constraint {
+                        name: None,
+                        expr: t.clone(),
+                        is_default: true,
+                        is_disable: f == "default_disable",
+                    });
+                }
+                None
+            }
+            _ => Some(e.clone()),
+        }
     }
 
     fn build_types(&self) -> HashMap<String, DataType> {
@@ -595,6 +635,7 @@ impl Lowerer {
                                 name: None,
                                 expr: inline.clone(),
                                 is_default: false,
+                                is_disable: false,
                             });
                         }
                         fields.push(f);
@@ -609,6 +650,7 @@ impl Lowerer {
                         name: None,
                         expr: inline.clone(),
                         is_default: false,
+                        is_disable: false,
                     });
                 }
                 if let Some(existing) = fields.iter_mut().find(|x| x.name == f.name) {
@@ -770,6 +812,7 @@ impl Lowerer {
                     name: None,
                     expr: inline.clone(),
                     is_default: false,
+                    is_disable: false,
                 });
             }
             fields.push(f);

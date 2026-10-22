@@ -311,6 +311,47 @@ pub fn solve_with(
         }
     }
 
+    // Bound propagation between related variables (`a < b`, `a <= b`, ...).
+    // Single-variable repair alone can get stuck in a local minimum when both
+    // sides are random; narrowing the domains first avoids that.
+    for _ in 0..8 {
+        let mut changed = false;
+        for atom in &atoms {
+            let (var, op, rhs) = match atom {
+                Atom::Rel(v, o, r) => (v, *o, r),
+                _ => continue,
+            };
+            let other = match as_var(rhs) {
+                Some(o) => o,
+                None => continue,
+            };
+            let (a, b) = match (vars.get(var).cloned(), vars.get(&other).cloned()) {
+                (Some(a), Some(b)) => (a, b),
+                _ => continue,
+            };
+            let (alo, ahi, blo, bhi) = match op {
+                Op::Lt => (i64::MIN, b.hi - 1, a.lo + 1, i64::MAX),
+                Op::Le => (i64::MIN, b.hi, a.lo, i64::MAX),
+                Op::Gt => (b.lo + 1, i64::MAX, i64::MIN, a.hi - 1),
+                Op::Ge => (b.lo, i64::MAX, i64::MIN, a.hi),
+                _ => continue,
+            };
+            let before = (a.lo, a.hi, b.lo, b.hi);
+            tighten(&mut vars, var, alo, ahi);
+            tighten(&mut vars, &other, blo, bhi);
+            let now = (
+                vars.get(var).map(|d| (d.lo, d.hi)).unwrap_or((before.0, before.1)),
+                vars.get(&other).map(|d| (d.lo, d.hi)).unwrap_or((before.2, before.3)),
+            );
+            if now.0 != (before.0, before.1) || now.1 != (before.2, before.3) {
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
     // Merge domains across equality classes.
     let mut class_domain: HashMap<String, Domain> = HashMap::new();
     for (name, d) in &vars {
@@ -324,6 +365,15 @@ pub fn solve_with(
                 }
             })
             .or_insert_with(|| d.clone());
+    }
+
+    // A class whose domain became empty has contradictory constraints; report it
+    // rather than silently assigning a value that satisfies nothing.
+    for (root, d) in &class_domain {
+        if d.lo > d.hi {
+            let name = vars.keys().find(|k| uf.find(k) == *root).cloned().unwrap_or_else(|| root.clone());
+            unsupported.push(format!("conflicting constraints on `{}`", name));
+        }
     }
 
     // Assign a value per class.
@@ -344,9 +394,19 @@ pub fn solve_with(
         values.insert(name.clone(), v);
     }
 
+    // The repair pass adjusts one variable at a time, so give it a name-keyed
+    // view of the class domains (class_domain itself is keyed by union-find root).
+    let mut var_domain: HashMap<String, Domain> = HashMap::new();
+    for name in vars.keys() {
+        let root = uf.find(name);
+        if let Some(d) = class_domain.get(&root) {
+            var_domain.insert(name.clone(), d.clone());
+        }
+    }
+
     // Arithmetic repair: try to satisfy relations that domain propagation
     // could not handle (e.g. `a + b == 10`) by adjusting one variable.
-    repair(&atoms, &mut values, bindings, &env, &class_domain, &uf);
+    repair(&atoms, &mut values, bindings, &env, &var_domain, &uf);
 
     // Count satisfied atoms and resolve implications with the assignment.
     let mut check_values = values.clone();
@@ -432,6 +492,8 @@ fn repair(
     // 0 for every 32-bit x.
     let clamp = |name: &str, v: i64| -> i64 {
         match class_domain.get(name) {
+            // A contradictory model leaves an empty domain; do not panic.
+            Some(d) if d.lo > d.hi => v,
             Some(d) if v >= d.lo && v <= d.hi => v,
             Some(d) if d.lo == 0 && d.hi > 0 => v & d.hi,
             Some(d) => v.clamp(d.lo, d.hi),
@@ -469,9 +531,65 @@ fn repair(
                     match eval(rhs, values, env) {
                         Some(y) => {
                             if !rel_holds(*op, x, y) {
-                                if let Some(nv) = adjust(x, *op, y) {
-                                    values.insert(var.clone(), clamp(var, nv));
-                                    changed = true;
+                                let fits = |name: &str, v: i64| {
+                                    class_domain
+                                        .get(name)
+                                        .map(|d| v >= d.lo && v <= d.hi)
+                                        .unwrap_or(true)
+                                };
+                                // First try to move the left-hand variable ...
+                                // Compare at the field's width when the right
+                                // side is bit-wise (`c == ~v`): the moved
+                                // value is correct modulo the field, not as a
+                                // 64-bit integer.
+                                let y_cmp = if contains_bitwise(rhs) {
+                                    match class_domain.get(var) {
+                                        Some(d) if d.lo == 0 && d.hi > 0 => y & d.hi,
+                                        _ => y,
+                                    }
+                                } else {
+                                    y
+                                };
+                                let moved = adjust(x, *op, y)
+                                    .map(|nv| clamp(var, nv))
+                                    .filter(|v| {
+                                        // Only accept a move that actually
+                                        // repairs the relation.
+                                        *v != x
+                                            && rel_holds(*op, *v, y_cmp)
+                                            && fits(var, *v)
+                                            && !bindings.contains_key(var)
+                                    });
+                                match moved {
+                                    Some(v) => {
+                                        values.insert(var.clone(), v);
+                                        changed = true;
+                                    }
+                                    // ... but if it is pinned by another
+                                    // constraint, move the right-hand side.
+                                    None => {
+                                        if let Some(other) = as_var(rhs) {
+                                            if !bindings.contains_key(&other) {
+                                                let target = match op {
+                                                    Op::Lt => Some(x + 1),
+                                                    Op::Le => Some(x),
+                                                    Op::Gt => Some(x - 1),
+                                                    Op::Ge => Some(x),
+                                                    _ => None,
+                                                };
+                                                if let Some(t) = target {
+                                                    let v = clamp(&other, t);
+                                                    if fits(&other, v)
+                                                        && rel_holds(*op, x, v)
+                                                        && values.get(&other).copied() != Some(v)
+                                                    {
+                                                        values.insert(other.clone(), v);
+                                                        changed = true;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -488,6 +606,59 @@ fn repair(
                                         values.insert(unks[0].clone(), clamp(&unks[0], nv));
                                         changed = true;
                                     }
+                                }
+                            }
+                        }
+                    }
+                }
+                // An ordering between two variables (`a < b`): nudge one of them.
+                Atom::General(l, op, r)
+                    if matches!(op, Op::Lt | Op::Le | Op::Gt | Op::Ge) =>
+                {
+                    if let (Some(a), Some(b)) = (as_var(l), as_var(r)) {
+                        let (xa, xb) = match (values.get(&a), values.get(&b)) {
+                            (Some(x), Some(y)) => (*x, *y),
+                            _ => continue,
+                        };
+                        if rel_holds(*op, xa, xb) {
+                            continue;
+                        }
+                        // Prefer to move the right-hand variable, then the left.
+                        let for_right = match op {
+                            Op::Lt => Some(xa + 1),
+                            Op::Le => Some(xa),
+                            Op::Gt => Some(xa - 1),
+                            Op::Ge => Some(xa),
+                            _ => None,
+                        };
+                        let for_left = match op {
+                            Op::Lt => Some(xb - 1),
+                            Op::Le => Some(xb),
+                            Op::Gt => Some(xb + 1),
+                            Op::Ge => Some(xb),
+                            _ => None,
+                        };
+                        let fixed_right = for_right
+                            .filter(|_| !bindings.contains_key(&b))
+                            .map(|t| clamp(&b, t))
+                            .filter(|v| {
+                                class_domain.get(&b).map(|d| *v >= d.lo && *v <= d.hi).unwrap_or(true)
+                            });
+                        match fixed_right {
+                            Some(v) => {
+                                values.insert(b.clone(), v);
+                                changed = true;
+                            }
+                            None => {
+                                if let Some(v) = for_left
+                                    .filter(|_| !bindings.contains_key(&a))
+                                    .map(|t| clamp(&a, t))
+                                    .filter(|v| {
+                                        class_domain.get(&a).map(|d| *v >= d.lo && *v <= d.hi).unwrap_or(true)
+                                    })
+                                {
+                                    values.insert(a.clone(), v);
+                                    changed = true;
                                 }
                             }
                         }
@@ -980,27 +1151,94 @@ fn expand_field(
 // Constraint collection
 // ---------------------------------------------------------------------------
 
+/// Gather the constraints that apply to an action instance, applying the LRM's
+/// rules for default constraints (PSS 16.1.10.1).
+///
+///  * a default value constraint behaves as an equality constraint (16.1.10.1a);
+///  * `constraint default disable <attr>` removes the defaults on `<attr>`
+///    (16.1.10.1b);
+///  * when several defaults target the same attribute only one survives, by
+///    precedence: a higher-level containing context beats a lower-level one, a
+///    derived type beats a base type, and otherwise the later one wins
+///    (16.1.10.1d). We collect action constraints before type constraints, so
+///    "action beats type" is expressed as a lower level number.
 fn collect_constraints(
     model: &Model,
     action: &Action,
     vars: &BTreeMap<String, Domain>,
     extra: &[Expr],
 ) -> Vec<Expr> {
-    let mut out = Vec::new();
+    let mut regular: Vec<Expr> = Vec::new();
+    // (expr, level): level 0 = the action's own context, 1 = a data type's.
+    let mut defaults: Vec<(Expr, u8)> = Vec::new();
+    let mut disabled: Vec<String> = Vec::new();
+
     for c in &action.constraints {
-        out.push(c.expr.clone());
+        if c.is_disable {
+            if let Some(t) = constraint_target(&c.expr) {
+                disabled.push(t);
+            }
+            continue;
+        }
+        if c.is_default {
+            defaults.push((c.expr.clone(), 0));
+        } else {
+            regular.push(c.expr.clone());
+        }
     }
-    // Inline constraints from `do … with { … }`.
+
+    // Inline constraints from `do … with { … }` are always hard.
     for e in extra {
-        out.push(e.clone());
+        regular.push(e.clone());
     }
-    // Include constraints declared on the types of this action's struct fields,
-    // prefixing their relative references so they line up with our variables.
+
+    // Constraints declared on the types of this action's struct fields.
     let mut visited: Vec<String> = Vec::new();
     for f in &action.fields {
-        collect_type_constraints(model, f, "", 0, &mut visited, vars, &mut out);
+        collect_type_constraints(model, f, "", 0, &mut visited, vars, &mut regular, &mut defaults);
     }
-    out
+
+    // Resolve the defaults: drop disabled ones, keep one per attribute.
+    let mut chosen: BTreeMap<String, (u8, Expr)> = BTreeMap::new();
+    for (e, level) in defaults {
+        match constraint_target(&e) {
+            Some(t) => {
+                let is_disabled = disabled
+                    .iter()
+                    .any(|d| t == *d || t.starts_with(&format!("{}.", d)));
+                if is_disabled {
+                    continue;
+                }
+                match chosen.get(&t) {
+                    // An existing constraint with equal or higher precedence wins.
+                    Some((lvl, _)) if *lvl <= level => {}
+                    _ => {
+                        chosen.insert(t, (level, e));
+                    }
+                }
+            }
+            // Not an equality on a single attribute: treat it as hard.
+            None => regular.push(e),
+        }
+    }
+    for (_, (_, e)) in chosen {
+        regular.push(e);
+    }
+    regular
+}
+
+/// The attribute a default constraint targets: the left-hand side of an
+/// equality (`constraint default s2.attr1 == 2`), or a bare hierarchical id
+/// (`constraint default disable s3.attr1`).
+fn constraint_target(e: &Expr) -> Option<String> {
+    match e {
+        Expr::Path(p) => Some(p.segments.join(".")),
+        Expr::Binary(op, l, _) if op == "==" => match &**l {
+            Expr::Path(p) => Some(p.segments.join(".")),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn collect_type_constraints(
@@ -1011,6 +1249,7 @@ fn collect_type_constraints(
     visited: &mut Vec<String>,
     vars: &BTreeMap<String, Domain>,
     out: &mut Vec<Expr>,
+    defaults: &mut Vec<(Expr, u8)>,
 ) {
     if depth > MAX_EXPAND_DEPTH {
         return;
@@ -1029,10 +1268,14 @@ fn collect_type_constraints(
             let locals: HashSet<String> = t.fields.iter().map(|f| f.name.clone()).collect();
             for c in &t.constraints {
                 let e = prefix_paths(&c.expr, &path, &locals, vars);
-                out.push(e);
+                if c.is_default {
+                    defaults.push((e, 1));
+                } else {
+                    out.push(e);
+                }
             }
             for sub in &t.fields {
-                collect_type_constraints(model, sub, &path, depth + 1, visited, vars, out);
+                collect_type_constraints(model, sub, &path, depth + 1, visited, vars, out, defaults);
             }
             visited.pop();
         }

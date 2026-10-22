@@ -672,8 +672,13 @@ impl Parser {
     fn parse_constraint(&mut self) -> PssResult<ConstraintBlock> {
         self.expect_ident_named("constraint")?;
         let mut is_default = false;
+        let mut is_disable = false;
         if self.eat_ident("default") {
             is_default = true;
+            // `constraint default disable <hierarchical_id>;`
+            if self.eat_ident("disable") {
+                is_disable = true;
+            }
         }
         let mut is_forall = false;
         let mut forall_binding = None;
@@ -706,6 +711,7 @@ impl Parser {
         Ok(ConstraintBlock {
             name,
             is_default,
+            is_disable,
             is_forall,
             forall_binding,
             expr,
@@ -719,6 +725,19 @@ impl Parser {
             let mut exprs = Vec::new();
             while !self.at_punct("}") && !self.at_eof() {
                 if self.eat_punct(";") {
+                    continue;
+                }
+                // `default <attr> == k;` and `default disable <attr>;` may
+                // appear as items of a constraint block (LRM Example 134).
+                if self.at_ident("default")
+                    && !(self.peek_at(1).is_punct("=") || self.peek_at(1).is_punct("."))
+                {
+                    self.bump();
+                    let disable = self.eat_ident("disable");
+                    let target = self.parse_constraint_body_item()?;
+                    self.eat_punct(";");
+                    let name = if disable { "default_disable" } else { "default" };
+                    exprs.push(Expr::Call(name.to_string(), vec![target]));
                     continue;
                 }
                 exprs.push(self.parse_constraint_body_item()?);

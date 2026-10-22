@@ -148,6 +148,7 @@ pub fn model_from_json(src: &str) -> PssResult<Model> {
                                 name: None,
                                 expr: inline.clone(),
                                 is_default: false,
+                                is_disable: false,
                             });
                         }
                     }
@@ -315,6 +316,7 @@ fn build_constraints(obj: &[(String, Json)]) -> PssResult<Vec<Constraint>> {
                     name: None,
                     expr: parse_expression(s)?,
                     is_default: false,
+                    is_disable: false,
                 });
             }
         }

@@ -117,6 +117,8 @@ pub struct TypeDecl {
 pub struct ConstraintBlock {
     pub name: Option<String>,
     pub is_default: bool,
+    /// `constraint default disable <attribute>;` (PSS 16.1.10.1b).
+    pub is_disable: bool,
     pub is_forall: bool,
     pub forall_binding: Option<(String, TypeRef)>,
     pub expr: Expr,

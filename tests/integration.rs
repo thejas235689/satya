@@ -699,3 +699,125 @@ fn bit_width_domains_are_not_truncated() {
     let v = s.steps[0].fields.iter().find(|(k, _)| k == "v").map(|(_, x)| *x).unwrap();
     assert!(v >= 3_000_000_000, "bit[32] must not be capped at 20 bits, got {}", v);
 }
+
+// ---------------------------------------------------------------------------
+// Default-constraint semantics (PSS 16.1.10.1) and variable-variable ordering.
+// ---------------------------------------------------------------------------
+
+/// The LRM's Example 133, with its stated expected results.
+#[test]
+fn default_constraint_precedence_matches_the_lrm() {
+    let src = r#"
+package p {
+  struct my_struct {
+    rand int in [0..3] attr1;
+    constraint default attr1 == 0;        // (1)
+    rand int in [0..3] attr2;
+    constraint attr1 < attr2;             // (2)
+  };
+  component C {
+    action my_action {
+      rand my_struct s1;
+      rand my_struct s2;
+      constraint default s2.attr1 == 2;      // (3) overrides (1) for s2
+      rand my_struct s3;
+      constraint default disable s3.attr1;   // (4)
+      constraint s3.attr1 > 0;               // (5)
+    };
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    for seed in [1u64, 2, 3, 4, 5, 6, 7, 8] {
+        let s = engine::run_scenario(&m, "my_action", seed);
+        let step = &s.steps[0];
+        assert_eq!(step.satisfied, step.total, "seed {seed}: {:?}", step.unsatisfied);
+        let get = |n: &str| step.fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v).unwrap();
+        // s1 takes the type-level default.
+        assert_eq!(get("s1.attr1"), 0, "seed {seed}");
+        // s2 takes the action-level default, which overrides the type's.
+        assert_eq!(get("s2.attr1"), 2, "seed {seed}");
+        // s3's default was disabled, so only `> 0` applies: domain 1..2.
+        let s3 = get("s3.attr1");
+        assert!((1..=2).contains(&s3), "seed {seed}: s3.attr1 = {s3}");
+        // `attr1 < attr2` holds everywhere.
+        for p in ["s1", "s2", "s3"] {
+            assert!(get(&format!("{p}.attr1")) < get(&format!("{p}.attr2")), "seed {seed}: {p}");
+        }
+    }
+}
+
+#[test]
+fn default_disable_removes_the_default() {
+    let src = r#"
+package p {
+  struct S { rand int in [0..3] a; constraint default a == 0; };
+  component C {
+    action with_disable { rand S s; constraint default disable s.a; constraint s.a > 0; };
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    for seed in [1u64, 2, 3] {
+        let s = engine::run_scenario(&m, "with_disable", seed);
+        let a = s.steps[0].fields.iter().find(|(k, _)| k == "s.a").map(|(_, v)| *v).unwrap();
+        assert!(a >= 1, "default was not disabled (seed {seed}, a = {a})");
+        assert_eq!(s.steps[0].satisfied, s.steps[0].total);
+    }
+}
+
+#[test]
+fn a_default_conflicting_with_a_hard_constraint_is_reported() {
+    // The LRM's Example 134: `default attr2 == -1` and `attr2 == 0` cannot both
+    // hold, and the tool must say so rather than silently pick one.
+    let src = r#"
+package p {
+  component C {
+    action my_action {
+      rand int attr1;
+      constraint default attr1 == -1;
+      rand int attr2;
+      constraint default attr2 == -1;
+    };
+    action my_derived_action : my_action {
+      constraint {
+        default disable attr1;
+        attr1 == 0;
+      }
+      constraint attr2 == 0;
+    };
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "my_derived_action", 1);
+    let step = &s.steps[0];
+    let attr1 = step.fields.iter().find(|(k, _)| k == "attr1").map(|(_, v)| *v).unwrap();
+    assert_eq!(attr1, 0, "the disabled default must not force attr1 to -1");
+    assert!(
+        step.satisfied < step.total,
+        "the attr2 contradiction must be reported"
+    );
+}
+
+#[test]
+fn ordering_between_two_random_variables_is_solved() {
+    let src = r#"
+component C {
+  action a {
+    rand int in [0..3] lo;
+    rand int in [0..3] hi;
+    constraint lo < hi;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    for seed in 1u64..=12 {
+        let s = engine::run_scenario(&m, "a", seed);
+        let step = &s.steps[0];
+        let lo = step.fields.iter().find(|(k, _)| k == "lo").map(|(_, v)| *v).unwrap();
+        let hi = step.fields.iter().find(|(k, _)| k == "hi").map(|(_, v)| *v).unwrap();
+        assert!(lo < hi, "seed {seed}: lo = {lo}, hi = {hi}");
+        assert_eq!(step.satisfied, step.total);
+    }
+}

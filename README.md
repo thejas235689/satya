@@ -140,7 +140,8 @@ See [`docs/DESIGN.md`](docs/DESIGN.md) for the detailed design,
 [`docs/LRM-EXAMPLES.md`](docs/LRM-EXAMPLES.md) for the conformance run over
 every code example in the standard itself, and
 [`docs/OPENTITAN.md`](docs/OPENTITAN.md) for modelling a real IP (OpenTitan's
-UART) with Satya.
+UART) with Satya, and [`docs/SEMANTICS.md`](docs/SEMANTICS.md) for what is
+implemented per the standard's defined behaviour and what is only approximated.
 
 ---
 
