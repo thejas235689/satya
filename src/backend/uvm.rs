@@ -172,6 +172,52 @@ fn emit_exec_sv(s: &mut String, st: &crate::ast::ExecStmt, indent: &str) {
                 s.push_str(&format!("{}end\n", indent));
             }
         }
+        ExecStmt::Repeat { count, body } => {
+            s.push_str(&format!("{}repeat ({}) {{\n", indent, render_sv(count)));
+            for b in body {
+                emit_exec_sv(s, b, &format!("{}  ", indent));
+            }
+            s.push_str(&format!("{}}}\n", indent));
+        }
+        ExecStmt::RepeatWhile { body, cond } => {
+            s.push_str(&format!("{}do {{\n", indent));
+            for b in body {
+                emit_exec_sv(s, b, &format!("{}  ", indent));
+            }
+            s.push_str(&format!("{}}} while ({});\n", indent, render_sv(cond)));
+        }
+        ExecStmt::Foreach { var, iter, body } => {
+            s.push_str(&format!(
+                "{}foreach ({}[{}]) {{\n",
+                indent,
+                render_sv(iter),
+                var
+            ));
+            for b in body {
+                emit_exec_sv(s, b, &format!("{}  ", indent));
+            }
+            s.push_str(&format!("{}}}\n", indent));
+        }
+        ExecStmt::Match { subject, arms } => {
+            s.push_str(&format!("{}case ({})\n", indent, render_sv(subject)));
+            for (guard, body) in arms {
+                match guard {
+                    Some(g) => s.push_str(&format!("{}  {}: {{\n", indent, render_sv(g))),
+                    None => s.push_str(&format!("{}  default: {{\n", indent)),
+                }
+                for b in body {
+                    emit_exec_sv(s, b, &format!("{}    ", indent));
+                }
+                s.push_str(&format!("{}}}\n", indent));
+            }
+            s.push_str(&format!("{}endcase\n", indent));
+        }
+        ExecStmt::Break => s.push_str(&format!("{}break;\n", indent)),
+        ExecStmt::Continue => s.push_str(&format!("{}continue;\n", indent)),
+        ExecStmt::Return(_) => s.push_str(&format!("{}return;\n", indent)),
+        ExecStmt::Randomize(_) | ExecStmt::Yield => {
+            s.push_str(&format!("{}// not translated to SystemVerilog\n", indent))
+        }
         ExecStmt::Raw(text) => {
             s.push_str(&format!("{}// (untranslated) {}\n", indent, text));
         }

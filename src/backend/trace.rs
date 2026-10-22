@@ -112,6 +112,13 @@ impl Backend for TraceBackend {
             }
         }
 
+        if !scenario.messages.is_empty() {
+            s.push_str("\nMessages\n--------\n");
+            for m in &scenario.messages {
+                s.push_str(&format!("  {}\n", m));
+            }
+        }
+
         if !scenario.coverage.is_empty() {
             s.push_str("\nCoverage\n--------\n");
             for cp in &scenario.coverage {

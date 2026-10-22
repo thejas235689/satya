@@ -118,6 +118,8 @@ impl Rng {
 pub struct Env<'a> {
     pub constants: &'a HashMap<String, i64>,
     pub variants: HashMap<String, i64>,
+    /// The run's seed, so `urandom()` varies between seeds.
+    pub seed: u64,
 }
 
 impl<'a> Env<'a> {
@@ -129,6 +131,7 @@ impl<'a> Env<'a> {
             }
         }
         Env {
+            seed: 0,
             constants: &model.constants,
             variants,
         }
@@ -246,6 +249,72 @@ pub fn eval(expr: &Expr, values: &BTreeMap<String, i64>, env: &Env) -> Option<i6
                 eval(e, values, env)
             }
         }
+        // The standard library's `float_pkg` (Annex C.1). A floating-point
+        // value is held as its IEEE-754 bit pattern, so the storage functions
+        // are bit selections and the math functions reinterpret the bits.
+        Expr::Call(name, args) => {
+            let arg = |i: usize| -> Option<i64> { args.get(i).and_then(|a| eval(a, values, env)) };
+            let unary = |f: fn(f64) -> f64| -> Option<i64> {
+                Some(f(f64::from_bits(arg(0)? as u64)).to_bits() as i64)
+            };
+            match name.as_str() {
+                "float_mantissa" => Some(arg(0)? & 0x000F_FFFF_FFFF_FFFF),
+                "float_exponent" => Some((arg(0)? >> 52) & 0x7FF),
+                "float_sign" => Some((arg(0)? >> 63) & 1),
+                "to_float" => {
+                    let (m, e, s) = (arg(0)?, arg(1)?, arg(2)?);
+                    Some((s << 63) | ((e & 0x7FF) << 52) | (m & 0x000F_FFFF_FFFF_FFFF))
+                }
+                "log" => unary(f64::ln),
+                "log10" => unary(f64::log10),
+                "exp" => unary(f64::exp),
+                "sqrt" => unary(f64::sqrt),
+                "round" => unary(f64::round),
+                "floor" => unary(f64::floor),
+                "ceil" => unary(f64::ceil),
+                "sin" => unary(f64::sin),
+                "cos" => unary(f64::cos),
+                "tan" => unary(f64::tan),
+                "asin" => unary(f64::asin),
+                "acos" => unary(f64::acos),
+                "atan" => unary(f64::atan),
+                "sinh" => unary(f64::sinh),
+                "cosh" => unary(f64::cosh),
+                "tanh" => unary(f64::tanh),
+                "asinh" => unary(f64::asinh),
+                "acosh" => unary(f64::acosh),
+                "atanh" => unary(f64::atanh),
+                "pow" => Some(
+                    f64::from_bits(arg(0)? as u64)
+                        .powf(f64::from_bits(arg(1)? as u64))
+                        .to_bits() as i64,
+                ),
+                "hypot" => Some(
+                    f64::from_bits(arg(0)? as u64)
+                        .hypot(f64::from_bits(arg(1)? as u64))
+                        .to_bits() as i64,
+                ),
+                "atan2" => Some(
+                    f64::from_bits(arg(0)? as u64)
+                        .atan2(f64::from_bits(arg(1)? as u64))
+                        .to_bits() as i64,
+                ),
+                // `urandom()` / `urandom_range()` (PSS 24.4). Deterministic but
+                // instance-varying, so a run is reproducible yet different
+                // instances draw different numbers.
+                "urandom" => Some(((hash_values(values) ^ env.seed) & 0xFFFF_FFFF) as i64),
+                "urandom_range" => {
+                    let (lo, hi) = (arg(0)?, arg(1)?);
+                    if hi <= lo {
+                        Some(lo)
+                    } else {
+                        let span = (hi - lo + 1) as u64;
+                        Some(lo + ((hash_values(values) ^ env.seed) % span) as i64)
+                    }
+                }
+                _ => None,
+            }
+        }
         // `arr[i]` — an element of a fixed-size array.
         Expr::Index(base, idx) => {
             let i = eval(idx, values, env)?;
@@ -275,6 +344,21 @@ pub fn eval(expr: &Expr, values: &BTreeMap<String, i64>, env: &Env) -> Option<i6
         }
         _ => None,
     }
+}
+
+/// A deterministic digest of the current assignment, used as a reproducible
+/// random source for `urandom()`.
+fn hash_values(values: &BTreeMap<String, i64>) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for (k, v) in values {
+        for b in k.as_bytes() {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x100_0000_01b3);
+        }
+        h ^= *v as u64;
+        h = h.wrapping_mul(0x100_0000_01b3);
+    }
+    h
 }
 
 /// The sum of a fixed-size array's elements, if they are all known.
@@ -344,7 +428,7 @@ fn category_for(model: &Model, ty: &str) -> TypeCategory {
     let leaf = ty.rsplit("::").next().unwrap_or(ty);
     if matches!(
         leaf,
-        "int" | "bit" | "bool" | "byte" | "shortint" | "longint" | "integer" | "uint"
+        "int" | "bit" | "bool" | "byte" | "shortint" | "longint" | "integer" | "uint" | "float32" | "float64"
     ) {
         return TypeCategory::Scalar;
     }
@@ -482,7 +566,8 @@ pub fn solve_with(
     extra: &[Expr],
     bindings: &BTreeMap<String, i64>,
 ) -> SolveReport {
-    let env = Env::new(model);
+    let mut env = Env::new(model);
+    env.seed = seed;
     let mut vars = collect_variables(model, action);
     // A bound attribute is fixed: `exec pre_solve` assignments to non-random
     // fields, and values passed in, must survive the solve (PSS 16.4.12).

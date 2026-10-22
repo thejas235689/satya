@@ -986,6 +986,122 @@ impl Parser {
 
     /// Parse one statement inside an `exec` body.
     fn try_parse_exec_stmt(&mut self) -> Option<ExecStmt> {
+        // Procedural statements (PSS Syntax 89-101).
+        if self.at_ident("repeat") {
+            self.bump();
+            if self.at_punct("(") {
+                self.bump();
+                let count = self.parse_expr(0).ok()?;
+                self.expect_punct(")").ok()?;
+                let body = self.parse_exec_block();
+                self.eat_punct(";");
+                return Some(ExecStmt::Repeat { count, body });
+            }
+            let body = self.parse_exec_block();
+            if self.eat_ident("while") {
+                self.expect_punct("(").ok()?;
+                let cond = self.parse_expr(0).ok()?;
+                self.expect_punct(")").ok()?;
+                self.eat_punct(";");
+                return Some(ExecStmt::RepeatWhile { body, cond });
+            }
+            return Some(ExecStmt::Repeat {
+                count: Expr::Int(1),
+                body,
+            });
+        }
+        if self.at_ident("foreach") {
+            self.bump();
+            self.expect_punct("(").ok()?;
+            let mut var = String::new();
+            if matches!(self.peek().kind, TokKind::Ident(_))
+                && (self.peek_at(1).is_punct(":") || self.peek_at(1).is_ident("in"))
+            {
+                var = self.expect_ident().ok()?;
+                self.bump();
+            }
+            let mut iter = self.parse_expr(0).ok()?;
+            if var.is_empty() {
+                if let Expr::Index(base, idx) = &iter {
+                    if let (Expr::Path(_), Expr::Path(ip)) = (&**base, &**idx) {
+                        var = ip.leaf();
+                        iter = (**base).clone();
+                    }
+                }
+            }
+            self.expect_punct(")").ok()?;
+            let body = self.parse_exec_block();
+            self.eat_punct(";");
+            return Some(ExecStmt::Foreach { var, iter, body });
+        }
+        if self.at_ident("match") {
+            self.bump();
+            self.expect_punct("(").ok()?;
+            let subject = self.parse_expr(0).ok()?;
+            self.expect_punct(")").ok()?;
+            self.expect_punct("{").ok()?;
+            let mut arms = Vec::new();
+            while !self.at_punct("}") && !self.at_eof() {
+                if self.eat_punct(";") {
+                    continue;
+                }
+                let guard = if self.eat_ident("default") {
+                    None
+                } else {
+                    let g = self.parse_expr(0).ok()?;
+                    Some(g)
+                };
+                self.expect_punct(":").ok()?;
+                let body = self.parse_exec_block();
+                arms.push((guard, body));
+            }
+            self.expect_punct("}").ok()?;
+            self.eat_punct(";");
+            return Some(ExecStmt::Match { subject, arms });
+        }
+        if self.at_ident("break") {
+            self.bump();
+            self.eat_punct(";");
+            return Some(ExecStmt::Break);
+        }
+        if self.at_ident("continue") {
+            self.bump();
+            self.eat_punct(";");
+            return Some(ExecStmt::Continue);
+        }
+        if self.at_ident("return") {
+            self.bump();
+            let e = if self.at_punct(";") {
+                None
+            } else {
+                self.parse_expr(0).ok()
+            };
+            self.eat_punct(";");
+            return Some(ExecStmt::Return(e));
+        }
+        if self.at_ident("randomize") {
+            self.bump();
+            self.expect_punct("(").ok()?;
+            let mut targets = Vec::new();
+            while !self.at_punct(")") && !self.at_eof() {
+                if let Ok(Expr::Path(p)) = self.parse_expr(0) {
+                    targets.push(p);
+                } else {
+                    break;
+                }
+                if !self.eat_punct(",") {
+                    break;
+                }
+            }
+            self.expect_punct(")").ok()?;
+            self.eat_punct(";");
+            return Some(ExecStmt::Randomize(targets));
+        }
+        if self.at_ident("yield") {
+            self.bump();
+            self.eat_punct(";");
+            return Some(ExecStmt::Yield);
+        }
         if self.at_ident("if") {
             self.bump();
             self.expect_punct("(").ok()?;
@@ -1881,7 +1997,7 @@ impl Parser {
                     Box::new(hi),
                 ));
             }
-            let lo = self.parse_expr(0)?;
+            let first = self.parse_expr(0)?;
             if self.eat_punct("..") {
                 // `[lo..]` — open at the top.
                 let hi = if self.at_punct("]") {
@@ -1890,10 +2006,18 @@ impl Parser {
                     self.parse_expr(0)?
                 };
                 self.expect_punct("]")?;
-                return Ok(Expr::InRange(Box::new(Expr::Int(0)), Box::new(lo), Box::new(hi)));
+                return Ok(Expr::InRange(Box::new(Expr::Int(0)), Box::new(first), Box::new(hi)));
+            }
+            // A value list literal: `[1, 2, 3]`, `[a, b]` (PSS Syntax 5).
+            let mut items = vec![first];
+            while self.eat_punct(",") {
+                if self.at_punct("]") {
+                    break;
+                }
+                items.push(self.parse_expr(0)?);
             }
             self.expect_punct("]")?;
-            return Ok(Expr::List(vec![lo]));
+            return Ok(Expr::List(items));
         }
         if self.at_punct("{") {
             self.bump();

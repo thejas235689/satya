@@ -530,7 +530,7 @@ impl Lowerer {
         let leaf = leaf.as_str();
         if matches!(
             leaf,
-            "int" | "bit" | "bool" | "byte" | "shortint" | "longint" | "integer" | "uint"
+            "int" | "bit" | "bool" | "byte" | "shortint" | "longint" | "integer" | "uint" | "float32" | "float64"
         ) {
             return TypeCategory::Scalar;
         }

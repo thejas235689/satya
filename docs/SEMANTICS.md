@@ -6,6 +6,10 @@ and apply it as though it were hard. This document tracks what Satya does
 *according to the LRM's defined behaviour*, and — just as importantly — where it
 only approximates it.
 
+For coverage of **every** construct the standard defines — all 146 syntax
+excerpts, each marked implemented / partial / not implemented — see
+[`FEATURES.md`](FEATURES.md).
+
 The test of semantic conformance used here is simple: **feed the LRM's own
 examples, with their stated expected results, and check the tool produces them.**
 
@@ -78,6 +82,11 @@ With `:/`, `[100..102 :/ 6, 200 := 2]` gives 25.3 / 25.5 / 24.8 / 24.3 % against
 | `exec init_down` / `init_up` | 22.1 | run for the component hierarchy before the scenario, `init_down` top-down and `init_up` bottom-up |
 | collection mutators in `exec` | 7.9.3.2 | `push_back`, `push_front`, `pop_back`, `pop_front`, `insert`, `delete`, `clear`, `shuffle` build a list that constraints can then read |
 | collection literal assignment | 8.5 | `L = {a, b, c};` in `exec` gives a collection its elements |
+| value list literal | 5 | `[1, 2, 3]` and `[a, b]` as a constraint's value set |
+| procedural statements | 89-101 | `repeat`/`repeat…while`/`foreach`/`if`/`match`/`break`/`continue`/`return`/`randomize` in `exec`, with control flow |
+| floating-point (`float_pkg`) | 112-116 | `float32`/`float64` storage plus `float_mantissa`/`float_exponent`/`float_sign`/`to_float` and the math functions, over the IEEE-754 bit pattern |
+| messaging | 106-110 | `print`/`message`/`error`/`fatal` are recorded and reported; file operations are accepted and have no effect |
+| randomization functions | 111 | `urandom()` / `urandom_range()` — deterministic and varying by run seed |
 | `x in <collection>` | 8.5.9 | membership in a named array/list is a solved constraint, uniform over its elements |
 
 The array work is what lets a **multireg** be modelled directly: OpenTitan's

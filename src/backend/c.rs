@@ -272,6 +272,68 @@ fn emit_exec_stmt(s: &mut String, st: &ExecStmt, indent: &str, fields: &[String]
             }
             s.push('\n');
         }
+        ExecStmt::Repeat { count, body } => {
+            s.push_str(&format!(
+                "{}for (int _i = 0; _i < {}; _i++) {{\n",
+                indent,
+                c_expr_self(count, fields)
+            ));
+            for b in body {
+                emit_exec_stmt(s, b, &format!("{}    ", indent), fields);
+            }
+            s.push_str(&format!("{}}}\n", indent));
+        }
+        ExecStmt::RepeatWhile { body, cond } => {
+            s.push_str(&format!("{}do {{\n", indent));
+            for b in body {
+                emit_exec_stmt(s, b, &format!("{}    ", indent), fields);
+            }
+            s.push_str(&format!(
+                "{}}} while ({});\n",
+                indent,
+                c_expr_self(cond, fields)
+            ));
+        }
+        ExecStmt::Foreach { var, iter, body } => {
+            s.push_str(&format!(
+                "{}for (int {v} = 0; {v} < {n}_size; {v}++) {{\n",
+                indent,
+                v = var,
+                n = c_expr_self(iter, fields)
+            ));
+            for b in body {
+                emit_exec_stmt(s, b, &format!("{}    ", indent), fields);
+            }
+            s.push_str(&format!("{}}}\n", indent));
+        }
+        ExecStmt::Match { subject, arms } => {
+            s.push_str(&format!(
+                "{}switch ({}) {{\n",
+                indent,
+                c_expr_self(subject, fields)
+            ));
+            for (guard, body) in arms {
+                match guard {
+                    Some(g) => s.push_str(&format!(
+                        "{}  case {}: {{\n",
+                        indent,
+                        c_expr_self(g, fields)
+                    )),
+                    None => s.push_str(&format!("{}  default: {{\n", indent)),
+                }
+                for b in body {
+                    emit_exec_stmt(s, b, &format!("{}      ", indent), fields);
+                }
+                s.push_str(&format!("{}    break; }}\n", indent));
+            }
+            s.push_str(&format!("{}}}\n", indent));
+        }
+        ExecStmt::Break => s.push_str(&format!("{}break;\n", indent)),
+        ExecStmt::Continue => s.push_str(&format!("{}continue;\n", indent)),
+        ExecStmt::Return(_) => s.push_str(&format!("{}return;\n", indent)),
+        ExecStmt::Randomize(_) | ExecStmt::Yield => {
+            s.push_str(&format!("{}/* not translated to C */\n", indent))
+        }
         ExecStmt::Raw(_) => {}
     }
 }

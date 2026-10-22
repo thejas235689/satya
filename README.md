@@ -174,7 +174,9 @@ See [`docs/DESIGN.md`](docs/DESIGN.md) for the detailed design,
 every code example in the standard itself, and
 [`docs/OPENTITAN.md`](docs/OPENTITAN.md) for modelling a real IP (OpenTitan's
 UART) with Satya, and [`docs/SEMANTICS.md`](docs/SEMANTICS.md) for what is
-implemented per the standard's defined behaviour and what is only approximated.
+implemented per the standard's defined behaviour and what is only approximated,
+and [`docs/FEATURES.md`](docs/FEATURES.md) for a per-construct feature matrix
+covering all 146 syntax excerpts the standard defines.
 
 ---
 

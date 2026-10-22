@@ -1161,3 +1161,159 @@ component C {
     // One from the cover block, two from the statements after `cover <type>`.
     assert_eq!(total, 3, "{:?}", cp.values);
 }
+
+// ---------------------------------------------------------------------------
+// Procedural exec statements (Syntax 89-101) and the standard library
+// (Syntax 106-116).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn exec_procedural_statements_run() {
+    let src = r#"
+component C {
+  action a {
+    list<int> q;
+    int total;
+    int first_big;
+    exec pre_solve {
+      repeat (4) { q.push_back(5); }
+      total = 0;
+      foreach (q[i]) {
+        total = total + q[i];
+        if (total > 10) { first_big = total; break; }
+      }
+      match (total) {
+        20: { first_big = 99; }
+        default: { first_big = total; }
+      }
+    }
+    rand int v;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| s.steps[0].fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v).unwrap();
+    assert_eq!(get("q.size"), 4, "repeat must push four elements");
+    assert_eq!(get("total"), 15, "foreach accumulates then breaks at 15");
+    assert_eq!(get("first_big"), 15, "match default takes total");
+}
+
+#[test]
+fn exec_repeat_while_runs() {
+    let src = r#"
+component C {
+  action a {
+    int n;
+    exec pre_solve {
+      n = 0;
+      repeat { n = n + 1; } while (n < 5);
+    }
+    rand int v;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let n = s.steps[0].fields.iter().find(|(k, _)| k == "n").map(|(_, v)| *v).unwrap();
+    assert_eq!(n, 5, "repeat/while must loop until the condition fails");
+}
+
+#[test]
+fn float_pkg_functions_are_evaluated() {
+    let src = r#"
+component C {
+  action a {
+    int fv;
+    int mant;
+    int expo;
+    int sign;
+    int root;
+    exec pre_solve {
+      fv = to_float(0, 1023, 0);       // 1.0 in IEEE-754
+      mant = float_mantissa(fv);
+      expo = float_exponent(fv);
+      sign = float_sign(fv);
+      root = sqrt(fv);                 // sqrt(1.0) == 1.0
+    }
+    rand int v;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| s.steps[0].fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v).unwrap();
+    assert_eq!(get("fv"), 0x3FF0_0000_0000_0000, "1.0 in IEEE-754");
+    assert_eq!(get("mant"), 0);
+    assert_eq!(get("expo"), 1023);
+    assert_eq!(get("sign"), 0);
+    assert_eq!(get("root"), 0x3FF0_0000_0000_0000, "sqrt(1.0) == 1.0");
+}
+
+#[test]
+fn messaging_functions_are_recorded() {
+    let src = r#"
+component C {
+  action a {
+    rand int in [4..9] n;
+    exec post_solve {
+      print("n is", n);
+      error("always");
+    }
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    assert!(s.messages.iter().any(|m| m.starts_with("INFO: n is ")), "{:?}", s.messages);
+    assert!(s.messages.iter().any(|m| m.starts_with("ERROR:")), "{:?}", s.messages);
+}
+
+#[test]
+fn urandom_range_varies_by_seed_and_stays_in_range() {
+    let src = r#"
+component C {
+  action a {
+    int r;
+    exec pre_solve { r = urandom_range(1, 6); }
+    rand int v;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let mut seen = std::collections::HashSet::new();
+    for seed in 1u64..=40 {
+        let s = engine::run_scenario(&m, "a", seed);
+        let r = s.steps[0].fields.iter().find(|(k, _)| k == "r").map(|(_, v)| *v).unwrap();
+        assert!((1..=6).contains(&r), "seed {seed}: r = {r}");
+        seen.insert(r);
+    }
+    assert!(seen.len() > 1, "urandom_range must vary across seeds");
+}
+
+#[test]
+fn value_list_literal_and_enum_list_membership() {
+    // PSS Syntax 5: `[1, 2, 3]`, and a list of enum items.
+    let src = r#"
+package p { enum e_t {a, b, c}; };
+component C {
+  action a {
+    rand int sel;
+    rand e_t v;
+    rand int cond;
+    constraint sel in [1, 2, 3];
+    constraint v in [a, b];
+    constraint cond == sel ? v == a : v == b;   // Syntax 20
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    for seed in 1u64..=12 {
+        let s = engine::run_scenario(&m, "a", seed);
+        let step = &s.steps[0];
+        let get = |n: &str| step.fields.iter().find(|(k, _)| k == n).map(|(_, x)| *x).unwrap();
+        assert!((1..=3).contains(&get("sel")), "seed {seed}: sel = {}", get("sel"));
+        assert!(get("v") == 0 || get("v") == 1, "seed {seed}: v must be a or b");
+        assert_eq!(step.satisfied, step.total, "seed {seed}: {:?}", step.unsatisfied);
+    }
+}

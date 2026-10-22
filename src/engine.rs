@@ -105,6 +105,8 @@ pub struct Scenario {
     pub warnings: Vec<String>,
     /// Sampled coverpoints and crosses.
     pub coverage: Vec<CoveragePoint>,
+    /// Text emitted by the standard library's messaging functions.
+    pub messages: Vec<String>,
     /// Pools after execution: name, element type, and allocated object count.
     pub pools: Vec<(String, String, usize)>,
     /// Address regions the model declared.
@@ -159,6 +161,10 @@ struct Engine<'a> {
     flow_seq: usize,
     /// True while walking the body of a `cover` statement.
     in_cover: bool,
+    /// The action whose `exec` block is running, so `randomize` can re-solve it.
+    exec_action: Option<crate::ir::Action>,
+    /// Text emitted by the standard library's messaging functions.
+    messages: Vec<String>,
     /// Values established by component `init_down`/`init_up` blocks, visible to
     /// the whole scenario (PSS 22.1).
     globals: BTreeMap<String, i64>,
@@ -179,23 +185,35 @@ fn peel_label(stmt: &ActivityStmt) -> (&ActivityStmt, Option<&str>) {
 
 /// The values a `bins` declaration covers: a single value, a `lo..hi` range, or
 /// a `{ ... }` list of those (PSS 18.3).
-fn bin_values(e: &Expr, ctx: &BTreeMap<String, i64>, model: &Model) -> Vec<i64> {
+fn bin_values(e: &Expr, ctx: &BTreeMap<String, i64>, model: &Model, seed: u64) -> Vec<i64> {
     match e {
         Expr::List(items) => items
             .iter()
-            .flat_map(|i| bin_values(i, ctx, model))
+            .flat_map(|i| bin_values(i, ctx, model, seed))
             .collect(),
         Expr::InRange(_, lo, hi) => {
-            let lo = eval_value(lo, ctx, model);
-            let hi = eval_value(hi, ctx, model);
+            let lo = eval_value(lo, ctx, model, seed);
+            let hi = eval_value(hi, ctx, model, seed);
             match (lo, hi) {
                 (Some(lo), Some(hi)) if hi >= lo && hi - lo < 4096 => (lo..=hi).collect(),
                 _ => Vec::new(),
             }
         }
-        other => eval_value(other, ctx, model).into_iter().collect(),
+        other => eval_value(other, ctx, model, seed).into_iter().collect(),
     }
 }
+
+/// How an `exec` block finished, so control flow can propagate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Flow {
+    Normal,
+    Break,
+    Continue,
+    Return,
+}
+
+/// Largest iteration count for an `exec` loop, to bound a pathological model.
+const MAX_EXEC_LOOP: i64 = 4096;
 
 /// Largest collection an `exec` block may build, to bound a pathological model.
 const MAX_LIST: i64 = 256;
@@ -230,7 +248,9 @@ pub fn run_scenario(model: &Model, root_action: &str, seed: u64) -> Scenario {
         flow_produced: HashMap::new(),
         flow_seq: 0,
         in_cover: false,
+        messages: Vec::new(),
         globals: BTreeMap::new(),
+        exec_action: None,
         coverage: BTreeMap::new(),
         coverage_bins: BTreeMap::new(),
     };
@@ -297,6 +317,7 @@ pub fn run_scenario(model: &Model, root_action: &str, seed: u64) -> Scenario {
         })
         .collect();
     Scenario {
+        messages: eng.messages,
         coverage,
         root_action: root_action.to_string(),
         top_component: top,
@@ -422,7 +443,7 @@ impl<'a> Engine<'a> {
                 })
                 .collect(),
             JoinSpec::Select(e) => {
-                let n = eval_value(e, ctx, self.model).unwrap_or(branches.len() as i64);
+                let n = eval_value(e, ctx, self.model, self.seed).unwrap_or(branches.len() as i64);
                 let n = n.max(0) as usize;
                 let mut flags = vec![false; branches.len()];
                 // The specific statements are selected randomly (12.3.6.1b).
@@ -507,7 +528,7 @@ impl<'a> Engine<'a> {
                     match guard {
                         None => fallback = Some(body),
                         Some(e) => {
-                            if eval_condition_opt(e, ctx, self.model) == Some(true) {
+                            if eval_condition_opt(e, ctx, self.model, self.seed) == Some(true) {
                                 chosen = Some(body);
                                 break;
                             }
@@ -526,7 +547,7 @@ impl<'a> Engine<'a> {
             ActivityStmt::Match { expr, choices } => {
                 self.group_counter += 1;
                 let g = self.group_counter;
-                let subject = eval_value(expr, ctx, self.model);
+                let subject = eval_value(expr, ctx, self.model, self.seed);
                 let mut chosen: Option<&Activity> = None;
                 let mut default_body: Option<&Activity> = None;
                 for (range, body) in choices {
@@ -647,7 +668,7 @@ impl<'a> Engine<'a> {
                 // not re-solved.
             }
             ActivityStmt::If { cond, then, els } => {
-                if let Some(v) = eval_condition_opt(cond, ctx, self.model) {
+                if let Some(v) = eval_condition_opt(cond, ctx, self.model, self.seed) {
                     if v {
                         self.walk_activity(then, component.to_string(), depth, mode, group, ctx);
                     } else if let Some(e) = els {
@@ -771,45 +792,170 @@ impl<'a> Engine<'a> {
         }
     }
 
-    /// Execute `exec` statements against an instance's values (PSS 10.4).
-    fn exec_stmts(&self, stmts: &[ExecStmt], values: &mut BTreeMap<String, i64>) {
+    /// Execute `exec` statements against an instance's values (PSS 10.4,
+    /// Syntax 89-101). Returns how the block finished, so `break`, `continue`
+    /// and `return` propagate out of loops.
+    fn exec_stmts(&mut self, stmts: &[ExecStmt], values: &mut BTreeMap<String, i64>) -> Flow {
         for st in stmts {
-            match st {
-                ExecStmt::Assign(path, rhs) => {
-                    let base = path.segments.join(".");
-                    // `L = {a, b, c};` gives a collection its elements (PSS 8.5).
-                    if let Expr::List(items) = rhs {
-                        for i in 0..MAX_LIST {
-                            values.remove(&format!("{}[{}]", base, i));
-                        }
-                        for (i, it) in items.iter().enumerate() {
-                            if let Some(v) = eval_value(it, values, self.model) {
-                                values.insert(format!("{}[{}]", base, i), v);
-                            }
-                        }
-                        values.insert(format!("{}.size", base), items.len() as i64);
-                        continue;
+            match self.exec_one(st, values) {
+                Flow::Normal => {}
+                other => return other,
+            }
+        }
+        Flow::Normal
+    }
+
+    fn exec_one(&mut self, st: &ExecStmt, values: &mut BTreeMap<String, i64>) -> Flow {
+        match st {
+            ExecStmt::Assign(path, rhs) => {
+                let base = path.segments.join(".");
+                // `L = {a, b, c};` gives a collection its elements (PSS 8.5).
+                if let Expr::List(items) = rhs {
+                    for i in 0..MAX_LIST {
+                        values.remove(&format!("{}[{}]", base, i));
                     }
-                    if let Some(v) = eval_value(rhs, values, self.model) {
-                        values.insert(base, v);
+                    for (i, it) in items.iter().enumerate() {
+                        if let Some(v) = eval_value(it, values, self.model, self.seed) {
+                            values.insert(format!("{}[{}]", base, i), v);
+                        }
                     }
+                    values.insert(format!("{}.size", base), items.len() as i64);
+                    return Flow::Normal;
                 }
-                ExecStmt::If(cond, then, els) => match eval_condition_opt(cond, values, self.model) {
+                if let Some(v) = eval_value(rhs, values, self.model, self.seed) {
+                    values.insert(base, v);
+                }
+                Flow::Normal
+            }
+            ExecStmt::If(cond, then, els) => {
+                match eval_condition_opt(cond, values, self.model, self.seed) {
                     Some(true) => self.exec_stmts(then, values),
                     Some(false) => self.exec_stmts(els, values),
-                    None => {}
-                },
-                // Collection mutators (PSS 7.9.3.2): the receiver's elements are
-                // kept as `recv[i]` with a `recv.size`, so a list can be built
-                // by an `exec` block and then read by constraints.
-                ExecStmt::Call(name, args) => self.exec_call(name, args, values),
-                ExecStmt::Raw(_) => {}
+                    None => Flow::Normal,
+                }
             }
+            ExecStmt::Repeat { count, body } => {
+                let n = eval_value(count, values, self.model, self.seed)
+                    .unwrap_or(1)
+                    .clamp(0, MAX_EXEC_LOOP);
+                for _ in 0..n {
+                    match self.exec_stmts(body, values) {
+                        Flow::Break => break,
+                        Flow::Return => return Flow::Return,
+                        _ => {}
+                    }
+                }
+                Flow::Normal
+            }
+            ExecStmt::RepeatWhile { body, cond } => {
+                for _ in 0..MAX_EXEC_LOOP {
+                    match self.exec_stmts(body, values) {
+                        Flow::Break => break,
+                        Flow::Return => return Flow::Return,
+                        _ => {}
+                    }
+                    if eval_condition_opt(cond, values, self.model, self.seed) != Some(true) {
+                        break;
+                    }
+                }
+                Flow::Normal
+            }
+            ExecStmt::Foreach { var, iter, body } => {
+                let base = match iter {
+                    Expr::Path(p) => p.segments.join("."),
+                    _ => return Flow::Normal,
+                };
+                let n = *values.get(&format!("{}.size", base)).unwrap_or(&0);
+                for i in 0..n.min(MAX_LIST) {
+                    let mut local = values.clone();
+                    if !var.is_empty() {
+                        local.insert(var.clone(), i);
+                    }
+                    let f = self.exec_stmts(body, &mut local);
+                    // Copy back anything the body changed except the iterator.
+                    for (k, v) in local {
+                        if Some(&k) != Some(var).filter(|_| !var.is_empty()) {
+                            values.insert(k, v);
+                        }
+                    }
+                    match f {
+                        Flow::Break => break,
+                        Flow::Return => return Flow::Return,
+                        _ => {}
+                    }
+                }
+                Flow::Normal
+            }
+            ExecStmt::Match { subject, arms } => {
+                let v = eval_value(subject, values, self.model, self.seed);
+                for (guard, body) in arms {
+                    let hit = match guard {
+                        None => true,
+                        Some(g) => match (v, eval_value(g, values, self.model, self.seed)) {
+                            (Some(a), Some(b)) => a == b,
+                            _ => false,
+                        },
+                    };
+                    if hit {
+                        return self.exec_stmts(body, values);
+                    }
+                }
+                Flow::Normal
+            }
+            ExecStmt::Break => Flow::Break,
+            ExecStmt::Continue => Flow::Continue,
+            ExecStmt::Return(_) => Flow::Return,
+            ExecStmt::Randomize(targets) => {
+                // Re-randomise the named attributes within their domains by
+                // re-solving the action they belong to.
+                if let Some(act) = self.exec_action.clone() {
+                    let report = crate::solver::solve_with(
+                        self.model,
+                        &act,
+                        self.seed ^ (values.len() as u64) ^ 0x9E37_79B9,
+                        &[],
+                        &BTreeMap::new(),
+                    );
+                    for p in targets {
+                        let key = p.segments.join(".");
+                        if let Some(v) = report.assignment.values.get(&key) {
+                            values.insert(key, *v);
+                        }
+                    }
+                }
+                Flow::Normal
+            }
+            ExecStmt::Yield => Flow::Normal,
+            ExecStmt::Call(name, args) => {
+                self.exec_call(name, args, values);
+                Flow::Normal
+            }
+            ExecStmt::Raw(_) => Flow::Normal,
         }
     }
 
     /// One `exec` method call, e.g. `q.push_back(v)`.
-    fn exec_call(&self, name: &str, args: &[Expr], values: &mut BTreeMap<String, i64>) {
+    fn exec_call(&mut self, name: &str, args: &[Expr], values: &mut BTreeMap<String, i64>) {
+        // Standard library messaging (PSS Syntax 106-110): recorded so the
+        // scenario can report what the model asked to log.
+        match name {
+            "print" | "message" | "error" | "fatal" => {
+                let text = self.render_call_args(args, values);
+                let level = match name {
+                    "error" => "ERROR",
+                    "fatal" => "FATAL",
+                    _ => "INFO",
+                };
+                self.messages.push(format!("{}: {}", level, text));
+                return;
+            }
+            "file_open" | "file_close" | "file_write" | "file_write_lines"
+            | "file_flush" | "file_read" | "file_read_lines" => {
+                // File operations have no effect on the scenario.
+                return;
+            }
+            _ => {}
+        }
         let (recv, method) = match name.rsplit_once('.') {
             Some(parts) => parts,
             None => return,
@@ -817,7 +963,7 @@ impl<'a> Engine<'a> {
         let size_key = format!("{}.size", recv);
         let n = *values.get(&size_key).unwrap_or(&0);
         let elem = |i: i64| format!("{}[{}]", recv, i);
-        let arg = |k: usize| args.get(k).and_then(|a| eval_value(a, values, self.model));
+        let arg = |k: usize| args.get(k).and_then(|a| eval_value(a, values, self.model, self.seed));
         match method {
             "push_back" => {
                 if let Some(v) = arg(0) {
@@ -905,6 +1051,21 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// Render a call's arguments for a log message: numeric arguments are
+    /// shown as values, string literals as text.
+    fn render_call_args(&self, args: &[Expr], values: &BTreeMap<String, i64>) -> String {
+        args.iter()
+            .map(|a| match a {
+                Expr::Str(s) => s.clone(),
+                other => match eval_value(other, values, self.model, self.seed) {
+                    Some(v) => v.to_string(),
+                    None => crate::solver::render_expr(other),
+                },
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     fn record_step(
         &mut self,
         action: &Action,
@@ -915,6 +1076,9 @@ impl<'a> Engine<'a> {
         extra: &[Expr],
         bindings: &BTreeMap<String, i64>,
     ) {
+        // Remember the action so an `exec` `randomize` can re-solve it.
+        self.exec_action = Some(action.clone());
+
         // `exec pre_solve` runs before the solver and its assignments to
         // non-random fields feed the solve (PSS 16.4.12).
         let mut pre: BTreeMap<String, i64> = self.globals.clone();
@@ -961,11 +1125,11 @@ impl<'a> Engine<'a> {
                 for item in &cg.items {
                     if let crate::ast::CoverItem::Coverpoint { label, expr, iff, bins } = item {
                         if let Some(cond) = iff {
-                            if eval_condition_opt(cond, &solved, self.model) != Some(true) {
+                            if eval_condition_opt(cond, &solved, self.model, self.seed) != Some(true) {
                                 continue;
                             }
                         }
-                        if let Some(v) = eval_value(expr, &solved, self.model) {
+                        if let Some(v) = eval_value(expr, &solved, self.model, self.seed) {
                             let point = match label {
                                 Some(l) => format!("{}.{}", cg.name, l),
                                 None => format!("{}.{}", cg.name, crate::solver::render_expr(expr)),
@@ -986,7 +1150,7 @@ impl<'a> Engine<'a> {
                                 if decl.len() != bins.len() {
                                     decl.clear();
                                     for (_, bexpr) in bins {
-                                        decl.push(bin_values(bexpr, &solved, self.model));
+                                        decl.push(bin_values(bexpr, &solved, self.model, self.seed));
                                     }
                                 }
                             }
@@ -996,7 +1160,7 @@ impl<'a> Engine<'a> {
                 for item in &cg.items {
                     if let crate::ast::CoverItem::Cross { label, refs, iff } = item {
                         if let Some(cond) = iff {
-                            if eval_condition_opt(cond, &solved, self.model) != Some(true) {
+                            if eval_condition_opt(cond, &solved, self.model, self.seed) != Some(true) {
                                 continue;
                             }
                         }
@@ -1438,14 +1602,21 @@ fn eval_count(e: &Expr, model: &Model, ctx: &BTreeMap<String, i64>) -> Option<i6
 
 /// Evaluate a condition against the container action's solved values, if all
 /// its references are known.
-fn eval_condition_opt(expr: &Expr, ctx: &BTreeMap<String, i64>, model: &Model) -> Option<bool> {
-    let env = Env::new(model);
+fn eval_condition_opt(
+    expr: &Expr,
+    ctx: &BTreeMap<String, i64>,
+    model: &Model,
+    seed: u64,
+) -> Option<bool> {
+    let mut env = Env::new(model);
+    env.seed = seed;
     solver::eval(expr, ctx, &env).map(|v| v != 0)
 }
 
 /// Evaluate an expression to a value against the container action's values.
-fn eval_value(expr: &Expr, ctx: &BTreeMap<String, i64>, model: &Model) -> Option<i64> {
-    let env = Env::new(model);
+fn eval_value(expr: &Expr, ctx: &BTreeMap<String, i64>, model: &Model, seed: u64) -> Option<i64> {
+    let mut env = Env::new(model);
+    env.seed = seed;
     solver::eval(expr, ctx, &env)
 }
 

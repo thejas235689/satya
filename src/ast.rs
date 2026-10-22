@@ -146,6 +146,30 @@ pub enum ExecStmt {
     Call(String, Vec<Expr>),
     /// `if (cond) { .. } else { .. }`
     If(Expr, Vec<ExecStmt>, Vec<ExecStmt>),
+    /// `repeat (n) { .. }` (Syntax 94)
+    Repeat { count: Expr, body: Vec<ExecStmt> },
+    /// `repeat { .. } while (cond);` (Syntax 95)
+    RepeatWhile { body: Vec<ExecStmt>, cond: Expr },
+    /// `foreach (c[i]) { .. }` (Syntax 96)
+    Foreach {
+        var: String,
+        iter: Expr,
+        body: Vec<ExecStmt>,
+    },
+    /// `match (e) { ... }` (Syntax 98)
+    Match {
+        subject: Expr,
+        arms: Vec<(Option<Expr>, Vec<ExecStmt>)>,
+    },
+    /// `break;` / `continue;` (Syntax 99)
+    Break,
+    Continue,
+    /// `return [e];` (Syntax 93)
+    Return(Option<Expr>),
+    /// `randomize(x, y);` (Syntax 100)
+    Randomize(Vec<Path>),
+    /// `yield;` (Syntax 101) — no-op outside a coroutine.
+    Yield,
     /// Anything else, kept as text.
     Raw(String),
 }
