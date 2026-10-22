@@ -20,6 +20,22 @@ simulation, emulation or post-silicon bring-up without changing the model.
 
 ---
 
+## Getting it
+
+Prebuilt binaries are attached to each [release](https://github.com/thejas235689/satya/releases/latest):
+
+```bash
+curl -LO https://github.com/thejas235689/satya/releases/latest/download/satya-0.6.0-x86_64-linux.tar.gz
+tar -xzf satya-0.6.0-x86_64-linux.tar.gz && cd satya-0.6.0-x86_64-linux
+./satya demo
+```
+
+Or build from source (no dependencies beyond Rust):
+
+```bash
+cargo build --release && cargo test
+```
+
 ## Quick start
 
 ```bash
