@@ -20,6 +20,23 @@ simulation, emulation or post-silicon bring-up without changing the model.
 
 ---
 
+> **Note — Satya does not replace any commercial tool.**
+> It is an independent, open-source implementation, not a substitute for a
+> commercial PSS product. Tools such as Cadence Perspec and Siemens InFact are
+> mature, vendor-supported, production-validated environments with capabilities
+> Satya does not have: full language coverage, coverage closure, integration with
+> established verification flows, and commercial support. Satya implements a
+> **documented subset** of the standard (see [`docs/SEMANTICS.md`](docs/SEMANTICS.md))
+> and exists to explore the space and to serve as a small, readable reference.
+> For production stimulus generation, use a commercial tool.
+>
+> Satya is not affiliated with, endorsed by, sponsored by, or derived from
+> Cadence, Siemens, or any other EDA vendor. Product names are the trademarks of
+> their respective owners and are used here only to describe the category of
+> tooling. See [`NOTICE.md`](NOTICE.md).
+
+---
+
 ## Getting it
 
 Prebuilt binaries are attached to each [release](https://github.com/thejas235689/satya/releases/latest):
@@ -288,7 +305,8 @@ println!("{}", sv);
 
 ## Limitations
 
-Satya is a working engine, not a certified PSS implementation. Known limits:
+Satya is a working engine, not a certified PSS implementation, and it does not
+replace any commercial tool — see [`NOTICE.md`](NOTICE.md). Known limits:
 
 * **Name resolution is qualified, but not scope-checked.** `pkg::name` and
   `Component::action` references resolve, and types that collide across packages
@@ -323,6 +341,7 @@ Satya is a working engine, not a certified PSS implementation. Known limits:
 satya/
   Cargo.toml
   README.md
+  NOTICE.md          relationship to commercial tools; trademarks
   docs/DESIGN.md
   src/
     lib.rs           crate root and pipeline entry point
