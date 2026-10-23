@@ -46,7 +46,7 @@ the selected branch, then `C`, then the other branch:
 | default constraints | 16.1.10.1 | one default per attribute survives, by precedence; conflicts are flagged |
 | `default disable <attr>` | 16.1.10.1b | removes the defaults on an attribute |
 | `dist` / `:=` / `:/` | 16.1.9 | weighted selection; `:=` gives each value in a range the full weight, `:/` spreads it |
-| `solve … before …` | 16.1.8 | assignment order follows the directive |
+| `exec pre_body` | 22.1 | a solve-platform block, run after `post_solve` and before the body is realized |
 | implications | 8.5 | propagated, not merely checked |
 | ordering between two random variables | — | both domains narrowed before assignment |
 
@@ -127,6 +127,7 @@ methods for arrays (7.9.2.2). The real list is below.
 | multiple `dist` directives on one attribute | 16.1.9 | weights are summed; the LRM leaves the resulting distribution undefined |
 | stream vs buffer consumption | 13 | a flow object may be referenced by several inputs; consume-once semantics for streams are not enforced |
 | `import`-based scope checking | 9 | name resolution uses `pkg::name` and `Component::action`, not `import` |
+| `exec body` | 22.1 | not run at solve time, which is correct: the body is *target* code and is emitted into the generated C and SystemVerilog. `pre_body` is the solve-time hook. |
 | register group offsets | 24.11.2 | `reg_group_c` is parsed, but the offsets come from the group's own `get_offset_of_instance` / `get_offset_of_instance_array` / `get_offset_of_path` functions, which are not evaluated |
 | address traits and claims | 24.6-24.8 | address *regions* are modelled; traits, claims and handles are not |
 | register read/write primitives | 24.10.9 | register access is modelled over a register store, not translated into the primitive byte-level read/write operations on an address |
@@ -136,7 +137,16 @@ methods for arrays (7.9.2.2). The real list is below.
 | executor-based customisation | 24.10.9.5 | the primitives are implemented in the engine rather than delegated to an executor instance |
 | target-code templates (`exec declaration` bodies) | 22.2 | carried through to the backends verbatim, not interpreted |
 
-## 3. How this is checked
+## 3. Accepted beyond the standard
+
+Satya accepts one construct that **the standard does not define**, kept because
+it is a natural thing to reach for and is harmless when unused:
+
+| Construct | Status |
+|---|---|
+| `constraint solve a before b;` | **Not PSS.** `solve … before …` is a SystemVerilog constraint directive; PSS 3.0 has no such construct (its 16.1.8 is *forall constraints*). Satya parses it and uses it to order assignment, but a conforming PSS model will never contain it. Earlier revisions of this document cited it as "16.1.8", which was wrong on both counts. |
+
+## 4. How this is checked
 
 * `tests/integration.rs` — 57 tests, including the LRM's Examples 133 and 134
   with their stated values, the join orderings of Examples 68/71/72, the `dist`

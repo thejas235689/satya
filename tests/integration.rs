@@ -1550,3 +1550,86 @@ fn memory_primitives_are_little_endian() {
     assert_eq!(at(0x410), Some(0xEF), "low byte at the starting address");
     assert_eq!(at(0x411), Some(0xBE));
 }
+
+// ---------------------------------------------------------------------------
+// Statistical and ordering checks for the distribution directive and the exec
+// block sequence.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dist_is_uniform_without_weights_and_weighted_with_them() {
+    // The standard: an item with no weight has the default weight `:= 1`, a
+    // range with `:=` gives each value the full weight, and `:/` spreads it.
+    let src = r#"
+component C {
+  action plain  { rand int x; constraint dist x in [10, 20, 30]; };
+  action ranged { rand int y; constraint dist y in [1..4 := 1, 100 := 1]; };
+  action weight { rand int z; constraint dist z in [100..102 := 1, 200 := 2, 300 := 5]; };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let n = 20000u64;
+
+    let counts = |act: &str| {
+        let mut c: std::collections::BTreeMap<i64, usize> = std::collections::BTreeMap::new();
+        for seed in 1..=n {
+            let s = engine::run_scenario(&m, act, seed);
+            *c.entry(s.steps[0].fields[0].1).or_insert(0) += 1;
+        }
+        c
+    };
+    let frac = |c: &std::collections::BTreeMap<i64, usize>, v: i64| {
+        *c.get(&v).unwrap_or(&0) as f64 / n as f64
+    };
+
+    // Unweighted: three values, `:= 1` each, so uniform.
+    let c = counts("plain");
+    for v in [10, 20, 30] {
+        assert!((frac(&c, v) - 1.0 / 3.0).abs() < 0.02, "plain {v}: {}", frac(&c, v));
+    }
+
+    // `[1..4 := 1, 100 := 1]` — each of five values carries weight 1.
+    let c = counts("ranged");
+    for v in [1, 2, 3, 4, 100] {
+        assert!((frac(&c, v) - 0.2).abs() < 0.02, "ranged {v}: {}", frac(&c, v));
+    }
+
+    // `:=` gives every value in the range the full weight: 1,1,1,2,5 over 10.
+    let c = counts("weight");
+    for v in [100, 101, 102] {
+        assert!((frac(&c, v) - 0.1).abs() < 0.02, "weight {v}: {}", frac(&c, v));
+    }
+    assert!((frac(&c, 200) - 0.2).abs() < 0.02, "weight 200: {}", frac(&c, 200));
+    assert!((frac(&c, 300) - 0.5).abs() < 0.02, "weight 300: {}", frac(&c, 300));
+}
+
+#[test]
+fn exec_blocks_run_in_the_order_the_standard_specifies() {
+    // init_down / init_up are called before the root action's pre_solve (22.1);
+    // pre_solve precedes solving, post_solve follows it, and pre_body is a
+    // solve-platform block after post_solve and before the body (22.1).
+    let src = r#"
+component C {
+  int log0; int log1; int log2; int log3;
+  exec init_down { log0 = 1; }
+  exec init_up   { log1 = 2; }
+  action a {
+    int x;
+    exec pre_solve  { log2 = 3; }
+    exec post_solve { log3 = 4; }
+    exec pre_body   { x = 5; }
+    exec body       { x = 6; }   // target code, not run at solve time
+    rand int v;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| s.steps[0].fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v);
+    assert_eq!(get("log0"), Some(1), "init_down");
+    assert_eq!(get("log1"), Some(2), "init_up");
+    assert_eq!(get("log2"), Some(3), "pre_solve");
+    assert_eq!(get("log3"), Some(4), "post_solve");
+    // pre_body runs on the solve platform; the body does not.
+    assert_eq!(get("x"), Some(5), "pre_body, not body");
+}

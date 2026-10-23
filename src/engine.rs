@@ -1633,6 +1633,12 @@ impl<'a> Engine<'a> {
         for e in action.execs.iter().filter(|e| e.kind == "post_solve") {
             self.exec_stmts(&e.stmts, &mut solved);
         }
+        // `exec pre_body` is a solve-platform block evaluated after post_solve
+        // and before the body is realized (PSS 22.1). The body itself is target
+        // code, emitted by the backends rather than run here.
+        for e in action.execs.iter().filter(|e| e.kind == "pre_body") {
+            self.exec_stmts(&e.stmts, &mut solved);
+        }
 
         let mut fields: Vec<(String, i64)> = Vec::new();
         for (k, v) in &solved {

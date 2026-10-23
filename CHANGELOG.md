@@ -13,6 +13,28 @@ approximated.
 
 ---
 
+## 0.12.0 — 2026-10-23
+
+Verifying a list of claimed features, and correcting one
+
+Asked whether a specific list of constructs was complete, each was re-tested
+against the implementation rather than answered from memory. That turned up two
+things worth fixing:
+
+- **`solve … before …` is not a PSS construct.** It is a SystemVerilog
+  constraint directive; PSS 3.0 has no such thing, and its 16.1.8 is *forall
+  constraints*. Satya still accepts it, but it is now recorded as an extension
+  beyond the standard rather than conformance (`docs/SEMANTICS.md` §3), and the
+  wrong clause citation in the previous entry is corrected.
+- **`exec pre_body` was not executed.** It is a solve-platform block, evaluated
+  after `post_solve` and before the body is realized. Now run in that position.
+  (`exec body` is deliberately *not* run at solve time — it is target code, and
+  is emitted into the generated C and SystemVerilog.)
+
+Everything else on the list checked out, and is now pinned by tests: `replicate`
+against `repeat`, the `dist` weights and defaults, flow-object ordering, and
+coverage.
+
 ## 0.11.0 — 2026-10-22
 
 Address handles and the memory model
@@ -106,7 +128,8 @@ First release whose binary was built and attached by CI rather than by hand.
 - `replicate` (12.5), distinct from `repeat`.
 - `dist` (16.1.9): `:=` and `:/` weights — measured 10.2/9.7/10.2/20.7/49.3 %
   against the specified 10/10/10/20/50.
-- `solve … before` (16.1.8) honoured in assignment order.
+- `solve … before` honoured in assignment order. **Correction (0.12.0):** this
+  is a SystemVerilog directive, not a PSS one — see `docs/SEMANTICS.md` §3.
 - `exec pre_solve` / `post_solve` (16.4.12); non-`rand` attributes are no longer
   randomised, which is what makes a `pre_solve` assignment stick.
 - Flow-object ordering (13) enforced.
