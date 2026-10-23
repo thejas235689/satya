@@ -39,13 +39,18 @@ simulation, emulation or post-silicon bring-up without changing the model.
 
 ## Getting it
 
-Prebuilt binaries are attached to each [release](https://github.com/thejas235689/satya/releases/latest):
+Prebuilt binaries are attached to each [release](https://github.com/thejas235689/satya/releases/latest).
+The alias below always resolves to the newest build:
 
 ```bash
-curl -LO https://github.com/thejas235689/satya/releases/latest/download/satya-0.6.0-x86_64-linux.tar.gz
-tar -xzf satya-0.6.0-x86_64-linux.tar.gz && cd satya-0.6.0-x86_64-linux
+curl -LO https://github.com/thejas235689/satya/releases/latest/download/satya-x86_64-linux.tar.gz
+tar -xzf satya-x86_64-linux.tar.gz && cd satya-x86_64-linux
 ./satya demo
 ```
+
+Each release also carries a version-named archive (for example
+`satya-v0.12.0-x86_64-linux.tar.gz`) with a matching `.sha256`, if you need to
+pin a specific version.
 
 Or build from source (no dependencies beyond Rust):
 

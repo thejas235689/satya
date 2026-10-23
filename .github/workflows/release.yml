@@ -35,6 +35,15 @@ jobs:
           cp target/release/satya README.md LICENSE "dist/$name/"
           tar -czf "dist/$name.tar.gz" -C dist "$name"
           ( cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256" )
+          # A version-independent alias, so
+          # releases/latest/download/satya-x86_64-linux.tar.gz always resolves
+          # to the newest build. Without it, any documented install command
+          # embeds a version number and breaks at the next release.
+          alias="satya-x86_64-linux"
+          mkdir -p "dist/$alias"
+          cp target/release/satya README.md LICENSE "dist/$alias/"
+          tar -czf "dist/$alias.tar.gz" -C dist "$alias"
+          ( cd dist && sha256sum "$alias.tar.gz" > "$alias.tar.gz.sha256" )
 
       - name: Attach to the release
         env:
