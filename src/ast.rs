@@ -212,6 +212,15 @@ pub struct ComponentDecl {
     pub items: Vec<CompItem>,
 }
 
+/// One statement of an `override` block (PSS 20.5.1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct OverrideDecl {
+    /// `Some(path)` for an instance override, `None` for a type override.
+    pub instance: Option<String>,
+    pub from: String,
+    pub to: String,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum CompItem {
     Import(Path),
@@ -224,6 +233,11 @@ pub enum CompItem {
     Enum(EnumDecl),
     Struct(TypeDecl),
     StaticConst { name: String, value: Expr },
+    /// `symbol NAME { activity_stmts }` — a named activity fragment
+    /// (PSS 12.7, Syntax 43).
+    Symbol { name: String, body: Activity },
+    /// `override { type A with B; instance p with B; }` (PSS 20.5, Syntax 80).
+    Override(Vec<OverrideDecl>),
     Raw(String),
 }
 
@@ -395,6 +409,8 @@ pub enum ActivityStmt {
     /// `constraint parallel { a, b };` / `constraint sequence { a, b };` —
     /// a scheduling constraint between action handles (PSS 16.2, Syntax 62).
     SchedConstraint { parallel: bool, refs: Vec<String> },
+    /// `name(args);` — a call to a symbol declared with `symbol` (PSS 12.7).
+    SymbolCall(String, Vec<Expr>),
     /// `[label:] cover { <monitor body> }` — monitor the executed stream for a
     /// scenario (PSS 19.2).
     Cover {

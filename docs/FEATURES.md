@@ -6,20 +6,21 @@ coverage can be read honestly rather than inferred from the test count.
 
 Legend: **yes** — parsed *and* implemented with its defined semantics;
 **partial** — parsed, and some semantics implemented, but not all;
-**no** — not implemented (in most cases not yet parsed either).
+**no** — not implemented.
 
-Every "yes" is exercised by a test or by the corpora in `docs/LRM-EXAMPLES.md`
-and `docs/OPENTITAN.md`. The statuses were checked against the implementation
-rather than assumed — which has twice caught constructs marked implemented that
-were not.
+Every "yes" is exercised by a test or by the corpora in
+[`CORPUS.md`](CORPUS.md), [`LRM-EXAMPLES.md`](LRM-EXAMPLES.md) and
+[`OPENTITAN.md`](OPENTITAN.md). The statuses were checked against the
+implementation rather than assumed — which has repeatedly caught constructs
+marked implemented that were not.
 
 ## Summary
 
 | Status | Count |
 |---|---|
-| yes | 88 |
-| partial | 43 |
-| no | 15 |
+| yes | 92 |
+| partial | 53 |
+| no | 1 |
 | **total** | **146** |
 
 ## Every construct
@@ -68,7 +69,7 @@ were not.
 | 40 | if-else statement | yes |  |
 | 41 | match statement | yes |  |
 | 42 | replicate statement | yes |  |
-| 43 | symbol declaration | no |  |
+| 43 | symbol declaration | yes |  |
 | 44 | bind statement | yes |  |
 | 45 | buffer declaration | yes |  |
 | 46 | stream declaration | partial | parsed; stream consume-once is not enforced |
@@ -87,7 +88,7 @@ were not.
 | 59 | unique constraint | partial | parsed; the `unique` constraint is not enforced |
 | 60 | Default constraints | yes |  |
 | 61 | Distribution directive | yes |  |
-| 62 | scheduling constraint statement | no |  |
+| 62 | scheduling constraint statement | partial | parsed and recorded; the engine walks the activity in one deterministic order, so `sequence` holds by construction |
 | 63 | covergroup declaration | yes |  |
 | 64 | covergroup instantiation | yes |  |
 | 65 | coverpoint declaration | yes |  |
@@ -105,7 +106,7 @@ were not.
 | 77 | Monitor traversal statement | partial | nested monitors are matched by name; monitor inheritance is not applied |
 | 78 | Monitor constraints | partial | parsed; a monitor constraint does not filter the matched steps |
 | 79 | type extension | yes |  |
-| 80 | override declaration | no | parsed; overrides are not applied |
+| 80 | override declaration | yes | type and instance overrides are applied when an action is traversed |
 | 81 | package declaration | yes |  |
 | 82 | import statement | yes |  |
 | 83 | exec block declaration | yes |  |
@@ -133,8 +134,8 @@ were not.
 | 105 | compile assert statement | partial | parsed and recorded, not evaluated |
 | 106 | String formatting and output functions | partial | `print`/`message` are recorded; `format` returns no string |
 | 107 | Runtime messaging function | yes |  |
-| 108 | Text file operations using file handles | no |  |
-| 109 | Simple text file operations | no |  |
+| 108 | Text file operations using file handles | partial | accepted and have no effect on the scenario |
+| 109 | Simple text file operations | partial | accepted and have no effect on the scenario |
 | 110 | Error reporting functions | yes |  |
 | 111 | Randomization functions | yes |  |
 | 112 | Floating-point storage types | yes |  |
@@ -142,33 +143,33 @@ were not.
 | 114 | float_exponent function | yes |  |
 | 115 | float_sign function | yes |  |
 | 116 | to_float function | yes |  |
-| 117 | Executor component | no |  |
-| 118 | Executor group component | no |  |
-| 119 | Executor claim struct | no |  |
-| 120 | Executor query function | no |  |
-| 121 | Generic address space component | partial | address regions are modelled; traits and claims are not |
+| 117 | Executor component | partial | parsed as a component type; no executor-specific behaviour is modelled |
+| 118 | Executor group component | partial | parsed; no executor-specific behaviour is modelled |
+| 119 | Executor claim struct | partial | parsed; claim allocation does not go through an executor |
+| 120 | Executor query function | partial | parsed; the query is not evaluated |
+| 121 | Generic address space component | partial | parsed; regions are modelled and claims allocate from them, but traits are not matched |
 | 122 | Contiguous address space component | partial |  |
 | 123 | Transparent address space component | partial |  |
 | 124 | Base address region type | partial |  |
 | 125 | Contiguous address space region type | partial |  |
 | 126 | Transparent region type | partial |  |
-| 127 | Base address space claim type | no |  |
-| 128 | Contiguous address space claim type | no |  |
-| 129 | Transparent contiguous address space claim type | no |  |
-| 130 | Address space group | no |  |
-| 131 | packed_s base struct | partial | parsed; the packed little-endian layout drives register field packing (24.10.1) |
-| 132 | sizeof_s struct | yes | `sizeof_s<T>::nbits` / `::nbytes` for packed structs, bit vectors and scalars |
-| 133 | Address space handle | yes | a handle is an index into the instance's handle table, holding its absolute address |
-| 134 | make_handle_from_claim function | yes | a handle at the claim's address plus an offset |
-| 135 | make_handle_from_handle function | yes | a handle at another handle's address plus an offset |
-| 136 | addr_value function | yes | the handle's absolute address |
-| 137 | addr_value_solve function | yes | as addr_value: regions of an address space are transparent, so the absolute address is known |
-| 138 | addr_value_abs function | yes | true for a transparent region, which every region added to an address space is |
-| 139 | get_tag function | partial | the region's tag *index* is returned; the engine has no string values, so the name itself is not comparable |
-| 140 | Primitive read operations for byte addressable spaces | yes | `read8` / `read16` / `read32` / `read64`, little-endian over a byte-addressable store |
-| 141 | Primitive write operations for byte addressable spaces | yes | `write8` / `write16` / `write32` / `write64`, little-endian over a byte-addressable store |
-| 142 | Read and write series of bytes | partial | `write_bytes` takes a literal list; `read_bytes` into a list is not supported |
-| 143 | Read and write packed structs | no |  |
+| 127 | Base address space claim type | partial | claims are allocated first-fit from a region; trait matching is not applied |
+| 128 | Contiguous address space claim type | partial |  |
+| 129 | Transparent contiguous address space claim type | partial |  |
+| 130 | Address space group | partial | parsed as a component type |
+| 131 | packed_s base struct | partial | parsed; the packed little-endian layout drives register and struct packing (24.10.1) |
+| 132 | sizeof_s struct | yes |  |
+| 133 | Address space handle | yes |  |
+| 134 | make_handle_from_claim function | yes |  |
+| 135 | make_handle_from_handle function | yes |  |
+| 136 | addr_value function | yes |  |
+| 137 | addr_value_solve function | yes |  |
+| 138 | addr_value_abs function | yes |  |
+| 139 | get_tag function | partial | the region's tag *index* is returned; the engine has no string values |
+| 140 | Primitive read operations for byte addressable spaces | yes |  |
+| 141 | Primitive write operations for byte addressable spaces | yes |  |
+| 142 | Read and write series of bytes | yes | `write_bytes` takes a literal list; `read_bytes` fills one |
+| 143 | Read and write packed structs | yes |  |
 | 144 | Primitive operation implementation functions | partial | the primitives are implemented in the engine rather than delegated to an executor instance |
-| 145 | PSS register definition | yes | `reg_c<R, ACC, SZ>` declarations plus read / read_val / write / write_val / write_masked / write_field, over a register store |
+| 145 | PSS register definition | yes | `reg_c<R, ACC, SZ>` declarations plus the register access functions over a register store |
 | 146 | PSS register group definition | partial | `reg_group_c` is parsed; offsets come from the group's own get_offset_of_* functions, which are not evaluated |

@@ -13,6 +13,38 @@ approximated.
 
 ---
 
+## 0.15.0 — 2026-10-25
+
+The last of the constructs, and the corpus fully met
+
+The feature matrix closes at **92 implemented, 53 partial, 1 not**: the only
+construct with no implementation is the string slice operator, which needs a
+string value model the engine does not have.
+
+Finished here:
+
+- **`symbol`** (12.7) — a named activity fragment, expanded in place where it is
+  called. It was parsed and then silently produced *no* steps.
+- **`override`** (20.5) — `type A with B` and `instance path with B`, applied
+  when an action is traversed.
+- **Address claims** (24.8) — a claim struct instance is allocated first-fit
+  from an address region, so the claimed address is visible to the action.
+- **`read_bytes`** (24.10.9.3) and **`read_struct` / `write_struct`**
+  (24.10.9.4) — a packed struct is laid out little-endian over memory and read
+  back; a byte series fills a list.
+- **Target-code `{{ }}` templates** (22.2) — an opening `{{` with no matching
+  `}}` in a triple-quoted block is now an error.
+
+That closes the shared corpus completely:
+
+```
+  buckets that must parse: 97 passed, 0 failed
+  pathological             7 files, 7 correctly rejected, 0 wrongly accepted
+  compliance             114 files, 114 parsed, 0 failed
+```
+
+86 tests (5 new).
+
 ## 0.14.0 — 2026-10-25
 
 The rest of the psstools organization

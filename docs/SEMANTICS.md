@@ -94,6 +94,12 @@ With `:/`, `[100..102 :/ 6, 200 := 2]` gives 25.3 / 25.5 / 24.8 / 24.3 % against
 | `exec init_down` / `init_up` | 22.1 | run for the component hierarchy before the scenario, `init_down` top-down and `init_up` bottom-up |
 | collection mutators in `exec` | 7.9.3.2 | `push_back`, `push_front`, `pop_back`, `pop_front`, `insert`, `delete`, `clear`, `shuffle` build a list that constraints can then read |
 | scheduling constraint | 16.2 | `constraint parallel { a, b };` / `constraint sequence { a, b };` is parsed and recorded; the engine walks the activity in one deterministic order, so `sequence` holds by construction |
+| `symbol` declarations | 12.7 | a named activity fragment, expanded in place where it is called |
+| `override` | 20.5 | `type A with B` and `instance path with B` are applied when an action is traversed |
+| address claims | 24.8 | a claim struct instance is allocated first-fit from an address region, so its address is visible to the action |
+| `read_bytes` | 24.10.9.3 | fills a list with consecutive bytes from an address |
+| `read_struct` / `write_struct` | 24.10.9.4 | a packed struct is laid out little-endian over memory and read back |
+| target-code `{{ }}` templates | 22.2 | an opening `{{` with no matching `}}` in a triple-quoted block is an error |
 | collection literal assignment | 8.5 | `L = {a, b, c};` in `exec` gives a collection its elements |
 | floating-point literals | 1 | `20.14`, `2e6`, `1_0.2_5`; the value is the IEEE-754 bit pattern, as for `float_pkg` |
 | based literals | 1 | `4'b1010`, `8'hFF`, `64'd2` and the signed forms `4'sd12`, `16'sH_FF` — the token carries the *value*, the size being a width hint |
@@ -130,18 +136,16 @@ methods for arrays (7.9.2.2). The real list is below.
 | monitor inheritance | 19.6 | a monitor's base type is parsed but not applied |
 | `exec` statements other than assignment, `if` and method calls | 10.4 | `for`/`while` loops and target-code templates are passed through to the backends, not executed |
 | `repeat { … } while (cond);` in an activity | 12.2.5 | parsed and the condition recorded, but the engine has no state the condition could observe, so the body is traversed once |
-| target-code `{{ }}` templates | 22.2 | the contents of a triple-quoted block are treated as opaque text; an unclosed `{{` is not detected |
 | `join_first(n)`'s run-time dependency | 12.3.6.1d | imposes no *scheduling* order (correct), but there is no runtime, so the "first n to complete" part is not simulated |
 | multiple `dist` directives on one attribute | 16.1.9 | weights are summed; the LRM leaves the resulting distribution undefined |
 | stream vs buffer consumption | 13 | a flow object may be referenced by several inputs; consume-once semantics for streams are not enforced |
 | `import`-based scope checking | 9 | name resolution uses `pkg::name` and `Component::action`, not `import` |
 | `exec body` | 22.1 | not run at solve time, which is correct: the body is *target* code and is emitted into the generated C and SystemVerilog. `pre_body` is the solve-time hook. |
 | register group offsets | 24.11.2 | `reg_group_c` is parsed, but the offsets come from the group's own `get_offset_of_instance` / `get_offset_of_instance_array` / `get_offset_of_path` functions, which are not evaluated |
-| address traits and claims | 24.6-24.8 | address *regions* are modelled; traits, claims and handles are not |
+| address trait *matching* | 24.8.6 | claims are allocated first-fit from the first region with room; a claim's trait attributes are not matched against a region's traits |
+| executor behaviour | 24.10.9.5 | executor components are parsed, but read/write/`addr_value` are implemented in the engine rather than delegated to an executor instance |
 | register read/write primitives | 24.10.9 | register access is modelled over a register store, not translated into the primitive byte-level read/write operations on an address |
 | `get_tag` | 24.10.8 | returns the region's tag *index*; the engine has no string values, so the tag name itself is not comparable |
-| `read_bytes` | 24.10.9.3 | `write_bytes` takes a literal list; reading a series into a list is not supported |
-| `read_struct` / `write_struct` | 24.10.9.4 | not implemented — packed-struct access goes through the byte primitives only |
 | executor-based customisation | 24.10.9.5 | the primitives are implemented in the engine rather than delegated to an executor instance |
 | target-code templates (`exec declaration` bodies) | 22.2 | carried through to the backends verbatim, not interpreted |
 

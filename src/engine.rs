@@ -165,6 +165,8 @@ struct Engine<'a> {
     exec_action: Option<crate::ir::Action>,
     /// Next address-handle index (PSS 24.10.3).
     handle_seq: i64,
+    /// Bump pointer for address claims, per region (PSS 24.8).
+    claim_cursor: Vec<i64>,
     /// Text emitted by the standard library's messaging functions.
     messages: Vec<String>,
     /// Values established by component `init_down`/`init_up` blocks, visible to
@@ -254,6 +256,7 @@ pub fn run_scenario(model: &Model, root_action: &str, seed: u64) -> Scenario {
         globals: BTreeMap::new(),
         exec_action: None,
         handle_seq: 0,
+        claim_cursor: Vec::new(),
         coverage: BTreeMap::new(),
         coverage_bins: BTreeMap::new(),
     };
@@ -717,6 +720,25 @@ impl<'a> Engine<'a> {
             ActivityStmt::Atomic(body) => {
                 self.walk_activity(body, component.to_string(), depth, StepMode::Atomic, group, ctx);
             }
+            // `name();` — a call to a `symbol` fragment (PSS 12.7). The symbol's
+            // activity is walked in place, so it has the same effect as writing
+            // the fragment inline.
+            ActivityStmt::SymbolCall(name, _args) => {
+                let body = self
+                    .model
+                    .components
+                    .get(component)
+                    .and_then(|c| c.symbols.get(name).cloned());
+                match body {
+                    Some(b) => {
+                        self.walk_activity(&b, component.to_string(), depth, mode, group, ctx)
+                    }
+                    None => self.warnings.push(format!(
+                        "symbol `{}` is not declared in component `{}` (PSS 12.7)",
+                        name, component
+                    )),
+                }
+            }
             // A scheduling constraint between action handles (PSS 16.2,
             // Syntax 62). The engine walks the activity in one deterministic
             // order, so `sequence` holds by construction; `parallel` records
@@ -752,6 +774,27 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// Apply `override` statements (PSS 20.5): a type override replaces every
+    /// instance of the named type, an instance override replaces one path.
+    fn apply_override(&self, comp: &str, full_path: &str, action: &str) -> String {
+        let list = match self.model.components.get(comp) {
+            Some(c) => c.overrides.clone(),
+            None => return action.to_string(),
+        };
+        for ov in list {
+            let hit = match &ov.instance {
+                Some(inst) => {
+                    inst == full_path || full_path.ends_with(&format!(".{}", inst))
+                }
+                None => ov.from == action,
+            };
+            if hit {
+                return ov.to;
+            }
+        }
+        action.to_string()
+    }
+
     fn dispatch(&mut self, path: &Path, component: &str, depth: usize, mode: StepMode, group: u32) {
         let (target_component, action_name) = split_action_ref(path);
         let comp = if let Some(c) = target_component {
@@ -759,6 +802,7 @@ impl<'a> Engine<'a> {
         } else {
             component.to_string()
         };
+        let action_name = self.apply_override(&comp, &path.segments.join("."), &action_name);
         match self.model.find_action(Some(&comp), &action_name).cloned() {
             Some(act) => self.walk_action(&act, comp, depth, mode, group, false),
             None => self.push_unresolved(&action_name, comp, path, depth, mode, group),
@@ -1009,6 +1053,52 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// True when a type is an address claim (PSS 24.8.1): its name says so, or
+    /// its base chain reaches `addr_claim_base_s`.
+    fn is_claim_type(&self, ty: &str) -> bool {
+        let leaf = ty.rsplit("::").next().unwrap_or(ty).to_string();
+        if leaf.contains("claim") {
+            return true;
+        }
+        let mut cur = leaf;
+        for _ in 0..8 {
+            match self.lookup_type(&cur) {
+                Some(dt) => match &dt.base {
+                    Some(b) if b.contains("claim") => return true,
+                    Some(b) => cur = b.rsplit("::").next().unwrap_or(b).to_string(),
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
+        false
+    }
+
+    /// Allocate `size` bytes from the model's address regions, first fit
+    /// (PSS 24.8). Returns the absolute address.
+    fn alloc_claim(&mut self, size: i64) -> Option<i64> {
+        let regions: Vec<(i64, i64)> = self
+            .model
+            .addr_regions
+            .iter()
+            .map(|r| (r.base, r.size))
+            .collect();
+        if regions.is_empty() {
+            return None;
+        }
+        while self.claim_cursor.len() < regions.len() {
+            self.claim_cursor.push(0);
+        }
+        for (i, (base, rsize)) in regions.iter().enumerate() {
+            let used = self.claim_cursor[i];
+            if used + size <= *rsize {
+                self.claim_cursor[i] = used + size;
+                return Some(base + used);
+            }
+        }
+        None
+    }
+
     /// A declared type by name: the resolved key first, then any type whose
     /// leaf name matches.
     fn lookup_type(&self, name: &str) -> Option<&crate::ir::DataType> {
@@ -1024,8 +1114,96 @@ impl<'a> Engine<'a> {
             .map(|(_, v)| v)
     }
 
-    /// `write8` / `write16` / `write32` / `write64` / `write_bytes` — store
-    /// bytes little-endian at the handle's address (PSS 24.10.9.2, 24.10.9.3).
+    /// `read_bytes(h, data, size)` and `read_struct(h, s)` — read from memory
+    /// into the caller's argument (PSS 24.10.9.3, 24.10.9.4).
+    fn exec_mem_read(&mut self, name: &str, args: &[Expr], values: &mut BTreeMap<String, i64>) {
+        let method = name.rsplit_once('.').map(|(_, m)| m).unwrap_or(name);
+        let arg = |k: usize| args.get(k).and_then(|a| eval_value(a, values, self.model, self.seed));
+        let h = match arg(0) {
+            Some(h) => h,
+            None => return,
+        };
+        let base = match values.get(&format!("__h.{}.addr", h)).copied() {
+            Some(a) => a,
+            None => return,
+        };
+        let target = match args.get(1) {
+            Some(Expr::Path(p)) => p.segments.join("."),
+            _ => return,
+        };
+        let byte = |values: &BTreeMap<String, i64>, a: i64| {
+            values.get(&format!("__mem.{}", a)).copied().unwrap_or(0) & 0xFF
+        };
+        match method {
+            "read_bytes" => {
+                let n = arg(2).unwrap_or(0).max(0);
+                for i in 0..n {
+                    let b = byte(values, base + i);
+                    values.insert(format!("{}[{}]", target, i), b);
+                }
+                values.insert(format!("{}.size", target), n);
+            }
+            "read_struct" => {
+                let ty = match self.var_type(&target) {
+                    Some(t) => t,
+                    None => return,
+                };
+                let fields = self.packed_fields(&ty);
+                let total: i64 = fields.iter().map(|(_, o, w)| o + w).max().unwrap_or(0);
+                let nbytes = (total + 7) / 8;
+                let mut word: i64 = 0;
+                for i in 0..nbytes {
+                    word |= byte(values, base + i) << (8 * i);
+                }
+                for (fname, off, w) in &fields {
+                    let mask = if *w >= 64 { -1i64 } else { (1i64 << w) - 1 };
+                    values.insert(format!("{}.{}", target, fname), (word >> off) & mask);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The declared type of a variable, searched across the model's actions and
+    /// components. Used to lay a packed struct out over memory.
+    fn var_type(&self, path: &str) -> Option<String> {
+        let leaf = path.rsplit('.').next().unwrap_or(path);
+        for c in self.model.components.values() {
+            for f in &c.fields {
+                if f.name == leaf {
+                    return Some(f.type_name.clone());
+                }
+            }
+        }
+        for a in self.model.actions.values() {
+            for f in &a.fields {
+                if f.name == leaf {
+                    return Some(f.type_name.clone());
+                }
+            }
+        }
+        None
+    }
+
+    /// `(field name, offset, width)` for a packed struct, packed little-endian
+    /// from the least-significant bit in declaration order (PSS 24.10.1).
+    fn packed_fields(&self, type_name: &str) -> Vec<(String, i64, i64)> {
+        let mut out = Vec::new();
+        let dt = match self.lookup_type(type_name) {
+            Some(d) => d,
+            None => return out,
+        };
+        let mut off = 0i64;
+        for f in &dt.fields {
+            let w = f.bits.unwrap_or(1);
+            out.push((f.name.clone(), off, w));
+            off += w;
+        }
+        out
+    }
+
+    /// `write8` / `write16` / `write32` / `write64` / `write_bytes` / `write_struct`
+    /// — store bytes little-endian at the handle's address (PSS 24.10.9.2-24.10.9.4).
     fn exec_mem_write(&mut self, name: &str, args: &[Expr], values: &mut BTreeMap<String, i64>) {
         let method = name.rsplit_once('.').map(|(_, m)| m).unwrap_or(name).to_string();
         let method = method.as_str();
@@ -1038,6 +1216,36 @@ impl<'a> Engine<'a> {
             Some(a) => a,
             None => return,
         };
+        // `write_struct(h, s)` lays the packed struct out and stores its bytes
+        // (PSS 24.10.9.4).
+        if method == "write_struct" {
+            let vpath = match args.get(1) {
+                Some(Expr::Path(p)) => p.segments.join("."),
+                _ => return,
+            };
+            let ty = match self.var_type(&vpath) {
+                Some(t) => t,
+                None => return,
+            };
+            let fields = self.packed_fields(&ty);
+            let mut word: i64 = 0;
+            let mut total = 0i64;
+            for (fname, off, w) in &fields {
+                if let Some(v) = values.get(&format!("{}.{}", vpath, fname)).copied() {
+                    let mask = if *w >= 64 { -1i64 } else { (1i64 << w) - 1 };
+                    word |= (v & mask) << off;
+                }
+                total = total.max(off + w);
+            }
+            let nbytes = (total + 7) / 8;
+            for i in 0..nbytes {
+                values.insert(
+                    format!("__mem.{}", base + i),
+                    (word >> (8 * i)) & 0xFF,
+                );
+            }
+            return;
+        }
         let bytes: Vec<i64> = match method {
             "write8" => vec![arg(1).unwrap_or(0) & 0xFF],
             "write16" => (0..2).map(|i| (arg(1).unwrap_or(0) >> (8 * i)) & 0xFF).collect(),
@@ -1253,9 +1461,19 @@ impl<'a> Engine<'a> {
         // The primitives are free functions (`write32(h, v)`), not methods.
         if matches!(
             name.rsplit_once('.').map(|(_, m)| m).unwrap_or(name),
-            "write8" | "write16" | "write32" | "write64" | "write_bytes"
+            "write8" | "write16" | "write32" | "write64" | "write_bytes" | "write_struct"
         ) {
             self.exec_mem_write(name, args, values);
+            return;
+        }
+
+        // Read operations that write into their argument (PSS 24.10.9.3,
+        // 24.10.9.4): `read_bytes(h, data, size)` and `read_struct(h, s)`.
+        if matches!(
+            name.rsplit_once('.').map(|(_, m)| m).unwrap_or(name),
+            "read_bytes" | "read_struct"
+        ) {
+            self.exec_mem_read(name, args, values);
             return;
         }
 
@@ -1646,6 +1864,26 @@ impl<'a> Engine<'a> {
         for (k, v) in &pre {
             solved.entry(k.clone()).or_insert(*v);
         }
+        // Address claims declared on the action are allocated from an address
+        // region (PSS 24.8), so the claimed address is visible to `post_solve`
+        // and to `make_handle_from_claim`.
+        for f in &action.fields {
+            if !self.is_claim_type(&f.type_name) {
+                continue;
+            }
+            let size = solved.get(&format!("{}.size", f.name)).copied().unwrap_or(64);
+            match self.alloc_claim(size) {
+                Some(addr) => {
+                    solved.insert(format!("{}.addr", f.name), addr);
+                    solved.insert(format!("{}.size", f.name), size);
+                }
+                None => self.warnings.push(format!(
+                    "address claim `{}` could not be satisfied: no region has {} bytes free (PSS 24.8)",
+                    f.name, size
+                )),
+            }
+        }
+
         for e in action.execs.iter().filter(|e| e.kind == "post_solve") {
             self.exec_stmts(&e.stmts, &mut solved);
         }

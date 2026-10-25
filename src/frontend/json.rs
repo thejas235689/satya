@@ -201,6 +201,8 @@ pub fn model_from_json(src: &str) -> PssResult<Model> {
             model.components.insert(
                 name.clone(),
                 Component {
+                    symbols: std::collections::HashMap::new(),
+                    overrides: Vec::new(),
                     reg_value_type: None,
                     reg_access: "READWRITE".to_string(),
                     reg_size: None,

@@ -1282,6 +1282,54 @@ impl Parser {
             self.covergroups.push(cg);
             return Ok(CompItem::Raw("covergroup".into()));
         }
+        // `override { type A with B; instance p with B; }` (PSS 20.5).
+        if self.at_ident("override") && self.peek_at(1).is_punct("{") {
+            self.bump();
+            self.bump();
+            let mut list = Vec::new();
+            while !self.at_punct("}") && !self.at_eof() {
+                if self.eat_punct(";") {
+                    continue;
+                }
+                let is_instance = self.at_ident("instance");
+                if self.at_ident("type") || is_instance {
+                    self.bump();
+                } else {
+                    self.skip_braced_or_semicolon();
+                    continue;
+                }
+                let from = if is_instance {
+                    self.parse_scoped_path()?.segments.join(".")
+                } else {
+                    self.parse_scoped_path()?.leaf().to_string()
+                };
+                if self.eat_ident("with") {
+                    let to = self.parse_scoped_path()?.leaf().to_string();
+                    self.eat_punct(";");
+                    list.push(OverrideDecl {
+                        instance: if is_instance { Some(from.clone()) } else { None },
+                        from: if is_instance { String::new() } else { from },
+                        to,
+                    });
+                } else {
+                    self.skip_to_semicolon();
+                }
+            }
+            self.expect_punct("}")?;
+            self.eat_punct(";");
+            return Ok(CompItem::Override(list));
+        }
+        // `symbol NAME [(params)] { activity_stmts }` (PSS 12.7, Syntax 43).
+        if self.at_ident("symbol") {
+            self.bump();
+            let name = self.expect_ident()?;
+            if self.at_punct("(") {
+                self.skip_parens();
+            }
+            let body = self.parse_activity_block()?;
+            self.eat_punct(";");
+            return Ok(CompItem::Symbol { name, body });
+        }
         if self.at_ident("monitor") {
             let m = self.parse_monitor()?;
             self.monitors.push(m);
@@ -1551,6 +1599,22 @@ impl Parser {
                         label,
                         stmt: Box::new(stmt),
                     }));
+            }
+            // `name();` / `name(args);` — a call to a `symbol` fragment
+            // (PSS 12.7, `symbol_call`).
+            if !keyword && self.peek_at(1).is_punct("(") {
+                let name = self.expect_ident()?;
+                self.expect_punct("(")?;
+                let mut args = Vec::new();
+                while !self.at_punct(")") && !self.at_eof() {
+                    args.push(self.parse_expr(0)?);
+                    if !self.eat_punct(",") {
+                        break;
+                    }
+                }
+                self.expect_punct(")")?;
+                self.eat_punct(";");
+                return Ok(Some(ActivityStmt::SymbolCall(name, args)));
             }
             // A bare action traversal: `a1;`, `a1 with {..};`, `comp::a1;`.
             if !keyword

@@ -185,6 +185,19 @@ impl Lexer {
                         self.bump();
                         self.bump();
                         self.bump();
+                        // Target code embeds PSS expressions as `{{ expr }}`
+                        // (PSS 22.2). An opening `{{` with no matching `}}` is
+                        // malformed. Only the *open* side is checked: ordinary
+                        // code may legitimately contain `}}` closing two
+                        // nested braces, so counting both ways would reject
+                        // valid target code.
+                        if s.matches("{{").count() > s.matches("}}").count() {
+                            return Err(PssError::new(
+                                "unclosed `{{` template expression in target code",
+                                line,
+                                col,
+                            ));
+                        }
                         break;
                     }
                     match self.bump() {

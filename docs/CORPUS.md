@@ -28,8 +28,7 @@ The tool exits non-zero if any bucket misses its expectation, so it can gate CI.
   lexical          4 file(s)    4 parsed   0 failed   [ok]
 --------------------------------------------------------------
   buckets that must parse: 97 passed, 0 failed
-  pathological     7 file(s)    6 correctly rejected   1 wrongly accepted
-        wrongly accepted: unclosed_mustache.pss
+  pathological     7 file(s)    7 correctly rejected   0 wrongly accepted
 ```
 
 **97/97** of the buckets that must parse, and 6 of 7 pathological files
@@ -157,16 +156,20 @@ Three more defects, none of which the corpus alone exposed:
   `}` with it. Found by `sphinx-pss`'s activity fixtures. Now parsed and
   recorded.
 
-## What is still not met
+## Every expectation is now met
 
-One file: **`pathological/unclosed_mustache.pss`**. It contains an unclosed
-`{{` template expression inside target code. Satya treats the contents of a
-triple-quoted target-code block as opaque text and does not validate the `{{ }}`
-template syntax within it, so it accepts the file. Validating target-code
-templates is not implemented.
+```
+  buckets that must parse: 97 passed, 0 failed
+  pathological             7 file(s)    7 correctly rejected   0 wrongly accepted
+  compliance             114 file(s)  114 parsed   0 failed
+```
 
-That is the honest state: 97/97 on what must parse, 6/7 on what must not, and
-114/114 on the compliance tier.
+**97/97, 7/7, 114/114.** The last pathological file,
+`unclosed_mustache.pss`, contains an unclosed `{{` template expression in
+target code; a triple-quoted block is now checked for an opening `{{` with no
+matching `}}`. Only the *open* side is checked — ordinary code may legitimately
+contain `}}` closing two nested braces, so counting both ways would reject
+valid target code.
 
 ## A note on the `dist` spelling
 

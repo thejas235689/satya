@@ -142,6 +142,10 @@ pub struct Component {
     pub actions: Vec<String>,
     pub pools: Vec<Pool>,
     pub binds: Vec<Bind>,
+    /// Named activity fragments declared with `symbol` (PSS 12.7).
+    pub symbols: HashMap<String, crate::ast::Activity>,
+    /// `override` statements in this component (PSS 20.5).
+    pub overrides: Vec<crate::ast::OverrideDecl>,
     pub execs: Vec<ExecBlock>,
     pub constraints: Vec<Constraint>,
 }
@@ -265,6 +269,9 @@ struct RawType {
 
 #[derive(Default)]
 struct RawComponent {
+    /// `symbol` declarations, as (name, activity) (PSS 12.7).
+    symbols: Vec<(String, crate::ast::Activity)>,
+    overrides: Vec<crate::ast::OverrideDecl>,
     /// `reg_c<R, ACC, SZ>` template arguments, when this is a register.
     reg_value_type: Option<String>,
     reg_access: String,
@@ -419,6 +426,18 @@ impl Lowerer {
                 CompItem::Pool(p) => self.raw_components.get_mut(&c.name).unwrap().pools.push(p.clone()),
                 CompItem::Bind(b) => self.raw_components.get_mut(&c.name).unwrap().binds.push(b.clone()),
                 CompItem::Exec(x) => self.raw_components.get_mut(&c.name).unwrap().execs.push(x.clone()),
+                CompItem::Override(list) => self
+                    .raw_components
+                    .get_mut(&c.name)
+                    .unwrap()
+                    .overrides
+                    .extend(list.clone()),
+                CompItem::Symbol { name, body } => self
+                    .raw_components
+                    .get_mut(&c.name)
+                    .unwrap()
+                    .symbols
+                    .push((name.clone(), body.clone())),
                 CompItem::Constraint(cn) => self.raw_components.get_mut(&c.name).unwrap().constraints.push(cn.clone()),
                 CompItem::Enum(en) => {
                     let entry = self.model.enums.entry(en.name.clone()).or_default();
@@ -773,6 +792,8 @@ impl Lowerer {
                         .and_then(|c| c.eval_const(&|n| self.model.constants.get(n).copied())),
                 })
                 .collect();
+            let symbols: HashMap<String, crate::ast::Activity> = rc.symbols.iter().cloned().collect();
+            let overrides = rc.overrides.clone();
             let binds = rc
                 .binds
                 .iter()
@@ -795,6 +816,8 @@ impl Lowerer {
                     actions,
                     pools,
                     binds,
+                    symbols,
+                    overrides,
                     execs: rc.execs.clone(),
                     constraints: self.lower_constraints(&rc.constraints),
                 },

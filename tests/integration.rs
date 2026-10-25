@@ -1808,3 +1808,106 @@ component C {
     );
     assert!(s.messages.iter().any(|m| m.contains("sequence {s3, s4}")), "{:?}", s.messages);
 }
+
+// ---------------------------------------------------------------------------
+// The constructs finished last: symbol, override, claims, struct access and
+// target-code template validation.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_symbol_expands_in_place() {
+    // PSS 12.7: `symbol s { ... }` is referenced as `s();` and has the same
+    // effect as writing the fragment inline.
+    let src = r#"
+component C {
+  action A {};
+  symbol twice { do A; do A; };
+  action t { activity { twice(); } };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "t", 1);
+    assert_eq!(s.steps.len(), 2, "the symbol's two traversals");
+}
+
+#[test]
+fn an_override_replaces_the_traversed_type() {
+    // PSS 20.5: `override { type A with B; }` makes every A a B.
+    let src = r#"
+component C {
+  action base_a { rand int v; };
+  action x_a : base_a { rand int extra; };
+  action t { activity { do base_a; } };
+  override { type base_a with x_a; }
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "t", 1);
+    assert_eq!(s.steps[0].action, "x_a");
+}
+
+#[test]
+fn an_address_claim_is_allocated_from_a_region() {
+    // PSS 24.8: a claim struct instance is satisfied by allocation from a
+    // region, so its address is visible to the action.
+    let src = r#"
+package p { struct my_trait_s : addr_trait_s { rand int core; }; };
+component C {
+  exec init_up { mem_region.addr = 0x400; mem_region.size = 4096; }
+  action a {
+    transparent_addr_claim_s<my_trait_s> claim;
+    constraint claim.size == 64;
+    rand int v;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| s.steps[0].fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v);
+    assert_eq!(get("claim.size"), Some(64));
+    assert_eq!(get("claim.addr"), Some(0x400), "allocated at the region base");
+}
+
+#[test]
+fn packed_structs_round_trip_through_memory() {
+    // PSS 24.10.9.4: write_struct lays the packed struct out little-endian, and
+    // read_struct brings it back.
+    let src = r#"
+package p { struct ctl_s : packed_s<> { bit[1] en; bit[3] mode; bit[4] rsvd; }; };
+component C {
+  exec init_up { mem_region.addr = 0x400; mem_region.size = 4096; }
+  action a {
+    ctl_s s; ctl_s t;
+    list<bit[8]> bytes;
+    addr_handle_t h;
+    int mode_back; int n;
+    exec pre_solve {
+      h = make_handle_from_claim(mem_region, 0);
+      s.en = 1; s.mode = 5; s.rsvd = 10;
+      write_struct(h, s);
+      read_struct(h, t);
+      mode_back = t.mode;
+      read_bytes(h, bytes, 2);
+      n = bytes.size;
+    }
+    rand int v;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| s.steps[0].fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v).unwrap();
+    assert_eq!(get("mode_back"), 5, "the struct round-trips");
+    assert_eq!(get("n"), 2, "read_bytes filled the list");
+    // 1 | (5 << 1) | (10 << 4) == 171, stored at the handle's address.
+    assert_eq!(get("bytes[0]"), 171);
+}
+
+#[test]
+fn an_unclosed_template_expression_in_target_code_is_rejected() {
+    // The corpus marks this pathological. Balanced braces and real template
+    // expressions must still be accepted.
+    assert!(compile_pss("action a { exec body C = \"\"\"printf(\"{{ x);\"\"\"; }").is_err());
+    assert!(compile_pss("action a { exec body C = \"\"\"{{ x + 1 }}\"\"\"; }").is_ok());
+    assert!(compile_pss("action a { exec body { int m[2][2] = {{1,2},{3,4}}; } }").is_ok());
+}
