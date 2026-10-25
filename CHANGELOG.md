@@ -13,6 +13,43 @@ approximated.
 
 ---
 
+## 0.13.0 — 2026-10-25
+
+Checked against the shared PSS corpus
+
+Satya was run against [`psstools/pss-corpus`](https://github.com/psstools/pss-corpus),
+whose `manifest.toml` states which buckets must parse and which must not — an
+expectation set outside this repository. The first run passed **85/97** and
+wrongly accepted **3 of 7** pathological files. Nine defects came out of it; see
+[`docs/CORPUS.md`](docs/CORPUS.md).
+
+The most serious was not a parse gap but a **silent correctness bug**: sized
+literals lexed as two tokens and the value was discarded, so `4'b1010`
+evaluated to 4, `8'hFF` to 8 and `64'd2` to 64. Every sized literal in every
+model was wrong, and it parsed cleanly, so nothing ever reported it. The 0.3.0
+notes had claimed this was fixed; they were wrong.
+
+Also fixed: floating-point literals, signed based literals (`4'sd12`), escaped
+identifiers (`\name`), the `**` operator (which was silently *dropping* the
+constraints it appeared in), `open_range_list` values mixed with ranges (the
+parser accepted them, the solver ignored the ranges), qualified constants as
+array extents and pool counts, imported function declarations with `type` and
+language qualifiers, nested package names, activity `repeat { } while`, and
+monitor statements without braces. Parse errors now carry a line and column —
+they previously did not, which made all of the above harder to find than it
+should have been.
+
+**Current: 97/97 of the buckets that must parse, 6/7 pathological correctly
+rejected.** The one remaining is an unclosed `{{ }}` template in target code,
+which Satya treats as opaque text.
+
+Note on the LRM figures: the raw count falls from 157 to 154 of 160, because
+three extracted "examples" are LRM *prose* containing apostrophes that the
+looser lexer silently skipped. The stricter lexer is correct; the old number was
+inflated by leniency.
+
+78 tests (5 new).
+
 ## 0.12.0 — 2026-10-23
 
 Verifying a list of claimed features, and correcting one

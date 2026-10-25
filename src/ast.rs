@@ -4,7 +4,7 @@
 //! symbols). Name resolution and semantic checks happen during IR lowering.
 
 /// A dotted/scoped path such as `pssm_pkg::data_buf_h` or `data_buf_out.mem_seg`.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Path {
     pub segments: Vec<String>,
 }
@@ -37,7 +37,7 @@ impl std::fmt::Display for Path {
 }
 
 /// A reference to a type, possibly templated and possibly bit-sized.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TypeRef {
     pub path: Path,
     pub template_args: Vec<TypeRef>,
@@ -82,7 +82,7 @@ pub enum MemberKind {
     Share,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Member {
     pub kind: MemberKind,
     pub ty: TypeRef,
@@ -96,7 +96,7 @@ pub struct Member {
     pub is_static: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EnumDecl {
     pub name: String,
     pub variants: Vec<String>,
@@ -104,7 +104,7 @@ pub struct EnumDecl {
     pub base: Option<Path>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TypeDecl {
     /// `struct`, `resource`, `buffer` or `state`.
     pub keyword: String,
@@ -116,7 +116,7 @@ pub struct TypeDecl {
     pub is_extend: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ConstraintBlock {
     pub name: Option<String>,
     pub is_default: bool,
@@ -127,7 +127,7 @@ pub struct ConstraintBlock {
     pub expr: Expr,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ExecBlock {
     /// e.g. `init_up`, `init_down`, `pre_solve`, `post_solve`, `body`, `pre_body`.
     pub kind: String,
@@ -138,7 +138,7 @@ pub struct ExecBlock {
 }
 
 /// A statement inside an `exec` body that Satya understands structurally.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ExecStmt {
     /// `lhs = rhs;`
     Assign(Path, Expr),
@@ -174,7 +174,7 @@ pub enum ExecStmt {
     Raw(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ActionDecl {
     pub name: String,
     pub base: Option<TypeRef>,
@@ -187,14 +187,14 @@ pub struct ActionDecl {
     pub is_extend: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PoolDecl {
     pub ty: TypeRef,
     pub name: String,
     pub count: Option<Expr>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BindDecl {
     pub pool: Path,
     /// `*` binds to every instance of the pool's element type.
@@ -202,7 +202,7 @@ pub struct BindDecl {
     pub target: Option<Path>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ComponentDecl {
     pub name: String,
     pub base: Option<TypeRef>,
@@ -212,7 +212,7 @@ pub struct ComponentDecl {
     pub items: Vec<CompItem>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CompItem {
     Import(Path),
     Member(Member),
@@ -227,13 +227,13 @@ pub enum CompItem {
     Raw(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Package {
     pub name: String,
     pub items: Vec<Item>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Item {
     Import(Path),
     Package(Package),
@@ -251,7 +251,7 @@ pub enum Item {
     Raw(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SourceFile {
     pub items: Vec<Item>,
     /// Covergroups declared anywhere in the file (PSS 18).
@@ -264,14 +264,14 @@ pub struct SourceFile {
 // Activities
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Activity {
     Sequence(Vec<ActivityStmt>),
 }
 
 /// Fine-grained scheduling specifier on a `parallel`/`schedule` block
 /// (PSS 12.3.6).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum JoinSpec {
     /// `join_all` — the default: wait for every branch.
     All,
@@ -286,7 +286,7 @@ pub enum JoinSpec {
 }
 
 /// A coverage point or cross declared in a covergroup (PSS 18.3, 18.4).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CoverItem {
     Coverpoint {
         label: Option<String>,
@@ -302,14 +302,14 @@ pub enum CoverItem {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Covergroup {
     pub name: String,
     pub items: Vec<CoverItem>,
 }
 
 /// A monitor's activity pattern (PSS 19.3, Syntax 69-78).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MonStmt {
     /// `do type [with constraint];` or a named action handle.
     Traverse {
@@ -336,7 +336,7 @@ pub enum MonStmt {
 }
 
 /// A monitor declaration (PSS 19.1, Syntax 68).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Monitor {
     pub name: String,
     /// A monitor declared inside a component is scoped to it.
@@ -347,7 +347,7 @@ pub struct Monitor {
 
 
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ActivityStmt {
     /// `do SomeAction;` — optionally component-qualified.
     Do(Path),
@@ -381,6 +381,8 @@ pub enum ActivityStmt {
         index: Option<String>,
         body: Activity,
         is_replicate: bool,
+        /// `repeat { .. } while (cond);` (Syntax 37) — the loop condition.
+        while_cond: Option<Expr>,
     },
     Foreach {
         var: String,
@@ -410,9 +412,12 @@ pub enum ActivityStmt {
 // Expressions
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Int(i64),
+    /// A floating-point literal (PSS Syntax 1). Its value in the engine is the
+    /// IEEE-754 bit pattern, as for `float_pkg`.
+    Float(f64),
     Str(String),
     Bool(bool),
     /// A reference such as `data_buf_out.mem_seg.trait.row`.

@@ -386,6 +386,7 @@ fn build_activity_stmt(item: &Json) -> PssResult<ActivityStmt> {
     if let Some(b) = obj_get(o, "repeat") {
         let n = obj_get(o, "count").and_then(|v| v.as_i64()).unwrap_or(1);
         return Ok(ActivityStmt::Repeat {
+            while_cond: None,
             count: Expr::Int(n),
             index: None,
             body: build_activity(b)?,

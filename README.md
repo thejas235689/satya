@@ -181,8 +181,10 @@ every code example in the standard itself, and
 UART) with Satya, and [`docs/SEMANTICS.md`](docs/SEMANTICS.md) for what is
 implemented per the standard's defined behaviour and what is only approximated,
 and [`docs/FEATURES.md`](docs/FEATURES.md) for a per-construct feature matrix
-covering all 146 syntax excerpts the standard defines. [`CHANGELOG.md`](CHANGELOG.md)
-records what each release changed.
+covering all 146 syntax excerpts the standard defines, and
+[`docs/CORPUS.md`](docs/CORPUS.md) for the result of running Satya against the
+shared community [PSS corpus](https://github.com/psstools/pss-corpus).
+[`CHANGELOG.md`](CHANGELOG.md) records what each release changed.
 
 ---
 
@@ -377,6 +379,7 @@ satya/
     lrm/             197 code examples extracted from the PSS v3.0 standard
     opentitan/       PSS models of OpenTitan's UART and AES IPs
   tools/
+    pss_corpus_check.py   runs Satya against the shared PSS corpus
     lrm_extract.py   extract examples from the LRM PDF text
     lrm_examples.py  run Satya over every extracted example
   tests/

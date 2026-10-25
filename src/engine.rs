@@ -628,7 +628,12 @@ impl<'a> Engine<'a> {
                 index,
                 body,
                 is_replicate,
+                while_cond,
             } => {
+                // A `while` condition on an activity loop is recorded, but the
+                // engine has no state the condition could observe, so the body
+                // is traversed `count` times (once for the count-less form).
+                let _ = while_cond;
                 let n = eval_count(count, self.model, ctx).unwrap_or(1);
                 let kind = if *is_replicate { "replicate" } else { "repeat" };
                 if n > MAX_REPEAT {

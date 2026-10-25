@@ -59,7 +59,9 @@ pub fn compile_files(paths: &[String]) -> PssResult<ir::Model> {
         let src = std::fs::read_to_string(&path)
             .map_err(|e| PssError::plain(format!("cannot read `{}`: {}", path, e)))?;
         let file = parser::parse_source(&src)
-            .map_err(|e| PssError::plain(format!("{}: {}", path, e.message)))?;
+            // Keep the position: a parse error that cannot say *where* is much
+            // harder to act on.
+            .map_err(|e| PssError::new(format!("{}: {}", path, e.message), e.line, e.col))?;
         items.extend(file.items);
         covergroups.extend(file.covergroups);
         monitors.extend(file.monitors);

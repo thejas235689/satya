@@ -379,6 +379,30 @@ impl Parser {
 
     fn parse_import(&mut self) -> PssResult<Path> {
         self.expect_ident_named("import")?;
+        // `import [solve|target] [C|SV] function ...` — an imported function
+        // declaration (PSS 22.2), not a package import. Look ahead so a package
+        // legitimately named like a qualifier is not swallowed.
+        let mut look = 0usize;
+        if self.peek().is_ident("solve") || self.peek().is_ident("target") {
+            look += 1;
+        }
+        if self.peek_at(look).is_ident("C")
+            || self.peek_at(look).is_ident("SV")
+            || self.peek_at(look).is_ident("SystemVerilog")
+        {
+            look += 1;
+        }
+        if self.peek_at(look).is_ident("static") {
+            look += 1;
+        }
+        if self.peek_at(look).is_ident("function") || self.peek_at(look).is_ident("task") {
+            for _ in 0..=look {
+                self.bump();
+            }
+            self.skip_to_semicolon();
+            self.eat_punct(";");
+            return Ok(Path::simple("__imported_function"));
+        }
         let path = self.parse_scoped_path()?;
         // `import P3::P4 as P2;`
         if self.eat_ident("as") {
@@ -390,7 +414,8 @@ impl Parser {
 
     fn parse_package(&mut self) -> PssResult<Package> {
         self.expect_ident_named("package")?;
-        let name = self.expect_ident()?;
+        // A package name may be qualified: `package pkg1::a::b::c { ... }`.
+        let name = self.parse_scoped_path()?.segments.join("::");
         self.expect_punct("{")?;
         let items = self.parse_items()?;
         self.expect_punct("}")?;
@@ -889,36 +914,8 @@ impl Parser {
             // Above `in`'s precedence, so the target stops before the keyword.
             let target = self.parse_expr(9)?;
             self.expect_ident_named("in")?;
-            self.expect_punct("[")?;
-            let mut items: Vec<Expr> = Vec::new();
-            loop {
-                let lo = self.parse_expr(0)?;
-                // A `dist_item` is a single value or a `lo..hi` range.
-                let range = if self.eat_punct("..") {
-                    let hi = self.parse_expr(0)?;
-                    Expr::InRange(Box::new(Expr::Int(0)), Box::new(lo), Box::new(hi))
-                } else {
-                    lo
-                };
-                let mut weight = Expr::Int(1);
-                let mut per_value = true;
-                // `:=` assigns the weight to each value in a range; `:/`
-                // distributes it across the values (16.1.9).
-                if self.at_punct(":") && (self.peek_at(1).is_punct("=") || self.peek_at(1).is_punct("/")) {
-                    self.bump();
-                    per_value = self.peek().is_punct("=");
-                    self.bump();
-                    weight = self.parse_expr(0)?;
-                }
-                items.push(Expr::Call(
-                    "__dist_item".into(),
-                    vec![range, Expr::Bool(per_value), weight],
-                ));
-                if !self.eat_punct(",") {
-                    break;
-                }
-            }
-            self.expect_punct("]")?;
+            let close = "[";
+            let items = self.parse_dist_items(close)?;
             let mut args = vec![target];
             args.extend(items);
             return Ok(Expr::Call("__dist".into(), args));
@@ -963,7 +960,58 @@ impl Parser {
                 Box::new(els.unwrap_or(Expr::Bool(true))),
             ));
         }
-        self.parse_expr(0)
+        let e = self.parse_expr(0)?;
+        // The SystemVerilog spelling, `<expr> dist { item := w, ... }`, which
+        // the shared pss-corpus uses. The standard's form is
+        // `dist <expr> in [ ... ]` (16.1.9); this one is accepted as well so
+        // models written in either style load. See docs/SEMANTICS.md §3.
+        if self.at_ident("dist") && (self.peek_at(1).is_punct("{") || self.peek_at(1).is_punct("[")) {
+            self.bump();
+            let close = if self.peek().is_punct("{") { "{" } else { "[" };
+            let items = self.parse_dist_items(close)?;
+            let mut args = vec![e];
+            args.extend(items);
+            return Ok(Expr::Call("__dist".into(), args));
+        }
+        Ok(e)
+    }
+
+    /// The items of a distribution list, up to the matching `]` or `}`.
+    fn parse_dist_items(&mut self, close: &str) -> PssResult<Vec<Expr>> {
+        self.expect_punct(close)?;
+        let mut items: Vec<Expr> = Vec::new();
+        loop {
+            if self.at_punct(if close == "[" { "]" } else { "}" }) {
+                break;
+            }
+            let lo = self.parse_expr(0)?;
+            // A `dist_item` is a single value or a `lo..hi` range.
+            let range = if self.eat_punct("..") {
+                let hi = self.parse_expr(0)?;
+                Expr::InRange(Box::new(Expr::Int(0)), Box::new(lo), Box::new(hi))
+            } else {
+                lo
+            };
+            let mut weight = Expr::Int(1);
+            let mut per_value = true;
+            // `:=` gives each value in a range the weight; `:/` distributes it.
+            if self.at_punct(":") && (self.peek_at(1).is_punct("=") || self.peek_at(1).is_punct("/"))
+            {
+                self.bump();
+                per_value = self.peek().is_punct("=");
+                self.bump();
+                weight = self.parse_expr(0)?;
+            }
+            items.push(Expr::Call(
+                "__dist_item".into(),
+                vec![range, Expr::Bool(per_value), weight],
+            ));
+            if !self.eat_punct(",") {
+                break;
+            }
+        }
+        self.expect_punct(if close == "[" { "]" } else { "}" })?;
+        Ok(items)
     }
 
     // ---- exec ----------------------------------------------------------
@@ -1538,6 +1586,7 @@ impl Parser {
                 index,
                 body,
                 is_replicate: true,
+                while_cond: None,
             }));
         }
         if self.at_ident("parallel") {
@@ -1733,6 +1782,24 @@ impl Parser {
         }
         if self.at_ident("repeat") {
             self.bump();
+            // `repeat { .. } while (cond);` (Syntax 37) has no count.
+            if self.at_punct("{") {
+                let body = self.parse_activity_body()?;
+                let mut cond = None;
+                if self.eat_ident("while") {
+                    self.expect_punct("(")?;
+                    cond = Some(self.parse_expr(0)?);
+                    self.expect_punct(")")?;
+                }
+                self.eat_punct(";");
+                return Ok(Some(ActivityStmt::Repeat {
+                    count: Expr::Int(1),
+                    index: None,
+                    body,
+                    is_replicate: false,
+                    while_cond: cond,
+                }));
+            }
             self.expect_punct("(")?;
             // Optional `index_identifier :`
             let mut index = None;
@@ -1743,9 +1810,12 @@ impl Parser {
             let n = self.parse_expr(0)?;
             self.expect_punct(")")?;
             let body = self.parse_activity_body()?;
-            // `repeat stmt while (expr);` form.
+            // `repeat (n) stmt while (expr);` form.
+            let mut while_cond = None;
             if self.eat_ident("while") {
-                self.skip_parens();
+                self.expect_punct("(")?;
+                while_cond = Some(self.parse_expr(0)?);
+                self.expect_punct(")")?;
                 self.eat_punct(";");
             }
             return Ok(Some(ActivityStmt::Repeat {
@@ -1753,6 +1823,7 @@ impl Parser {
                 index,
                 body,
                 is_replicate: false,
+                while_cond,
             }));
         }
         if self.at_ident("foreach") {
@@ -2021,26 +2092,40 @@ impl Parser {
                     Box::new(hi),
                 ));
             }
-            let first = self.parse_expr(0)?;
-            if self.eat_punct("..") {
-                // `[lo..]` — open at the top.
-                let hi = if self.at_punct("]") {
-                    Expr::Int(i64::MAX)
-                } else {
-                    self.parse_expr(0)?
-                };
-                self.expect_punct("]")?;
-                return Ok(Expr::InRange(Box::new(Expr::Int(0)), Box::new(first), Box::new(hi)));
-            }
-            // A value list literal: `[1, 2, 3]`, `[a, b]` (PSS Syntax 5).
-            let mut items = vec![first];
-            while self.eat_punct(",") {
+            // An `open_range_list`: a comma-separated list of scalar value
+            // expressions *or ranges* (PSS 8.5.9), e.g. `[1, 3, 5..9]`.
+            let mut items: Vec<Expr> = Vec::new();
+            loop {
                 if self.at_punct("]") {
                     break;
                 }
-                items.push(self.parse_expr(0)?);
+                let lo = self.parse_expr(0)?;
+                if self.eat_punct("..") {
+                    // `[lo..]` is open at the top; `[lo..hi]` is a range.
+                    let hi = if self.at_punct("]") || self.at_punct(",") {
+                        Expr::Int(i64::MAX)
+                    } else {
+                        self.parse_expr(0)?
+                    };
+                    items.push(Expr::Range(Box::new(lo), Box::new(hi)));
+                } else {
+                    items.push(lo);
+                }
+                if !self.eat_punct(",") {
+                    break;
+                }
             }
             self.expect_punct("]")?;
+            // A lone range is the plain range form.
+            if items.len() == 1 {
+                if let Expr::Range(lo, hi) = &items[0] {
+                    return Ok(Expr::InRange(
+                        Box::new(Expr::Int(0)),
+                        lo.clone(),
+                        hi.clone(),
+                    ));
+                }
+            }
             return Ok(Expr::List(items));
         }
         if self.at_punct("{") {
@@ -2147,6 +2232,10 @@ impl Parser {
                 self.bump();
                 Ok(Expr::Int(v))
             }
+            TokKind::Float(f) => {
+                self.bump();
+                Ok(Expr::Float(f))
+            }
             TokKind::Str(s) => {
                 self.bump();
                 Ok(Expr::Str(s))
@@ -2198,7 +2287,21 @@ impl Parser {
                     return self.parse_foreach_expr();
                 }
                 self.bump();
-                Ok(Expr::Path(Path::simple(id)))
+                // A qualified name: `pkg::NAME`, `A::B::C`.
+                let mut path = Path::simple(id);
+                while self.at_punct("::") {
+                    self.bump();
+                    if self.at_punct("*") {
+                        self.bump();
+                        path.segments.push("*".to_string());
+                        break;
+                    }
+                    match self.expect_ident() {
+                        Ok(seg) => path.segments.push(seg),
+                        Err(_) => break,
+                    }
+                }
+                Ok(Expr::Path(path))
             }
             TokKind::Punct(p) if p == "'" => {
                 // `'{ ... }` aggregate (assignment-pattern) literal.
@@ -2348,7 +2451,13 @@ impl Parser {
         ] {
             if self.at_ident(kw) {
                 self.bump();
-                let items = self.parse_monitor_list(handles)?;
+                // The sub-scenario may be a braced block or a single statement:
+                // `eventually r;` as well as `eventually { r; }`.
+                let items = if self.at_punct("{") {
+                    self.parse_monitor_list(handles)?
+                } else {
+                    self.parse_monitor_stmt(handles)?
+                };
                 let list = match items {
                     MonStmt::Sequence(v) => v,
                     MonStmt::Empty => Vec::new(),
@@ -2489,6 +2598,7 @@ fn bin_prec(op: &str) -> Option<u8> {
         "<<" | ">>" => 9,
         "+" | "-" => 10,
         "*" | "/" | "%" => 11,
+        "**" => 12,
         _ => return None,
     })
 }
@@ -2521,6 +2631,7 @@ fn token_text(t: &Token) -> String {
     match &t.kind {
         TokKind::Ident(s) => s.clone(),
         TokKind::Int(v) => v.to_string(),
+        TokKind::Float(f) => f.to_string(),
         TokKind::Str(s) => format!("\"{}\"", s),
         TokKind::Punct(p) => p.clone(),
         TokKind::Eof => String::new(),
@@ -2535,6 +2646,7 @@ fn describe_kind(k: &TokKind) -> String {
     match k {
         TokKind::Ident(s) => format!("`{}`", s),
         TokKind::Int(v) => format!("`{}`", v),
+        TokKind::Float(f) => format!("`{}`", f),
         TokKind::Str(s) => format!("\"{}\"", s),
         TokKind::Punct(p) => format!("`{}`", p),
         TokKind::Eof => "end of input".to_string(),

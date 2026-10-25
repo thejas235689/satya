@@ -1633,3 +1633,103 @@ component C {
     // pre_body runs on the solve platform; the body does not.
     assert_eq!(get("x"), Some(5), "pre_body, not body");
 }
+
+// ---------------------------------------------------------------------------
+// Lexical and expression fixes found by the shared PSS corpus
+// (github.com/psstools/pss-corpus).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn sized_literals_carry_their_value_not_their_width() {
+    // A regression guard: `4'b1010` is 10, not 4. The size is a width hint;
+    // before this was fixed the token carried the width and the digits were
+    // silently dropped, so every sized literal in a model was wrong.
+    let src = r#"
+component C {
+  action a {
+    int b; int h; int d; int sd; int o;
+    exec pre_solve {
+      b  = 4'b1010;
+      h  = 8'hFF;
+      d  = 64'd2;
+      sd = 4'sd12;      // signed
+      o  = 3'o7;
+    }
+    rand int v;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| s.steps[0].fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v).unwrap();
+    assert_eq!(get("b"), 0b1010);
+    assert_eq!(get("h"), 0xFF);
+    assert_eq!(get("d"), 2);
+    assert_eq!(get("sd"), 12);
+    assert_eq!(get("o"), 0o7);
+}
+
+#[test]
+fn an_open_range_list_mixes_values_and_ranges() {
+    // PSS 8.5.9: the right-hand side of `in` is "a comma-separated list of
+    // scalar value expressions or ranges".
+    let src = r#"
+component C {
+  action a { rand int x; constraint x in [1, 3, 5..9]; };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let mut seen = std::collections::BTreeSet::new();
+    for seed in 1u64..=400 {
+        let s = engine::run_scenario(&m, "a", seed);
+        seen.insert(s.steps[0].fields[0].1);
+    }
+    let want: std::collections::BTreeSet<i64> = [1, 3, 5, 6, 7, 8, 9].into_iter().collect();
+    assert_eq!(seen, want);
+}
+
+#[test]
+fn the_power_operator_is_evaluated() {
+    let src = r#"
+component C {
+  action a {
+    int p; int q; int r;
+    exec pre_solve {
+      p = 2**3;
+      q = 64'd2**5;
+      r = 2**0;
+    }
+    rand int v;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| s.steps[0].fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v).unwrap();
+    assert_eq!(get("p"), 8);
+    assert_eq!(get("q"), 32);
+    assert_eq!(get("r"), 1);
+}
+
+#[test]
+fn escaped_identifiers_and_qualified_extents_parse() {
+    // Escaped identifiers (Syntax 4) and a qualified constant as an extent.
+    let src = r#"
+package p { static const int N = 4; };
+component C {
+  action \do-write { rand int v; };
+  action t { activity { repeat (p::N) { do \do-write; } } };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "t", 1);
+    assert_eq!(s.steps.len(), 4, "p::N is 4");
+}
+
+#[test]
+fn a_lone_quote_or_backslash_is_rejected() {
+    // The corpus marks these as pathological: they must not parse.
+    for src in ["component c { int x = 'ff; }", "component c { int x = 1; \\ }"] {
+        assert!(compile_pss(src).is_err(), "should reject: {src}");
+    }
+}

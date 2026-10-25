@@ -6,12 +6,14 @@
 
 use crate::error::{PssError, PssResult};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TokKind {
     /// Identifier or keyword.
     Ident(String),
     /// Integer literal (decimal, 0x-hex or 0b-binary), already evaluated.
     Int(i64),
+    /// Floating-point literal (PSS Syntax 1), e.g. `20.14`, `2e6`, `1_0.2_5`.
+    Float(f64),
     /// String literal (contents, without quotes).
     Str(String),
     /// Operator or punctuation, e.g. `::`, `==`, `{`, `..`.
@@ -20,7 +22,7 @@ pub enum TokKind {
     Eof,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub kind: TokKind,
     pub line: usize,
@@ -46,7 +48,7 @@ impl Token {
 
 /// Multi-character operators, longest first so that greedy matching is correct.
 const OPERATORS: &[&str] = &[
-    "::", "->", "==", "!=", "<=", ">=", "&&", "||", "..", "<<", ">>", "+=", "-=", "*=", "/=", "%=",
+    "::", "->", "==", "!=", "<=", ">=", "&&", "||", "..", "<<", ">>", "+=", "-=", "*=", "/=", "%=", "**",
     "|=", "&=", "^=",
 ];
 
@@ -207,22 +209,55 @@ impl Lexer {
                     line,
                     col,
                 });
+            } else if c == '\\' {
+                // An escaped identifier: `\` then any characters up to
+                // whitespace (PSS Syntax 4). The name excludes the backslash.
+                self.bump();
+                let mut name = String::new();
+                while let Some(ch) = self.peek() {
+                    if ch.is_whitespace() {
+                        break;
+                    }
+                    name.push(ch);
+                    self.bump();
+                }
+                if name.is_empty() {
+                    return Err(PssError::new(
+                        "a backslash must begin an escaped identifier".to_string(),
+                        line,
+                        col,
+                    ));
+                }
+                out.push(Token {
+                    kind: TokKind::Ident(name),
+                    line,
+                    col,
+                });
             } else if c == '\'' {
                 // A sized literal prefix (4'b1010, 8'hFF) — but a lone quote,
                 // as in `'{ ... }` aggregate literals or quoted text, is just
                 // punctuation.
                 let nxt = self.peek_at(1);
-                if matches!(nxt, Some(ch) if ch.is_ascii_digit() || "bBoOdDhH".contains(ch)) {
+                if matches!(nxt, Some(ch) if ch.is_ascii_digit() || "bBoOdDhHsS".contains(ch)) {
                     self.bump();
                     let kind = self.lex_sized_number(line, col)?;
                     out.push(Token { kind, line, col });
-                } else {
+                } else if nxt == Some('{') {
+                    // `'{ ... }` — an aggregate literal.
                     self.bump();
                     out.push(Token {
                         kind: TokKind::Punct("'".to_string()),
                         line,
                         col,
                     });
+                } else {
+                    return Err(PssError::new(
+                        "a quote must begin a sized literal (`4'b1010`) or an \
+                         aggregate literal (`'{...}`)"
+                            .to_string(),
+                        line,
+                        col,
+                    ));
                 }
             } else {
                 // Operator / punctuation, greedy longest match.
@@ -251,6 +286,11 @@ impl Lexer {
 
     /// A sized literal after `'`: `4'b1010`, `8'hFF`, `16'd42`.
     fn lex_sized_number(&mut self, line: usize, col: usize) -> PssResult<TokKind> {
+        // An optional `s`/`S` marks the literal as signed (PSS Syntax 1):
+        // `4'sd12`, `16'sH_FF`.
+        if matches!(self.peek(), Some('s') | Some('S')) {
+            self.bump();
+        }
         let radix = match self.peek() {
             Some('b') | Some('B') => 2,
             Some('o') | Some('O') => 8,
@@ -317,6 +357,71 @@ impl Lexer {
                 self.bump();
             } else {
                 break;
+            }
+        }
+        // A fractional part or an exponent makes this a floating-point
+        // literal (PSS Syntax 1). The digits may carry `_` separators.
+        let mut is_float = false;
+        if self.peek() == Some('.')
+            && matches!(self.peek_at(1), Some(ch) if ch.is_ascii_digit())
+        {
+            is_float = true;
+            s.push(self.bump().unwrap()); // the dot
+            while let Some(ch) = self.peek() {
+                if ch.is_ascii_digit() {
+                    s.push(ch);
+                    self.bump();
+                } else if ch == '_' {
+                    self.bump();
+                } else {
+                    break;
+                }
+            }
+        }
+        if matches!(self.peek(), Some('e') | Some('E')) {
+            // An exponent only continues the number if a digit (or a sign and a
+            // digit) follows.
+            let after = self.peek_at(1);
+            let ok = match after {
+                Some(ch) if ch.is_ascii_digit() => true,
+                Some('+') | Some('-') => matches!(self.peek_at(2), Some(ch) if ch.is_ascii_digit()),
+                _ => false,
+            };
+            if ok {
+                is_float = true;
+                s.push(self.bump().unwrap());
+                if matches!(self.peek(), Some('+') | Some('-')) {
+                    s.push(self.bump().unwrap());
+                }
+                while let Some(ch) = self.peek() {
+                    if ch.is_ascii_digit() {
+                        s.push(ch);
+                        self.bump();
+                    } else if ch == '_' {
+                        self.bump();
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+        if is_float {
+            let cleaned: String = s.chars().filter(|c| *c != '_').collect();
+            return cleaned
+                .parse::<f64>()
+                .map(TokKind::Float)
+                .map_err(|_| PssError::new(format!("invalid floating-point literal `{}`", s), line, col));
+        }
+
+        // A based literal may follow the size: `64'd2`, `8'hFF`, `4'b1010`
+        // (PSS Syntax 1). The size is a width hint; the *value* is what the
+        // token carries, so the digits after the base character are the value.
+        if self.peek() == Some('\'') {
+            if let Some(nxt) = self.peek_at(1) {
+                if "bBoOdDhHsS".contains(nxt) {
+                    self.bump(); // the apostrophe
+                    return self.lex_sized_number(line, col);
+                }
             }
         }
         let val: i64 = s

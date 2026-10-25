@@ -161,6 +161,9 @@ impl<'a> Env<'a> {
 pub fn eval(expr: &Expr, values: &BTreeMap<String, i64>, env: &Env) -> Option<i64> {
     match expr {
         Expr::Int(v) => Some(*v),
+        // A floating-point literal's value is its IEEE-754 bit pattern, as for
+        // the `float_pkg` functions.
+        Expr::Float(f) => Some(f.to_bits() as i64),
         Expr::Bool(b) => Some(if *b { 1 } else { 0 }),
         Expr::Path(p) => {
             let joined = p.segments.join(".");
@@ -237,6 +240,14 @@ pub fn eval(expr: &Expr, values: &BTreeMap<String, i64>, env: &Env) -> Option<i6
                 "*" => Some(x * y),
                 "/" if y != 0 => Some(x / y),
                 "%" if y != 0 => Some(x % y),
+                // `**` — the power operator (PSS 8.4).
+                "**" => {
+                    if y >= 0 && y < 64 {
+                        Some((x as i128).pow(y as u32) as i64)
+                    } else {
+                        None
+                    }
+                }
                 "<<" => Some(x << y),
                 ">>" => Some(x >> y),
                 "&" => Some(x & y),
@@ -454,6 +465,18 @@ fn hash_values(values: &BTreeMap<String, i64>) -> u64 {
         h = h.wrapping_mul(0x100_0000_01b3);
     }
     h
+}
+
+/// The values a set-membership list item stands for: a range expands to every
+/// value in it, anything else to its own value.
+fn set_item_values(it: &Expr, ctx: &BTreeMap<String, i64>, env: &Env) -> Vec<i64> {
+    match it {
+        Expr::Range(lo, hi) => match (eval(lo, ctx, env), eval(hi, ctx, env)) {
+            (Some(lo), Some(hi)) if hi >= lo && hi - lo < 4096 => (lo..=hi).collect(),
+            _ => Vec::new(),
+        },
+        other => eval(other, ctx, env).into_iter().collect(),
+    }
 }
 
 /// The sum of a fixed-size array's elements, if they are all known.
@@ -745,11 +768,11 @@ pub fn solve_with(
                 }
             }
             Atom::InSet(var, items) => {
+                // A list item may be a range (`5..9`), which stands for every
+                // value in it (PSS 8.5.9).
                 let mut allowed = Vec::new();
                 for it in items {
-                    if let Some(v) = eval(it, bindings, &env) {
-                        allowed.push(v);
-                    }
+                    allowed.extend(set_item_values(it, bindings, &env));
                 }
                 if !allowed.is_empty() {
                     if let Some(d) = vars.get_mut(var) {
@@ -1321,7 +1344,9 @@ fn check_atom(
                 Some(v) => *v,
                 None => return true,
             };
-            items.iter().any(|it| eval(it, values, env) == Some(x))
+            items
+                .iter()
+                .any(|it| set_item_values(it, values, env).contains(&x))
         }
         Atom::General(l, op, r) => {
             match (eval(l, values, env), eval(r, values, env)) {

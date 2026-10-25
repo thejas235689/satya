@@ -94,6 +94,11 @@ With `:/`, `[100..102 :/ 6, 200 := 2]` gives 25.3 / 25.5 / 24.8 / 24.3 % against
 | `exec init_down` / `init_up` | 22.1 | run for the component hierarchy before the scenario, `init_down` top-down and `init_up` bottom-up |
 | collection mutators in `exec` | 7.9.3.2 | `push_back`, `push_front`, `pop_back`, `pop_front`, `insert`, `delete`, `clear`, `shuffle` build a list that constraints can then read |
 | collection literal assignment | 8.5 | `L = {a, b, c};` in `exec` gives a collection its elements |
+| floating-point literals | 1 | `20.14`, `2e6`, `1_0.2_5`; the value is the IEEE-754 bit pattern, as for `float_pkg` |
+| based literals | 1 | `4'b1010`, `8'hFF`, `64'd2` and the signed forms `4'sd12`, `16'sH_FF` — the token carries the *value*, the size being a width hint |
+| escaped identifiers | 4 | `\top-level_c`, `\do-write` |
+| the power operator | 8.4 | `**`, evaluated |
+| an `open_range_list` mixing values and ranges | 8.5.9 | `[1, 3, 5..9]` |
 | value list literal | 5 | `[1, 2, 3]` and `[a, b]` as a constraint's value set |
 | procedural statements | 89-101 | `repeat`/`repeat…while`/`foreach`/`if`/`match`/`break`/`continue`/`return`/`randomize` in `exec`, with control flow |
 | floating-point (`float_pkg`) | 112-116 | `float32`/`float64` storage plus `float_mantissa`/`float_exponent`/`float_sign`/`to_float` and the math functions, over the IEEE-754 bit pattern |
@@ -123,6 +128,8 @@ methods for arrays (7.9.2.2). The real list is below.
 | monitor constraints | 19.4 | parsed, but a monitor constraint does not filter which steps match |
 | monitor inheritance | 19.6 | a monitor's base type is parsed but not applied |
 | `exec` statements other than assignment, `if` and method calls | 10.4 | `for`/`while` loops and target-code templates are passed through to the backends, not executed |
+| `repeat { … } while (cond);` in an activity | 12.2.5 | parsed and the condition recorded, but the engine has no state the condition could observe, so the body is traversed once |
+| target-code `{{ }}` templates | 22.2 | the contents of a triple-quoted block are treated as opaque text; an unclosed `{{` is not detected |
 | `join_first(n)`'s run-time dependency | 12.3.6.1d | imposes no *scheduling* order (correct), but there is no runtime, so the "first n to complete" part is not simulated |
 | multiple `dist` directives on one attribute | 16.1.9 | weights are summed; the LRM leaves the resulting distribution undefined |
 | stream vs buffer consumption | 13 | a flow object may be referenced by several inputs; consume-once semantics for streams are not enforced |
@@ -145,6 +152,7 @@ it is a natural thing to reach for and is harmless when unused:
 | Construct | Status |
 |---|---|
 | `constraint solve a before b;` | **Not PSS.** `solve … before …` is a SystemVerilog constraint directive; PSS 3.0 has no such construct (its 16.1.8 is *forall constraints*). Satya parses it and uses it to order assignment, but a conforming PSS model will never contain it. Earlier revisions of this document cited it as "16.1.8", which was wrong on both counts. |
+| `<expr> dist { item := w, … }` | **Not PSS.** The standard's distribution directive is `dist <expr> in [ dist_list ]` (16.1.9); the brace spelling is SystemVerilog's. Satya accepts both because the shared `pss-corpus` uses the brace form — see [`CORPUS.md`](CORPUS.md). |
 
 ## 4. How this is checked
 
