@@ -724,9 +724,11 @@ impl Parser {
                     // A template argument may be a constant expression
                     // (`array<bit[15:0], 5>`, `sized_addr_handle_s<32>`).
                     if matches!(self.peek().kind, TokKind::Int(_)) {
-                        // Precedence above comparison so the closing `>` is not
-                        // swallowed as a `>` operator.
-                        const_args.push(self.parse_expr(9)?);
+                        // Above *every* operator that could swallow the closing
+                        // `>`: comparison is 8, but `<<`/`>>` are 9, so a
+                        // constant argument in `nested_s<packed_s<bit, 8>>`
+                        // would otherwise parse as `8 >> ...`.
+                        const_args.push(self.parse_expr(10)?);
                     } else {
                         template_args.push(self.parse_type_ref()?);
                     }
@@ -1762,6 +1764,26 @@ impl Parser {
                 expr: subject,
                 choices,
             }));
+        }
+        // `constraint parallel { a, b };` / `constraint sequence { a, b };`
+        // schedules the named action handles (PSS 16.2, Syntax 62).
+        if self.at_ident("constraint")
+            && (self.peek_at(1).is_ident("parallel") || self.peek_at(1).is_ident("sequence"))
+        {
+            self.bump();
+            let parallel = self.peek().is_ident("parallel");
+            self.bump();
+            self.expect_punct("{")?;
+            let mut refs = Vec::new();
+            while !self.at_punct("}") && !self.at_eof() {
+                refs.push(self.parse_scoped_path()?.segments.join("."));
+                if !self.eat_punct(",") {
+                    break;
+                }
+            }
+            self.expect_punct("}")?;
+            self.eat_punct(";");
+            return Ok(Some(ActivityStmt::SchedConstraint { parallel, refs }));
         }
         if self.at_ident("constraint") {
             self.bump();

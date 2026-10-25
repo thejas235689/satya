@@ -93,6 +93,7 @@ With `:/`, `[100..102 :/ 6, 200 := 2]` gives 25.3 / 25.5 / 24.8 / 24.3 % against
 | array properties `arr.size`, `arr.sum` | 7.9.2.4 | the deprecated property forms evaluate like the methods |
 | `exec init_down` / `init_up` | 22.1 | run for the component hierarchy before the scenario, `init_down` top-down and `init_up` bottom-up |
 | collection mutators in `exec` | 7.9.3.2 | `push_back`, `push_front`, `pop_back`, `pop_front`, `insert`, `delete`, `clear`, `shuffle` build a list that constraints can then read |
+| scheduling constraint | 16.2 | `constraint parallel { a, b };` / `constraint sequence { a, b };` is parsed and recorded; the engine walks the activity in one deterministic order, so `sequence` holds by construction |
 | collection literal assignment | 8.5 | `L = {a, b, c};` in `exec` gives a collection its elements |
 | floating-point literals | 1 | `20.14`, `2e6`, `1_0.2_5`; the value is the IEEE-754 bit pattern, as for `float_pkg` |
 | based literals | 1 | `4'b1010`, `8'hFF`, `64'd2` and the signed forms `4'sd12`, `16'sH_FF` — the token carries the *value*, the size being a width hint |

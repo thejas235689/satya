@@ -1733,3 +1733,78 @@ fn a_lone_quote_or_backslash_is_rejected() {
         assert!(compile_pss(src).is_err(), "should reject: {src}");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Defects found by running against other psstools projects: peakrdl-pss,
+// pssc, pssfmt, sphinx-pss (see docs/CORPUS.md).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn sixty_four_bit_literals_keep_their_bit_pattern() {
+    // A 64-bit value such as 0xFFFF_FFFF_FFFF_FFFF does not fit a signed
+    // 64-bit integer. It is a bit pattern, so it is parsed unsigned and kept
+    // as-is. Found by pssc's repro/instance-array-offsets.
+    let src = r#"
+component C {
+  action a {
+    int hex; int dec; int high;
+    exec pre_solve {
+      hex  = 0xFFFF_FFFF_FFFF_FFFF;
+      dec  = 18446744073709551615;      // the same value in decimal
+      high = 0x8000_0000_0000_0000;
+    }
+    rand int v;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| s.steps[0].fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v).unwrap();
+    assert_eq!(get("hex"), -1, "all ones");
+    assert_eq!(get("dec"), -1, "the same value written in decimal");
+    assert_eq!(get("high"), i64::MIN);
+}
+
+#[test]
+fn nested_template_arguments_close_correctly() {
+    // `nested_s<packed_s<bit, 8>>` — the `>>` ends two template lists. A
+    // constant argument must not be parsed as a shift. Found by pssfmt.
+    let src = r#"
+package p {
+  struct packed_s<type T, int W = 32> { T value; bit[W] raw; };
+  struct outer_s {
+    packed_s<bit[8], 4> small;
+    packed_s<bit, 8> plain;
+    nested_s<packed_s<bit, 8>> nested;
+  };
+  struct nested_s<type T> { T inner; };
+};
+"#;
+    assert!(compile_pss(src).is_ok(), "nested template arguments must parse");
+}
+
+#[test]
+fn a_scheduling_constraint_parses_and_is_recorded() {
+    // `constraint parallel { a, b };` (PSS 16.2, Syntax 62). It used to swallow
+    // the enclosing `}`. Found by sphinx-pss's activity fixtures.
+    let src = r#"
+component C {
+  action x {};
+  action a {
+    activity {
+      parallel { do x; }
+      constraint parallel { s1, s2 };
+      constraint sequence { s3, s4 };
+    }
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    assert!(
+        s.messages.iter().any(|m| m.contains("parallel {s1, s2}")),
+        "{:?}",
+        s.messages
+    );
+    assert!(s.messages.iter().any(|m| m.contains("sequence {s3, s4}")), "{:?}", s.messages);
+}

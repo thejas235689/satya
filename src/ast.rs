@@ -392,6 +392,9 @@ pub enum ActivityStmt {
     Atomic(Activity),
     /// `constraint <set>` inside an activity (LRM `activity_constraint_stmt`).
     Constraint(Expr),
+    /// `constraint parallel { a, b };` / `constraint sequence { a, b };` —
+    /// a scheduling constraint between action handles (PSS 16.2, Syntax 62).
+    SchedConstraint { parallel: bool, refs: Vec<String> },
     /// `[label:] cover { <monitor body> }` — monitor the executed stream for a
     /// scenario (PSS 19.2).
     Cover {

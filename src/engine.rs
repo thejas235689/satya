@@ -717,6 +717,17 @@ impl<'a> Engine<'a> {
             ActivityStmt::Atomic(body) => {
                 self.walk_activity(body, component.to_string(), depth, StepMode::Atomic, group, ctx);
             }
+            // A scheduling constraint between action handles (PSS 16.2,
+            // Syntax 62). The engine walks the activity in one deterministic
+            // order, so `sequence` holds by construction; `parallel` records
+            // that the named handles are not ordered relative to one another.
+            ActivityStmt::SchedConstraint { parallel, refs } => {
+                self.messages.push(format!(
+                    "scheduling constraint: {} {{{}}}",
+                    if *parallel { "parallel" } else { "sequence" },
+                    refs.join(", ")
+                ));
+            }
             ActivityStmt::Constraint(_) => {
                 // Activity-level constraints refine the enclosing action; the
                 // enclosing action is already solved, so this is recorded but

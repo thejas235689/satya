@@ -13,6 +13,38 @@ approximated.
 
 ---
 
+## 0.14.0 — 2026-10-25
+
+The rest of the psstools organization
+
+After the shared corpus, the same check was run against every other
+[`psstools`](https://github.com/psstools) repository containing `.pss` files —
+356 files in total. **341 parse**, and the 15 that do not are the 6 pathological
+files that must fail, 7 Jinja2 generator templates (not PSS), and 4
+syntax-highlighter snippets that are deliberately minimal. The corpus's
+executable tier — 114 files of instrumented **PSS 3.1** — parses **114/114**,
+and the 26 `peakrdl-pss` golden files run through every backend, **156/156
+generations**. Details in [`docs/CORPUS.md`](docs/CORPUS.md).
+
+Three more defects, none of which the corpus alone exposed:
+
+- **64-bit literals overflowed.** `0xFFFF_FFFF_FFFF_FFFF` and its decimal form
+  `18446744073709551615` are valid 64-bit values that do not fit a signed 64-bit
+  integer, and both failed to lex. Found by `pssc`'s bug-repro directory, whose
+  README notes other tools accept the input. Literals are now parsed unsigned
+  and keep their bit pattern.
+- **Nested template arguments.** `nested_s<packed_s<bit, 8>>` failed because the
+  constant argument was parsed at a precedence that still admitted `>>` as a
+  *shift*, swallowing the closing token. Found by `pssfmt`.
+- **Scheduling constraints swallowed a brace.** `constraint parallel { a, b };`
+  (PSS 16.2, Syntax 62) was unparsed, and the enclosing `}` went with it. Found
+  by `sphinx-pss`'s activity fixtures.
+
+`tools/pss_corpus_check.py` now covers the compliance tier as well as the
+manifest-governed buckets.
+
+81 tests (3 new).
+
 ## 0.13.0 — 2026-10-25
 
 Checked against the shared PSS corpus

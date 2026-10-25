@@ -315,8 +315,8 @@ impl Lexer {
                 break;
             }
         }
-        i64::from_str_radix(&digits, radix)
-            .map(TokKind::Int)
+        u64::from_str_radix(&digits, radix)
+            .map(|v| TokKind::Int(v as i64))
             .map_err(|_| PssError::new(format!("invalid sized literal `'{}`", digits), line, col))
     }
 
@@ -345,7 +345,11 @@ impl Lexer {
                     break;
                 }
             }
-            let val = i64::from_str_radix(&digits, radix)
+            // A 64-bit pattern such as `0xFFFF_FFFF_FFFF_FFFF` does not fit a
+            // signed 64-bit integer, so parse unsigned and keep the bit
+            // pattern (PSS 7.2: the value is a bit vector).
+            let val = u64::from_str_radix(&digits, radix)
+                .map(|v| v as i64)
                 .map_err(|_| PssError::new(format!("invalid integer literal `{}{}`", s, digits), line, col))?;
             return Ok(TokKind::Int(val));
         }
@@ -424,8 +428,11 @@ impl Lexer {
                 }
             }
         }
+        // Parse unsigned so a full 64-bit value such as
+        // `18446744073709551615` keeps its bit pattern rather than failing.
         let val: i64 = s
-            .parse()
+            .parse::<u64>()
+            .map(|v| v as i64)
             .map_err(|_| PssError::new(format!("invalid integer literal `{}`", s), line, col))?;
         Ok(TokKind::Int(val))
     }

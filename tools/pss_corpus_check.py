@@ -98,6 +98,30 @@ def main():
         for name in wrongly:
             print("        wrongly accepted: {}".format(name))
 
+    # The executable (compliance) tier: instrumented PSS plus legality models.
+    # No manifest entry covers it, but it is all valid PSS and should parse.
+    comp = os.path.join(sys.argv[1], "compliance")
+    if os.path.isdir(comp):
+        files = []
+        for dp, _, fns in os.walk(comp):
+            files += [os.path.join(dp, f) for f in fns if f.endswith(".pss")]
+        ok = 0
+        cfails = []
+        for f in sorted(files):
+            good, msg = run(binary, f)
+            if good:
+                ok += 1
+            else:
+                cfails.append((os.path.relpath(f, comp), first_line(msg)))
+        print(
+            "  {:<14} {:>3} file(s)  {:>3} parsed  {:>2} failed".format(
+                "compliance", len(files), ok, len(cfails)
+            )
+        )
+        for name, msg in cfails[:5]:
+            print("        {:<40} {}".format(name[:40], msg))
+        bad += len(cfails)
+
     print("=" * 62)
     return 1 if (bad or wrongly) else 0
 
