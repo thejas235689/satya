@@ -1911,3 +1911,33 @@ fn an_unclosed_template_expression_in_target_code_is_rejected() {
     assert!(compile_pss("action a { exec body C = \"\"\"{{ x + 1 }}\"\"\"; }").is_ok());
     assert!(compile_pss("action a { exec body { int m[2][2] = {{1,2},{3,4}}; } }").is_ok());
 }
+
+#[test]
+fn a_file_of_foreign_syntax_is_rejected_not_silently_emptied() {
+    // An InFact `.rules` file (Siemens' PSS tool, a PSS-like notation that is
+    // not the Accellera standard) used to parse into an *empty* model and
+    // report success, because an unrecognized top-level construct was skipped
+    // to the next `;`. That is worse than an error: it reports success for
+    // input that was never PSS.
+    let src = "rule_graph g {\n  attributes g { call_pre_post_randomize = true; }\n  action init;\n}\n";
+    let err = compile_pss(src).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("unexpected"), "{msg}");
+    assert!(msg.contains("rule_graph"), "{msg}");
+}
+
+#[test]
+fn an_unrecognized_construct_inside_a_body_still_loads() {
+    // Inside a package or component body the older lenient skip is kept: a
+    // construct this parser does not handle there must not make a whole model
+    // unloadable.
+    let src = r#"
+package p {
+  struct S { rand int x; };
+};
+component C {
+  action a { rand int v; };
+};
+"#;
+    assert!(compile_pss(src).is_ok());
+}

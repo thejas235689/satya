@@ -13,6 +13,36 @@ approximated.
 
 ---
 
+## 0.16.0 — 2026-10-26
+
+A file of foreign syntax is no longer reported as a success
+
+Running Satya against `kariannekk/Portable-Stimulus` — a master's thesis
+appendix built with Questa **inFact**, containing no `.pss` at all but 14
+InFact `.rules`/`.rseg` files — turned up a real defect.
+
+Those 14 files all **"parsed successfully"**, into a model with 0 packages, 0
+types, 0 components and 0 actions. The top-level parser skipped any construct it
+did not recognize up to the next `;`, so a file of entirely foreign syntax
+produced a clean success and an empty model. A user who mistyped a top-level
+keyword would have got the same thing.
+
+An unrecognized construct at the **file** level is now an error:
+
+```
+error: unexpected `rule_graph` at top level; expected a package, component,
+       action, struct, enum, import or extend declaration
+```
+
+The strictness is scoped to the file level deliberately. Making it global
+dropped the curated corpus buckets from 97 to 91 and the LRM strict count from
+129 to 90, because `enum`, `monitor`, `covergroup`, `stream` and `annotation`
+bodies are reached through the same fallback. Inside a body the lenient skip is
+kept: a construct this parser does not yet handle there should not make a whole
+model unloadable.
+
+88 tests (2 new).
+
 ## 0.15.0 — 2026-10-25
 
 The last of the constructs, and the corpus fully met

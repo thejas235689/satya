@@ -204,7 +204,7 @@ impl Parser {
     // ---- entry point ---------------------------------------------------
 
     pub fn parse_file(&mut self) -> PssResult<SourceFile> {
-        let items = self.parse_items()?;
+        let items = self.parse_items(true)?;
         Ok(SourceFile {
             items,
             covergroups: std::mem::take(&mut self.covergroups),
@@ -317,23 +317,29 @@ impl Parser {
         Ok(Covergroup { name, items })
     }
 
-    fn parse_items(&mut self) -> PssResult<Vec<Item>> {
+    /// Item list. `top` is true only for the file level, where an
+    /// unrecognized construct is an error: a file of foreign syntax must not
+    /// turn into a successful parse of an empty model. Inside a package or
+    /// component body the older lenient skip is kept, since a construct this
+    /// parser does not yet handle there should not make a whole model
+    /// unloadable.
+    fn parse_items(&mut self, top: bool) -> PssResult<Vec<Item>> {
         let mut items = Vec::new();
         while !self.at_eof() && !self.at_punct("}") {
             if self.eat_punct(";") {
                 continue;
             }
-            let item = self.parse_item()?;
+            let item = self.parse_item(top)?;
             items.push(item);
         }
         Ok(items)
     }
 
-    fn parse_item(&mut self) -> PssResult<Item> {
+    fn parse_item(&mut self, top: bool) -> PssResult<Item> {
         // `pure component` / `pure action`.
         if self.at_ident("pure") {
             self.bump();
-            return self.parse_item();
+            return self.parse_item(top);
         }
         if self.at_ident("import") {
             return Ok(Item::Import(self.parse_import()?));
@@ -369,10 +375,27 @@ impl Parser {
             self.skip_to_semicolon();
             return Ok(Item::Raw("function".into()));
         }
-        // Unknown top-level construct: skip a balanced chunk defensively.
-        let start = self.bump();
-        self.skip_to_semicolon();
-        Ok(Item::Raw(token_text(&start)))
+        if !top {
+            // Inside a body: skip a chunk defensively and carry on.
+            let start = self.bump();
+            self.skip_to_semicolon();
+            return Ok(Item::Raw(token_text(&start)));
+        }
+        // At the file level an unrecognized construct is an error. Silently
+        // skipping it used to turn a file of foreign syntax (an InFact
+        // `.rules` file, say) into a successful parse of an empty model, which
+        // is worse than useless: it reports success for input that was never
+        // PSS.
+        let (line, col) = (self.peek().line, self.peek().col);
+        Err(PssError::new(
+            format!(
+                "unexpected {} at top level; expected a package, component, \
+                 action, struct, enum, import or extend declaration",
+                describe(self.peek())
+            ),
+            line,
+            col,
+        ))
     }
 
     // ---- imports / packages -------------------------------------------
@@ -417,7 +440,7 @@ impl Parser {
         // A package name may be qualified: `package pkg1::a::b::c { ... }`.
         let name = self.parse_scoped_path()?.segments.join("::");
         self.expect_punct("{")?;
-        let items = self.parse_items()?;
+        let items = self.parse_items(false)?;
         self.expect_punct("}")?;
         self.eat_punct(";");
         Ok(Package { name, items })
@@ -2102,7 +2125,7 @@ impl Parser {
 
     fn parse_braced_items(&mut self) -> PssResult<Vec<Item>> {
         self.expect_punct("{")?;
-        let items = self.parse_items()?;
+        let items = self.parse_items(false)?;
         self.expect_punct("}")?;
         Ok(items)
     }

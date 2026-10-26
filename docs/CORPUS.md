@@ -171,6 +171,51 @@ matching `}}`. Only the *open* side is checked — ordinary code may legitimatel
 contain `}}` closing two nested braces, so counting both ways would reject
 valid target code.
 
+## A repository that is not PSS at all
+
+`kariannekk/Portable-Stimulus` is the online appendix to a master's thesis that
+built a proof of concept with **Questa inFact**. It contains no `.pss` files:
+53 `.sv` UVM testbench files, 6 `.c` and 6 `.h` firmware files, and 14 InFact
+`.rules` / `.rseg` files.
+
+InFact's notation is PSS-*like* but is not the Accellera standard:
+
+```
+rule_graph g {
+  attributes g { call_pre_post_randomize = true; }
+  import "uart_transaction.rseg";
+  action init;
+  g = init repeat { do_item(x) checkcov };
+}
+```
+
+and in a `.rseg`, `struct A extends B` where PSS writes `struct A : B`.
+
+Running Satya against those 14 files exposed a real defect. They all
+**"parsed successfully"** — into a model with 0 packages, 0 types, 0 components
+and 0 actions. The top-level parser skipped any construct it did not recognize
+up to the next `;`, so a file of entirely foreign syntax produced a clean
+success and an empty model.
+
+That is worse than an error. A user who mistypes a top-level keyword would get
+"success" and a model with nothing in it. Now an unrecognized construct at the
+**file** level is an error:
+
+```
+error: unexpected `rule_graph` at top level; expected a package, component,
+       action, struct, enum, import or extend declaration
+```
+
+Inside a package or component body the older lenient skip is kept, because a
+construct this parser does not yet handle there should not make a whole model
+unloadable. Scoping the strictness to the file level is what keeps the corpora
+above green: making it global dropped the curated buckets from 97 to 91 and the
+LRM strict count from 129 to 90, because `enum`, `monitor`, `covergroup`,
+`stream` and `annotation` bodies were being reached through the same fallback.
+
+So the honest result for this repository is that there was nothing to check —
+but checking it anyway found a bug worth more than the check itself.
+
 ## A note on the `dist` spelling
 
 `lexical/operators.pss` writes a distribution as `<expr> dist { item := w, ... }`
