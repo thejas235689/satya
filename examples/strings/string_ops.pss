@@ -1,0 +1,38 @@
+// Strings (PSS 7.2, 8.6.3).
+//
+// A `string` has no numeric value, so the engine carries string-valued
+// variables alongside the numeric ones rather than inside the solver. What is
+// supported: a literal, assignment from another string, concatenation with
+// `+`, `length()`/`size()`, and the sub-string operator with every form the
+// standard gives it —
+//
+//     s[i]      one character at position i
+//     s[i..j]   from i to j, both ends INCLUSIVE
+//     s[i..]    from i to the end
+//     s[..j]    from the start to j
+//
+// The trace and the JSON backend both report the string fields.
+package str_pkg {
+
+    component str_c {
+        action ops_a {
+            string greeting;
+            string copy;
+            string middle;
+            string tail;
+            string head;
+            string joined;
+            int len;
+
+            exec pre_solve {
+                greeting = "hello";
+                copy     = greeting;
+                middle   = greeting[1..3];   // "ell"
+                tail     = greeting[2..];    // "llo"
+                head     = greeting[..1];    // "he"
+                joined   = greeting + "!";   // "hello!"
+                len      = greeting.length(); // 5
+            }
+        };
+    };
+};

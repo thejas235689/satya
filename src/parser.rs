@@ -2418,7 +2418,36 @@ impl Parser {
             }
             if self.at_punct("[") {
                 self.bump();
+                // `s[..hi]` — the sub-string operator with an open start
+                // (PSS 8.6.3, Syntax 22).
+                if self.eat_punct("..") {
+                    let hi = if self.at_punct("]") {
+                        Expr::Int(i64::MAX)
+                    } else {
+                        self.parse_expr(0)?
+                    };
+                    self.expect_punct("]")?;
+                    e = Expr::Index(
+                        Box::new(e),
+                        Box::new(Expr::Range(Box::new(Expr::Int(0)), Box::new(hi))),
+                    );
+                    continue;
+                }
                 let first = self.parse_expr(0)?;
+                // `s[lo..hi]` / `s[lo..]` — ends inclusive (PSS 8.6.3).
+                if self.eat_punct("..") {
+                    let hi = if self.at_punct("]") {
+                        Expr::Int(i64::MAX)
+                    } else {
+                        self.parse_expr(0)?
+                    };
+                    self.expect_punct("]")?;
+                    e = Expr::Index(
+                        Box::new(e),
+                        Box::new(Expr::Range(Box::new(first), Box::new(hi))),
+                    );
+                    continue;
+                }
                 if self.eat_punct(":") {
                     // Part-select: `identifier[msb:lsb]` (PSS 8.6.1).
                     let lsb = self.parse_expr(0)?;

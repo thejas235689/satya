@@ -85,6 +85,8 @@ pub struct Step {
     pub replicated: bool,
     /// Solved values for the action's numeric leaf fields.
     pub fields: Vec<(String, i64)>,
+    /// String-valued fields (PSS 7.2), which have no numeric value.
+    pub strings: Vec<(String, String)>,
     pub satisfied: usize,
     pub total: usize,
     /// Constraints the solver could not evaluate or satisfy (for diagnosis).
@@ -167,6 +169,9 @@ struct Engine<'a> {
     handle_seq: i64,
     /// Bump pointer for address claims, per region (PSS 24.8).
     claim_cursor: Vec<i64>,
+    /// String-valued variables (PSS 7.2). Numeric solving is untouched; strings
+    /// are carried alongside, because a `string` has no numeric value.
+    strings: BTreeMap<String, String>,
     /// Text emitted by the standard library's messaging functions.
     messages: Vec<String>,
     /// Values established by component `init_down`/`init_up` blocks, visible to
@@ -257,6 +262,7 @@ pub fn run_scenario(model: &Model, root_action: &str, seed: u64) -> Scenario {
         exec_action: None,
         handle_seq: 0,
         claim_cursor: Vec::new(),
+        strings: BTreeMap::new(),
         coverage: BTreeMap::new(),
         coverage_bins: BTreeMap::new(),
     };
@@ -859,6 +865,7 @@ impl<'a> Engine<'a> {
             mode,
             group,
             fields: Vec::new(),
+            strings: Vec::new(),
             label: self.current_label.clone(),
             replicated: self.current_replicated,
             satisfied: 0,
@@ -915,10 +922,69 @@ impl<'a> Engine<'a> {
         Flow::Normal
     }
 
+    /// Evaluate an expression as a string, if it is one (PSS 7.2, 8.6.3).
+    ///
+    /// Handles a literal, a string variable, concatenation with `+`, and the
+    /// sub-string operator: `s[i]`, `s[i..j]` (both ends inclusive), `s[i..]`
+    /// and `s[..j]`.
+    fn eval_string(&self, e: &crate::ast::Expr) -> Option<String> {
+        use crate::ast::Expr;
+        match e {
+            Expr::Str(s) => Some(s.clone()),
+            Expr::Path(p) => self.strings.get(&p.segments.join(".")).cloned(),
+            Expr::Binary(op, a, b) if op == "+" => {
+                Some(format!("{}{}", self.eval_string(a)?, self.eval_string(b)?))
+            }
+            Expr::Index(base, idx) => {
+                let s = self.eval_string(base)?;
+                let chars: Vec<char> = s.chars().collect();
+                let n = chars.len() as i64;
+                let (lo, hi) = match &**idx {
+                    // `s[i]` — one character.
+                    Expr::Int(i) => (*i, *i),
+                    // `s[lo..hi]`, `s[lo..]`, `s[..hi]` — ends inclusive.
+                    Expr::Range(l, h) => {
+                        let lo = match &**l {
+                            Expr::Int(v) => *v,
+                            _ => 0,
+                        };
+                        let hi = match &**h {
+                            Expr::Int(v) if *v != i64::MAX => *v,
+                            _ => n - 1,
+                        };
+                        (lo, hi)
+                    }
+                    _ => return None,
+                };
+                if lo < 0 || hi < lo || lo >= n {
+                    return None;
+                }
+                let hi = hi.min(n - 1);
+                Some(chars[lo as usize..=hi as usize].iter().collect())
+            }
+            _ => None,
+        }
+    }
+
     fn exec_one(&mut self, st: &ExecStmt, values: &mut BTreeMap<String, i64>) -> Flow {
         match st {
             ExecStmt::Assign(path, rhs) => {
                 let base = path.segments.join(".");
+                // A string assignment is carried in the string store rather than
+                // the numeric one (PSS 7.2).
+                if let Some(sv) = self.eval_string(rhs) {
+                    self.strings.insert(base.clone(), sv);
+                    return Flow::Normal;
+                }
+                // `s.length()` / `s.size()` on a string gives a number (PSS 7.2).
+                if let crate::ast::Expr::Method(recv, m, args) = rhs {
+                    if args.is_empty() && (m == "length" || m == "size") {
+                        if let Some(sv) = self.eval_string(recv) {
+                            values.insert(base.clone(), sv.chars().count() as i64);
+                            return Flow::Normal;
+                        }
+                    }
+                }
                 // `L = {a, b, c};` gives a collection its elements (PSS 8.5).
                 if let Expr::List(items) = rhs {
                     for i in 0..MAX_LIST {
@@ -2013,6 +2079,11 @@ impl<'a> Engine<'a> {
             mode,
             group,
             fields,
+            strings: self
+                .strings
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
             label: self.current_label.clone(),
             replicated: self.current_replicated,
             satisfied: report.satisfied,

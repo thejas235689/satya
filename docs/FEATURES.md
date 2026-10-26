@@ -18,9 +18,9 @@ marked implemented that were not.
 
 | Status | Count |
 |---|---|
-| yes | 94 |
-| partial | 51 |
-| no | 1 |
+| yes | 97 |
+| partial | 49 |
+| no | 0 |
 | **total** | **146** |
 
 ## Every construct
@@ -28,7 +28,7 @@ marked implemented that were not.
 | # | Syntax excerpt | Implemented | Notes |
 |---|---|---|---|
 | 1 | Numeric constants | yes |  |
-| 2 | String literals | partial | lexed; strings are not values in the engine |
+| 2 | String literals | yes | string-valued variables are carried alongside the numeric ones; literals, assignment, concatenation and `length()` work |
 | 3 | Aggregate literals | yes |  |
 | 4 | Empty aggregate literal | partial |  |
 | 5 | Value list literal | yes |  |
@@ -38,7 +38,7 @@ marked implemented that were not.
 | 9 | Integer type declaration | yes |  |
 | 10 | Floating-point type declaration | yes |  |
 | 11 | enum declaration | yes |  |
-| 12 | string declaration | partial | parsed; no string value model |
+| 12 | string declaration | yes | a `string` field holds a value in the string store; the trace and the JSON backend report it |
 | 13 | chandle declaration | partial | parsed; opaque handle |
 | 14 | struct declaration | yes |  |
 | 15 | Collection data types | yes |  |
@@ -48,7 +48,7 @@ marked implemented that were not.
 | 19 | Expressions and operators | yes |  |
 | 20 | Conditional operator | yes |  |
 | 21 | Set membership operator | yes |  |
-| 22 | String slice operator | no | needs a string value model |
+| 22 | String slice operator | yes | all four forms: `s[i]`, `s[i..j]` (ends inclusive), `s[i..]`, `s[..j]` |
 | 23 | component declaration | yes |  |
 | 24 | action declaration | yes |  |
 | 25 | Template type declaration | partial | parsed; template parameters are not instantiated |

@@ -2269,3 +2269,72 @@ component C {
         s.warnings
     );
 }
+
+// ---------------------------------------------------------------------------
+// Strings (PSS 7.2, 8.6.3)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn strings_assign_concatenate_and_slice() {
+    // A `string` has no numeric value, so it is carried alongside the numeric
+    // ones. The sub-string operator's ends are INCLUSIVE (8.6.3), which is easy
+    // to get wrong: `s[1..3]` of "hello" is "ell", not "el".
+    let src = r#"
+component C {
+  action a {
+    string s; string copy; string mid; string tail; string head; string joined; int n;
+    exec pre_solve {
+      s = "hello";
+      copy = s;
+      mid = s[1..3];
+      tail = s[2..];
+      head = s[..1];
+      joined = s + "!";
+      n = s.length();
+    }
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let st = &s.steps[0];
+    let get = |k: &str| {
+        st.strings
+            .iter()
+            .find(|(n, _)| n == k)
+            .map(|(_, v)| v.as_str())
+            .unwrap_or("<missing>")
+    };
+    assert_eq!(get("s"), "hello");
+    assert_eq!(get("copy"), "hello");
+    assert_eq!(get("mid"), "ell", "ends are inclusive");
+    assert_eq!(get("tail"), "llo");
+    assert_eq!(get("head"), "he");
+    assert_eq!(get("joined"), "hello!");
+    let n = st
+        .fields
+        .iter()
+        .find(|(k, _)| k == "n")
+        .map(|(_, v)| *v)
+        .unwrap();
+    assert_eq!(n, 5, "length() of \"hello\"");
+}
+
+#[test]
+fn a_single_character_slice_is_one_character() {
+    // `s[i]` denotes both the start and the end (8.6.3).
+    let src = r#"
+component C {
+  action a { string s; string c; exec pre_solve { s = "hello"; c = s[2]; } };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let c = s.steps[0]
+        .strings
+        .iter()
+        .find(|(n, _)| n == "c")
+        .map(|(_, v)| v.clone())
+        .unwrap();
+    assert_eq!(c, "l");
+}

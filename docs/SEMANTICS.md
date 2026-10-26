@@ -128,7 +128,7 @@ methods for arrays (7.9.2.2). The real list is below.
 
 | Construct | Clause | What Satya does today |
 |---|---|---|
-| array methods `join`, `str_from_chars` | 7.9.2.2 | not evaluated — they produce strings, which the engine does not model as values |
+| array methods `join`, `str_from_chars` | 7.9.2.2 | not evaluated. String *variables* are modelled (7.2), but these produce a string from a collection and are not implemented |
 | `to_list`, `to_set` conversions | 7.9.2.2, 7.9.3.2 | not evaluated |
 | collection mutators inside a *constraint* | 16.1 | only `exec` mutates a collection; a constraint can read one but not change it |
 | `overlap` / `schedule` monitor statements | 19.3.5, 19.3.8 | each branch is matched independently from the checkpoint; true interleaving of concurrent branches is not modelled |
@@ -145,7 +145,7 @@ methods for arrays (7.9.2.2). The real list is below.
 | address trait matching | 24.8.6 | a claim is allocated from a region whose trait values satisfy the constraints the claim places on its trait struct; an unmatched constraint is reported. A claim does not span more than one region |
 | executor behaviour | 24.10.9.5 | executor components are parsed, but read/write/`addr_value` are implemented in the engine rather than delegated to an executor instance |
 | register read/write primitives | 24.10.9 | register access is modelled over a register store, not translated into the primitive byte-level read/write operations on an address |
-| `get_tag` | 24.10.8 | returns the region's tag *index*; the engine has no string values, so the tag name itself is not comparable |
+| `get_tag` | 24.10.8 | returns the region's tag *index*; region tags are not mapped to the string names they are declared with, so two tags can be compared but not read |
 | executor-based customisation | 24.10.9.5 | the primitives are implemented in the engine rather than delegated to an executor instance |
 | target-code templates (`exec declaration` bodies) | 22.2 | carried through to the backends verbatim, not interpreted |
 

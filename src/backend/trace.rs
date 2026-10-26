@@ -75,6 +75,14 @@ impl Backend for TraceBackend {
                     .collect();
                 s.push_str(&format!("{}     solved: {}\n", indent, fields.join(" ")));
             }
+            if !step.strings.is_empty() {
+                let kv: Vec<String> = step
+                    .strings
+                    .iter()
+                    .map(|(k, v)| format!("{} = \"{}\"", k, v))
+                    .collect();
+                s.push_str(&format!("{}     strings: {}\n", indent, kv.join(" ")));
+            }
             if step.total > 0 {
                 s.push_str(&format!(
                     "{}     constraints: {}/{} satisfied\n",

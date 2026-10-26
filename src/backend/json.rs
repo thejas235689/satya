@@ -84,6 +84,24 @@ impl Backend for JsonBackend {
                 }
                 s.push_str("      }");
             }
+            s.push(',');
+            s.push('\n');
+            s.push_str("      \"strings\": {");
+            if step.strings.is_empty() {
+                s.push('}');
+            } else {
+                s.push('\n');
+                for (j, (k, v)) in step.strings.iter().enumerate() {
+                    let comma = if j + 1 < step.strings.len() { "," } else { "" };
+                    s.push_str(&format!(
+                        "        \"{}\": \"{}\"{}\n",
+                        json_escape(k),
+                        json_escape(v),
+                        comma
+                    ));
+                }
+                s.push_str("      }");
+            }
             s.push('\n');
             let comma = if i + 1 < scenario.steps.len() { "," } else { "" };
             s.push_str(&format!("    }}{}\n", comma));

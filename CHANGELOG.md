@@ -13,6 +13,44 @@ approximated.
 
 ---
 
+## 0.24.0 — 2026-10-26
+
+Strings are values, and the matrix has no unimplemented construct left
+
+A `string` had no value model at all: `s = "hello";` was silently ignored, and
+the sub-string operator was the last construct in the matrix marked **not
+implemented**. String-valued variables are now carried in a store alongside the
+numeric ones — the solver is untouched, because a string has no numeric value to
+solve for.
+
+Working now:
+
+- string literals and assignment, including assignment from another string;
+- concatenation with `+`;
+- `length()` / `size()`;
+- the sub-string operator in **all four forms** the standard gives it
+  (8.6.3), with **inclusive** ends:
+
+  | form | meaning | `"hello"` gives |
+  |---|---|---|
+  | `s[i]` | one character at i | `s[2]` → `"l"` |
+  | `s[i..j]` | from i to j, both inclusive | `s[1..3]` → `"ell"` |
+  | `s[i..]` | from i to the end | `s[2..]` → `"llo"` |
+  | `s[..j]` | from the start to j | `s[..1]` → `"he"` |
+
+String fields are reported in both the trace and the JSON backend.
+
+`examples/strings/string_ops.pss` exercises all of it.
+
+**The feature matrix now reads 97 implemented, 49 partial, and 0 not.** Every
+one of the 146 syntax excerpts has an implementation.
+
+Honest scope limits, recorded in `docs/SEMANTICS.md`: strings are not solved
+(a `string` field is not randomised), and `join` / `str_from_chars` — which
+produce a string from a collection — are still not evaluated.
+
+104 tests (2 new).
+
 ## 0.23.0 — 2026-10-26
 
 Address claims match region traits
