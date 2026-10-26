@@ -279,6 +279,46 @@ block) and still did not catch `x = ;`, because that parser consumes tokens
 before giving up. A parser cannot be made strict before it can parse the valid
 language; the procedural grammar needs `|=` and nested blocks first.
 
+## andestech/pss-gen
+
+[`andestech/pss-gen`](https://github.com/andestech/pss-gen) is a PSS generator
+(Java, ANTLR) from Andes, with 145 `.pss` sample inputs and 137 `.golden`
+expected outputs.
+
+```
+  samples 145 file(s) 145 parsed  0 failed
+```
+
+**145/145.** It also found a crash.
+
+### The crash
+
+`samples/7_2_Integer_types` declares integer domains with open-ended ranges
+inside a comma list — valid PSS 8.5.9:
+
+```
+rand int [64] in [..1 , 8..16 , 4294967296..] long_5;
+```
+
+Two defects. The parser handled a *lone* open range but not one inside a list,
+so this failed to parse at all. Worse, once parsing was fixed the solver
+**panicked** with `capacity overflow`: the span of `[..1]` is
+`1 - i64::MIN`, which overflows `i64`, and the guard that was supposed to keep
+the expansion small computed exactly that difference.
+
+Set membership is now handled with intervals rather than materialised value
+lists — the span is computed in `i128`, the membership test is an interval test,
+and propagation narrows to a satisfying interval instead of enumerating a union
+that may be unbounded. `[..1, 8..16, 4294967296..]` now yields values in `[0, 1]`
+for an `int` whose domain is `[0, 1023]`, which is correct.
+
+### A limitation this exposed
+
+`x == -1` yields `0`: the engine has no negative values for `int` at all — the
+domain is `[0, 1023]` and clamps at zero. So `[..-1]` cannot produce `-1`. That
+is pre-existing and independent of the fix above; it is recorded here because
+this repository is what surfaced it.
+
 ## A note on the `dist` spelling
 
 `lexical/operators.pss` writes a distribution as `<expr> dist { item := w, ... }`

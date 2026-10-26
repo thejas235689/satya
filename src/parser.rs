@@ -2211,35 +2211,34 @@ impl Parser {
     fn parse_range_or_set(&mut self) -> PssResult<Expr> {
         if self.at_punct("[") {
             self.bump();
-            // `[..hi]` — open at the bottom.
-            if self.eat_punct("..") {
-                let hi = self.parse_expr(0)?;
-                self.expect_punct("]")?;
-                return Ok(Expr::InRange(
-                    Box::new(Expr::Int(0)),
-                    Box::new(Expr::Int(i64::MIN)),
-                    Box::new(hi),
-                ));
-            }
             // An `open_range_list`: a comma-separated list of scalar value
-            // expressions *or ranges* (PSS 8.5.9), e.g. `[1, 3, 5..9]`.
+            // expressions *or* ranges, either end of which may be open
+            // (`[..1, 8..16, 4294967296..]`, PSS 8.5.9).
             let mut items: Vec<Expr> = Vec::new();
             loop {
                 if self.at_punct("]") {
                     break;
                 }
-                let lo = self.parse_expr(0)?;
-                if self.eat_punct("..") {
-                    // `[lo..]` is open at the top; `[lo..hi]` is a range.
+                // `..hi` — open at the bottom; the next expression is the
+                // *high* bound, not the low one.
+                let open_low = self.eat_punct("..");
+                let lo = if open_low {
+                    Expr::Int(i64::MIN)
+                } else {
+                    self.parse_expr(0)?
+                };
+                let item = if open_low || self.eat_punct("..") {
+                    // `lo..]` is open at the top; `lo..hi` is a range.
                     let hi = if self.at_punct("]") || self.at_punct(",") {
                         Expr::Int(i64::MAX)
                     } else {
                         self.parse_expr(0)?
                     };
-                    items.push(Expr::Range(Box::new(lo), Box::new(hi)));
+                    Expr::Range(Box::new(lo), Box::new(hi))
                 } else {
-                    items.push(lo);
-                }
+                    lo
+                };
+                items.push(item);
                 if !self.eat_punct(",") {
                     break;
                 }

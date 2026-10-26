@@ -1952,3 +1952,47 @@ fn an_unmatched_closing_brace_at_end_of_file_is_an_error() {
     // The balanced version still loads.
     assert!(compile_pss("component C { action A { } }\n").is_ok());
 }
+
+#[test]
+fn an_open_range_inside_a_list_does_not_panic() {
+    // Found by andestech/pss-gen (samples/7_2_Integer_types). An open-ended
+    // range inside a comma list is valid PSS 8.5.9:
+    //     rand int [64] in [..1 , 8..16 , 4294967296..] long_5;
+    // The span of `[..1]` is `1 - i64::MIN`, which overflows i64 — computing it
+    // in i64 panicked with "capacity overflow".
+    let src = r#"
+component C {
+  action a {
+    rand int x;
+    constraint x in [..1 , 8..16 , 4294967296..];
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    for seed in 1u64..=60 {
+        let s = engine::run_scenario(&m, "a", seed);
+        let v = s.steps[0].fields[0].1;
+        assert!(
+            v <= 1 || (8..=16).contains(&v) || v >= 4_294_967_296,
+            "seed {seed} produced {v}, outside the range list"
+        );
+    }
+}
+
+#[test]
+fn each_open_range_form_is_accepted() {
+    // `[..hi]`, `[lo..]`, `[lo..hi]` and a plain value, alone and in a list.
+    for c in [
+        "x in [..1]",
+        "x in [0..]",
+        "x in [8..16]",
+        "x in [..1, 8..16]",
+        "x in [0, 1]",
+        "x in [1, 3, 5..9]",
+    ] {
+        let src = format!(
+            "component C {{ action a {{ rand int x; constraint {c}; }}; }};"
+        );
+        assert!(compile_pss(&src).is_ok(), "should parse: {c}");
+    }
+}

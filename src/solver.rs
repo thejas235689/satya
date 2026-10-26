@@ -469,14 +469,29 @@ fn hash_values(values: &BTreeMap<String, i64>) -> u64 {
 
 /// The values a set-membership list item stands for: a range expands to every
 /// value in it, anything else to its own value.
-fn set_item_values(it: &Expr, ctx: &BTreeMap<String, i64>, env: &Env) -> Vec<i64> {
+fn set_item_intervals(it: &Expr, ctx: &BTreeMap<String, i64>, env: &Env) -> Vec<(i64, i64)> {
     match it {
         Expr::Range(lo, hi) => match (eval(lo, ctx, env), eval(hi, ctx, env)) {
-            (Some(lo), Some(hi)) if hi >= lo && hi - lo < 4096 => (lo..=hi).collect(),
+            // The span is computed in i128: an open range such as `[..1]` is
+            // `Range(i64::MIN, 1)`, whose span overflows i64 and used to panic.
+            (Some(lo), Some(hi)) if hi >= lo => vec![(lo, hi)],
             _ => Vec::new(),
         },
-        other => eval(other, ctx, env).into_iter().collect(),
+        other => eval(other, ctx, env).map(|v| vec![(v, v)]).unwrap_or_default(),
     }
+}
+
+/// The values a set-membership list item stands for, materialised. Only used
+/// where the range is small enough to enumerate; prefer `in_intervals`.
+fn set_item_values(it: &Expr, ctx: &BTreeMap<String, i64>, env: &Env) -> Vec<i64> {
+    let mut out = Vec::new();
+    for (lo, hi) in set_item_intervals(it, ctx, env) {
+        let span = (hi as i128) - (lo as i128);
+        if span < 4096 {
+            out.extend(lo..=hi);
+        }
+    }
+    out
 }
 
 /// The sum of a fixed-size array's elements, if they are all known.
@@ -769,12 +784,35 @@ pub fn solve_with(
             }
             Atom::InSet(var, items) => {
                 // A list item may be a range (`5..9`), which stands for every
-                // value in it (PSS 8.5.9).
-                let mut allowed = Vec::new();
+                // value in it (PSS 8.5.9). The union is kept as intervals so an
+                // open range (`[..1]`, `[0..]`) does not need materialising.
+                let mut intervals: Vec<(i64, i64)> = Vec::new();
                 for it in items {
-                    allowed.extend(set_item_values(it, bindings, &env));
+                    intervals.extend(set_item_intervals(it, bindings, &env));
                 }
+                let hull = if intervals.is_empty() {
+                    None
+                } else {
+                    Some((
+                        intervals.iter().map(|(l, _)| *l).min().unwrap(),
+                        intervals.iter().map(|(_, h)| *h).max().unwrap(),
+                    ))
+                };
+                let total: i128 = intervals
+                    .iter()
+                    .map(|(l, h)| (*h as i128) - (*l as i128) + 1)
+                    .sum();
+                let allowed: Vec<i64> = if total <= 4096 {
+                    let mut v = Vec::new();
+                    for (l, h) in &intervals {
+                        v.extend(*l..=*h);
+                    }
+                    v
+                } else {
+                    Vec::new()
+                };
                 if !allowed.is_empty() {
+                    // Small union: narrow to its hull and forbid the gaps.
                     if let Some(d) = vars.get_mut(var) {
                         let lo = *allowed.iter().min().unwrap();
                         let hi = *allowed.iter().max().unwrap();
@@ -784,6 +822,54 @@ pub fn solve_with(
                                 d.forbidden.insert(v);
                             }
                         }
+                    }
+                } else if !intervals.is_empty() {
+                    // Large or open union: it cannot be enumerated, so pick one
+                    // interval that overlaps the domain and narrow to it. That
+                    // is a valid value, and it keeps an open range like
+                    // `[..1, 8..16, 4294967296..]` from being vacuous.
+                    if let Some(d) = vars.get_mut(var) {
+                        let pick = intervals
+                            .iter()
+                            .find(|(l, h)| *h >= d.lo && *l <= d.hi)
+                            .copied()
+                            .or_else(|| {
+                                // No overlap: move to the nearest interval.
+                                intervals
+                                    .iter()
+                                    .min_by_key(|(l, h)| {
+                                        if *h < d.lo {
+                                            d.lo as i128 - *h as i128
+                                        } else {
+                                            *l as i128 - d.hi as i128
+                                        }
+                                    })
+                                    .copied()
+                            });
+                        if let Some((l, h)) = pick {
+                            let (nl, nh) = (d.lo.max(l), d.hi.min(h));
+                            if nl <= nh {
+                                d.intersect_interval(nl, nh);
+                            } else {
+                                // The interval lies outside the domain; widen
+                                // the domain to it, clamped to a signed 32-bit
+                                // range so an open bound (`[..-1]`) does not
+                                // become `i64::MIN`.
+                                const I32_MIN: i64 = i32::MIN as i64;
+                                const I32_MAX: i64 = i32::MAX as i64;
+                                d.lo = l.max(I32_MIN);
+                                d.hi = h.min(I32_MAX);
+                                d.forbidden.clear();
+                                if d.lo > d.hi {
+                                    d.lo = l.min(h).max(I32_MIN);
+                                    d.hi = l.max(h).min(I32_MAX);
+                                }
+                            }
+                        }
+                    }
+                } else if let Some((hlo, hhi)) = hull {
+                    if let Some(d) = vars.get_mut(var) {
+                        d.intersect_interval(hlo, hhi);
                     }
                 }
             }
@@ -1344,9 +1430,11 @@ fn check_atom(
                 Some(v) => *v,
                 None => return true,
             };
-            items
-                .iter()
-                .any(|it| set_item_values(it, values, env).contains(&x))
+            items.iter().any(|it| {
+                set_item_intervals(it, values, env)
+                    .iter()
+                    .any(|(lo, hi)| x >= *lo && x <= *hi)
+            })
         }
         Atom::General(l, op, r) => {
             match (eval(l, values, env), eval(r, values, env)) {

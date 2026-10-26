@@ -13,6 +13,36 @@ approximated.
 
 ---
 
+## 0.18.0 — 2026-10-26
+
+andestech/pss-gen: a crash on open ranges
+
+[`andestech/pss-gen`](https://github.com/andestech/pss-gen) has 145 `.pss`
+sample inputs. **145/145 now parse**, and it found a crash.
+
+`samples/7_2_Integer_types` uses open-ended ranges inside a comma list — valid
+PSS 8.5.9:
+
+```
+rand int [64] in [..1 , 8..16 , 4294967296..] long_5;
+```
+
+The parser handled a lone open range but not one inside a list, so this failed
+to parse. Once parsing was fixed the solver **panicked** with `capacity
+overflow`: the span of `[..1]` is `1 - i64::MIN`, which overflows `i64`, and the
+guard meant to keep the expansion small computed exactly that difference.
+
+Set membership is now handled with intervals instead of materialised value
+lists: the span is computed in `i128`, membership is an interval test, and
+propagation narrows to a satisfying interval rather than enumerating a union
+that may be unbounded.
+
+Also recorded: `x == -1` yields `0`, because the engine has no negative `int`
+values at all (domain `[0, 1023]`, clamped at zero). Pre-existing, independent
+of this fix, and surfaced by this repository.
+
+91 tests (2 new).
+
 ## 0.17.0 — 2026-10-26
 
 Checked against pssparser's error-suite: Satya is too lenient
