@@ -67,7 +67,7 @@ With `:/`, `[100..102 :/ 6, 200 := 2]` gives 25.3 / 25.5 / 24.8 / 24.3 % against
 |---|---|---|
 | fixed-size arrays `array<T, N>`, `x[N]` | 8.4 | expand into one variable per element, with per-element domains |
 | `arr[i]` indexing | 8.6.2 | resolves to the element variable |
-| `arr.size()`, `sum()`, `product()`, `min()`, `max()` | 8.6 | evaluated |
+| `arr.size()`, `arr.sum()` | 8.6, 7.9.2.2 | evaluated, and both work inside a constraint; `size` is the declared extent, `sum` folds the elements. These are the only two array folds the standard defines |
 | `foreach (arr[i])` | 12.2.6 | iterates the elements |
 | `exec pre_solve` | 16.4.12 | executed **before** the solver; its assignments to non-random fields feed the solve |
 | `exec post_solve` | 16.4.12 | executed **after** the solver, from the solved values |

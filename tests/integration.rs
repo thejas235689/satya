@@ -2181,3 +2181,35 @@ component C {
         st.total
     );
 }
+
+#[test]
+fn a_sum_constraint_is_solved() {
+    // `arr.sum()` folds the elements; an aggregate cannot be seen by bound
+    // propagation, so the repair moves elements until the relation holds.
+    let cases: [(&str, fn(i64) -> bool); 4] = [
+        ("<= 25", |s| s <= 25),
+        ("== 40", |s| s == 40),
+        (">= 100", |s| s >= 100),
+        ("< 10", |s| s < 10),
+    ];
+    for (rel, ok) in cases {
+        let src = format!(
+            "component C {{ action a {{ rand bit[8] v[4]; constraint v.sum() {rel}; }}; }};"
+        );
+        let m = compile_pss(&src).unwrap();
+        for seed in 1..=20 {
+            let s = engine::run_scenario(&m, "a", seed);
+            let total: i64 = (0..4)
+                .map(|i| {
+                    s.steps[0]
+                        .fields
+                        .iter()
+                        .find(|(k, _)| k == &format!("v[{i}]"))
+                        .map(|(_, v)| *v)
+                        .unwrap()
+                })
+                .sum();
+            assert!(ok(total), "seed {seed}: sum {total} fails `sum {rel}`");
+        }
+    }
+}

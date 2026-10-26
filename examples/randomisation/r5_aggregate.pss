@@ -1,0 +1,30 @@
+// Randomisation example 5 — aggregate constraints over an array (PSS 7.9.2.2).
+//
+// `arr.sum()` folds over the elements, and a constraint on it relates the whole
+// collection. No bound propagation can see an aggregate, so the solver moves
+// elements one at a time until the relation holds — downward for `<=`, upward
+// for `>=`, either way for `==`.
+package rand_aggregate_pkg {
+
+    component rand_aggregate_c {
+        // A budget: the four sizes must together stay inside the limit, and
+        // each has its own bound.
+        action budget_a {
+            rand bit[8] sizes[4];
+            constraint foreach (sizes[i]) { sizes[i] in [0..10]; }
+            constraint sizes.sum() <= 25;
+        };
+
+        // An exact total.
+        action exact_a {
+            rand bit[8] parts[4];
+            constraint parts.sum() == 40;
+        };
+
+        // A floor.
+        action floor_a {
+            rand bit[8] chunks[4];
+            constraint chunks.sum() >= 100;
+        };
+    };
+};

@@ -115,14 +115,13 @@ These parse but are **dropped** — not enforced and not counted, which is the
 worst of the three possible behaviours and is recorded as such in
 `docs/FEATURES.md`:
 
-- **`a.sum()`** and the other array fold methods inside constraints: counted,
-  but not solved, so they are honestly reported unsatisfied rather than
-  silently ignored.
-- **`a.sum()`** and the other array fold methods inside constraints: counted,
-  but not solved, so they are honestly reported unsatisfied rather than
-  silently ignored.
-
-### `foreach` and `unique` were fixed
+- **`a.sum()`** used to be counted but not solved. It now works: an aggregate
+  cannot be seen by bound propagation, so the repair moves elements one at a
+  time until the relation holds — downward for `<=`, upward for `>=`, either
+  way for `==`. `examples/randomisation/r5_aggregate.pss` covers a budget
+  (`sum() <= 25` with per-element bounds), an exact total (`== 40`) and a floor
+  (`>= 100`), and the checker verifies the arithmetic across 60 seeds each.
+- ### `foreach` and `unique` were fixed
 
 `foreach` constraints (entry 57) now work. They were parsed into
 `Expr::Foreach` and then fell through to `Unsupported`, which is excluded from

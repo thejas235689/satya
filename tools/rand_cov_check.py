@@ -148,6 +148,7 @@ def check_constraints(binary, seeds, failures):
     model = os.path.join(RAND, "r2_constraints.pss")
     array_model = os.path.join(RAND, "r3_arrays.pss")
     unique_model = os.path.join(RAND, "r4_unique.pss")
+    agg_model = os.path.join(RAND, "r5_aggregate.pss")
 
     def constr_a(f):
         errs = []
@@ -190,6 +191,24 @@ def check_constraints(binary, seeds, failures):
             return ["ids out of [1..4]"]
         return [] if len(set(vals)) == 4 else ["ids are not distinct: %s" % vals]
 
+    def budget_a(f):
+        vals = [f.get("sizes[%d]" % i) for i in range(4)]
+        if any(v is None or not (0 <= v <= 10) for v in vals):
+            return ["sizes out of [0..10]"]
+        return [] if sum(vals) <= 25 else ["sum %d > 25" % sum(vals)]
+
+    def exact_a(f):
+        vals = [f.get("parts[%d]" % i) for i in range(4)]
+        if any(v is None for v in vals):
+            return ["parts missing"]
+        return [] if sum(vals) == 40 else ["sum %d != 40" % sum(vals)]
+
+    def floor_a(f):
+        vals = [f.get("chunks[%d]" % i) for i in range(4)]
+        if any(v is None for v in vals):
+            return ["chunks missing"]
+        return [] if sum(vals) >= 100 else ["sum %d < 100" % sum(vals)]
+
     def unique_scalars_a(f):
         vals = [f.get("x"), f.get("y"), f.get("z")]
         if any(v is None or not (1 <= v <= 3) for v in vals):
@@ -203,6 +222,9 @@ def check_constraints(binary, seeds, failures):
         ("sized_a", sized_a),
         ("unique_ok_a", unique_ok_a),
         ("unique_scalars_a", unique_scalars_a),
+        ("budget_a", budget_a),
+        ("exact_a", exact_a),
+        ("floor_a", floor_a),
     ):
         bad = 0
         sample = None
@@ -210,6 +232,8 @@ def check_constraints(binary, seeds, failures):
             mdl = array_model
         elif action in ("unique_ok_a", "unique_scalars_a"):
             mdl = unique_model
+        elif action in ("budget_a", "exact_a", "floor_a"):
+            mdl = agg_model
         else:
             mdl = model
         for s in range(1, seeds + 1):
@@ -281,6 +305,8 @@ def check_coverage(binary, seeds, failures):
             mdl = array_model
         elif action in ("unique_ok_a", "unique_scalars_a"):
             mdl = unique_model
+        elif action in ("budget_a", "exact_a", "floor_a"):
+            mdl = agg_model
         else:
             mdl = model
         for s in range(1, seeds + 1):

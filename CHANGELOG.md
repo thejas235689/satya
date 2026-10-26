@@ -13,6 +13,41 @@ approximated.
 
 ---
 
+## 0.22.0 — 2026-10-26
+
+`arr.sum()` now works inside constraints
+
+`pl.sum() <= 20` was counted but never solved: an aggregate over a collection
+cannot be seen by bound propagation, so the constraint was reported unsatisfied
+on every seed. The repair pass now moves elements one at a time until the
+relation holds — downward for `<=`/`<`, upward for `>=`/`>`, either way for
+`==` — choosing the largest (or smallest) element so the reduction spreads
+instead of emptying a single slot.
+
+All five relations work: `<= 20` gives 6/7/7/0, `== 40` gives 16/16/8/0,
+`< 10` gives 3/3/3/0, `>= 100` and `> 200` both pass.
+
+`examples/randomisation/r5_aggregate.pss` covers a budget (`sum() <= 25` with
+per-element bounds), an exact total (`== 40`) and a floor (`>= 100`), and the
+checker verifies the arithmetic across 60 seeds each.
+
+Two things this exposed:
+
+- A strict bound landed off by one (`sum < 10` produced exactly 10), because the
+  repair moved by the whole remaining delta instead of one; a strict operator
+  now targets `k-1` or `k+1`.
+- The first version added an unguarded `Atom::General` arm to the repair match,
+  which **shadowed** the existing ordering and single-unknown arms — the
+  compiler said `unreachable pattern`, and a test caught `x + y == 100`
+  breaking. The arm is now guarded on `arr.sum()`.
+
+Also corrected in `docs/SEMANTICS.md`: the array-method row claimed
+`product()`, `min()` and `max()` were evaluated. They are not — and they are not
+PSS array methods either; `size` and `sum` are the only two the standard
+defines.
+
+100 tests (1 new).
+
 ## 0.21.0 — 2026-10-26
 
 `unique` constraints now work

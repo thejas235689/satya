@@ -1206,6 +1206,87 @@ fn repair(
                         }
                     }
                 }
+                // `arr.sum() <op> k` — an aggregate over the elements. No bound
+                // propagation can see this, so move elements until the relation
+                // holds: downward for `<=`/`<`/`==`, upward for `>=`/`>`/`==`.
+                // Guarded: any other `General` atom belongs to the ordering and
+                // single-unknown arms below, which this would otherwise shadow.
+                Atom::General(l, op, rhs) if is_sum_expr(l) => {
+                    let base = match l {
+                        Expr::Method(b, name, args) if name == "sum" && args.is_empty() => {
+                            match &**b {
+                                Expr::Path(p) => Some(p.segments.join(".")),
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    };
+                    if let Some(base) = base {
+                        if let (Some(target), Some(n)) =
+                            (eval(rhs, values, env), values.get(&format!("{}.size", base)).copied())
+                        {
+                            let n = n.min(MAX_ARRAY);
+                            let cur_sum = |values: &BTreeMap<String, i64>| -> i64 {
+                                (0..n)
+                                    .filter_map(|i| values.get(&format!("{}[{}]", base, i)).copied())
+                                    .sum()
+                            };
+                            // A strict bound needs one more than the literal:
+                            // `sum < 10` must land on 9, not 10.
+                            let eff = match op {
+                                Op::Lt => target - 1,
+                                Op::Gt => target + 1,
+                                _ => target,
+                            };
+                            for _ in 0..1024 {
+                                let cur = cur_sum(values);
+                                if rel_holds(*op, cur, target) {
+                                    break;
+                                }
+                                let need_lower = cur > eff;
+                                // Pick the element that can move the most in the
+                                // needed direction.
+                                let mut best: Option<(String, i64)> = None;
+                                for i in 0..n {
+                                    let key = format!("{}[{}]", base, i);
+                                    let v = match values.get(&key).copied() {
+                                        Some(v) => v,
+                                        None => continue,
+                                    };
+                                    let d = class_domain.get(&key);
+                                    let (lo, hi) = match d {
+                                        Some(d) => (d.lo, d.hi),
+                                        None => (0, i64::MAX),
+                                    };
+                                    if need_lower {
+                                        if v > lo
+                                            && best.as_ref().map(|(_, b)| v > *b).unwrap_or(true)
+                                        {
+                                            best = Some((key, v));
+                                        }
+                                    } else if v < hi
+                                        && best.as_ref().map(|(_, b)| v < *b).unwrap_or(true)
+                                    {
+                                        best = Some((key, v));
+                                    }
+                                }
+                                let (key, _step) = match best {
+                                    Some(b) => b,
+                                    None => break, // nothing can move
+                                };
+                                let v = values.get(&key).copied().unwrap_or(0);
+                                // Move one at a time so the reduction spreads
+                                // across the elements instead of emptying one.
+                                let delta = 1;
+                                let nv = if need_lower { v - delta } else { v + delta };
+                                if values.get(&key).copied() != Some(nv) {
+                                    values.insert(key, nv);
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
+                }
                 // `unique { a, b, c }`: move a duplicate to a free value in its
                 // own domain. This is a different shape of repair from the
                 // others — it picks a value rather than clamping one.
@@ -2270,6 +2351,11 @@ fn subst_loop_elem(e: &Expr, var: &str, elem: &Expr) -> Expr {
         Expr::Cast(t, a) => Expr::Cast(t.clone(), Box::new(subst_loop_elem(a, var, elem))),
         other => other.clone(),
     }
+}
+
+/// True for `arr.sum()` — the only aggregate the standard defines.
+fn is_sum_expr(e: &Expr) -> bool {
+    matches!(e, Expr::Method(_, name, args) if name == "sum" && args.is_empty())
 }
 
 fn split_and(expr: &Expr, out: &mut Vec<Atom>, vars: &BTreeMap<String, Domain>) {
