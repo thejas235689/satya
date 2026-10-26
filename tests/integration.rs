@@ -1996,3 +1996,110 @@ fn each_open_range_form_is_accepted() {
         assert!(compile_pss(&src).is_ok(), "should parse: {c}");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Randomisation and coverage, found by writing the examples in
+// examples/randomisation and examples/coverage and measuring them.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_dist_roughly_follows_its_weights() {
+    // `dist pick in [0 := 1, 1 := 3, 10..12 :/ 6]` — `:/` splits 6 across the
+    // three values, so the weights are 1:3:2:2:2 of 10.
+    let src = r#"
+component C {
+  action a { rand int pick; constraint dist pick in [0 := 1, 1 := 3, 10..12 :/ 6]; };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let mut counts = std::collections::BTreeMap::new();
+    let n = 2000;
+    for seed in 1..=n {
+        let s = engine::run_scenario(&m, "a", seed);
+        *counts.entry(s.steps[0].fields[0].1).or_insert(0usize) += 1;
+    }
+    assert_eq!(counts.len(), 5, "only the five weighted values appear");
+    let share = |v: i64| *counts.get(&v).unwrap_or(&0) as f64 / n as f64;
+    assert!((share(0) - 0.10).abs() < 0.04, "0: {}", share(0));
+    assert!((share(1) - 0.30).abs() < 0.05, "1: {}", share(1));
+    for v in [10, 11, 12] {
+        assert!((share(v) - 0.20).abs() < 0.05, "{v}: {}", share(v));
+    }
+}
+
+#[test]
+fn a_modulo_constraint_is_enforced() {
+    // Found while writing the randomisation examples: `addr % 4 == 0` was
+    // reported unsatisfied on every seed, because bound propagation cannot
+    // invert a modulo.
+    let src = r#"
+component C {
+  action a { rand int addr; constraint addr in [0..1023]; constraint addr % 4 == 0; };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    for seed in 1..=60 {
+        let s = engine::run_scenario(&m, "a", seed);
+        let v = s.steps[0].fields[0].1;
+        assert_eq!(v % 4, 0, "seed {seed} gave {v}");
+    }
+}
+
+#[test]
+fn an_if_else_constraint_is_applied() {
+    // `if (c) a else b` is lowered onto two implications. It used to be dropped
+    // entirely — not applied *and* not counted.
+    let src = r#"
+component C {
+  action a {
+    rand int len; rand int burst;
+    constraint len in [33..64];
+    constraint { if (len > 32) { burst <= 4; } else { burst >= 100; } }
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    for seed in 1..=40 {
+        let s = engine::run_scenario(&m, "a", seed);
+        let f: std::collections::BTreeMap<_, _> = s.steps[0].fields.iter().cloned().collect();
+        assert!(f["len"] > 32);
+        assert!(f["burst"] <= 4, "seed {seed}: burst={}", f["burst"]);
+    }
+}
+
+#[test]
+fn a_cover_block_observes_its_body() {
+    // `cover { do b; }` used to swallow the traversal: the body was skipped to
+    // the next `;`, so the scenario came out empty.
+    let src = r#"
+component C {
+  action a { activity { cover { do b; } } };
+  action b { };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    assert_eq!(s.steps.len(), 1, "the covered traversal is executed");
+}
+
+#[test]
+fn coverage_samples_coverpoints_and_crosses() {
+    let src = r#"
+package p { enum mode_e { FAST, SLOW }; };
+component C {
+  covergroup cg (int len, mode_e m) {
+    coverpoint len { label len_bin; bins small = [0..3]; bins large = [4..7]; }
+    coverpoint m { label mode_bin; }
+    cross len_bin, mode_bin { label len_x_mode; }
+  }
+  action a { activity { cover { do b; } } };
+  action b { rand int len; rand mode_e m; constraint len in [0..7]; };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let names: Vec<&str> = s.coverage.iter().map(|c| c.name.as_str()).collect();
+    assert!(names.contains(&"cg.len_bin"), "{names:?}");
+    assert!(names.contains(&"cg.mode_bin"), "{names:?}");
+    assert!(names.contains(&"cg.len_x_mode"), "the cross is sampled: {names:?}");
+}

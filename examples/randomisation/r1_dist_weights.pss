@@ -1,0 +1,24 @@
+// Randomisation example 1 — weighted distribution (PSS 16.1.9, Syntax 61).
+//
+// `dist` gives each value or range a weight. The `:=` operator assigns the
+// weight to *each* value in a range; `:/` distributes it across them. Over many
+// seeds the observed frequency of each value should follow the weights, which
+// is what tools/rand_cov_check.py measures.
+package rand_dist_pkg {
+
+    component rand_dist_c {
+        action dist_a {
+            rand int pick;
+
+            // 1:3:6 over three values. `:/` spreads the weight over the range,
+            // so 10..12 shares weight 6 between its three values.
+            constraint dist pick in [0 := 1, 1 := 3, 10..12 :/ 6];
+        };
+
+        action dist_range_a {
+            rand bit[8] byte_v;
+            // A range weighted per-value: every value in 0..3 gets weight 2.
+            constraint dist byte_v in [0..3 := 2, 200 := 5];
+        };
+    };
+};

@@ -1766,9 +1766,14 @@ impl<'a> Engine<'a> {
                             Some(l) => format!("{}.{}", cg.name, l),
                             None => format!("{}.{}", cg.name, crate::solver::render_expr(expr)),
                         };
-                        if let Some(l) = label {
-                            sampled.insert(l.clone(), v);
-                        }
+                        // A cross refers to a coverpoint by its label, or by the
+                        // expression itself when the coverpoint is unlabelled
+                        // (`coverpoint len;` is referred to as `len`).
+                        let key = match label {
+                            Some(l) => l.clone(),
+                            None => crate::solver::render_expr(expr),
+                        };
+                        sampled.insert(key, v);
                         *self
                             .coverage
                             .entry(point.clone())

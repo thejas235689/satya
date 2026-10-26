@@ -1,0 +1,30 @@
+// Coverage example 1 — coverpoints and explicit bins (PSS 18.3, Syntax 65-66).
+//
+// Two coverpoints over one action: `len` with two declared bins and a single
+// value bin, and `kind` sampled whole. Every declared bin should be reachable
+// across seeds; tools/rand_cov_check.py checks that they are all hit.
+package cov_bins_pkg {
+
+    enum op_e { READ, WRITE, IDLE };
+
+    component cov_bins_c {
+        covergroup len_cg (int len, op_e kind) {
+            coverpoint len {
+                bins short_len = [0..3];
+                bins long_len  = [4..7];
+                bins exact_15  = 15;
+            }
+            coverpoint kind;
+        }
+
+        action top_a {
+            activity { cover { do item_a; } }
+        };
+
+        action item_a {
+            rand int len;
+            rand op_e kind;
+            constraint len in [0..15];
+        };
+    };
+};

@@ -1,0 +1,34 @@
+// Coverage example 3 — labelled coverpoints and a labelled cross.
+//
+// A coverpoint label is what a cross refers to, so labelling makes the intent
+// explicit and lets the same expression be sampled under two names.
+package cov_labelled_pkg {
+
+    enum mode_e { FAST, SLOW };
+
+    component cov_labelled_c {
+        covergroup mode_cg (int len, mode_e m) {
+            coverpoint len {
+                label len_bin;
+                bins small = [0..3];
+                bins large = [4..7];
+            }
+            coverpoint m {
+                label mode_bin;
+            }
+            cross len_bin, mode_bin {
+                label len_x_mode;
+            }
+        }
+
+        action top_a {
+            activity { cover { do item_a; } }
+        };
+
+        action item_a {
+            rand int len;
+            rand mode_e m;
+            constraint len in [0..7];
+        };
+    };
+};

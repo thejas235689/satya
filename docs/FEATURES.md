@@ -19,8 +19,8 @@ marked implemented that were not.
 | Status | Count |
 |---|---|
 | yes | 92 |
-| partial | 53 |
-| no | 1 |
+| partial | 51 |
+| no | 3 |
 | **total** | **146** |
 
 ## Every construct
@@ -81,11 +81,11 @@ marked implemented that were not.
 | 52 | Static bind directives | yes |  |
 | 53 | Member constraint declaration | yes |  |
 | 54 | Expression constraint | yes |  |
-| 55 | Implication constraint | yes |  |
-| 56 | Conditional constraint | yes |  |
-| 57 | foreach constraint | partial | foreach over a collection is expanded; not over a random index |
+| 55 | Implication constraint | yes | the consequent is repaired for `==`, `<=`, `>=`, `<`, `>` and `in` range/set forms |
+| 56 | Conditional constraint | yes | lowered onto two implications (`if (c) a else b` becomes `c -> a` and `!c -> b`) |
+| 57 | foreach constraint | no | parsed, then dropped: it is neither applied nor counted, so `constraint foreach (a[i]) { a[i] in [0..15]; }` leaves the elements unconstrained |
 | 58 | forall constraint | partial | parsed; forall is not expanded |
-| 59 | unique constraint | partial | parsed; the `unique` constraint is not enforced |
+| 59 | unique constraint | no | parsed, then dropped; not enforced and not counted |
 | 60 | Default constraints | yes |  |
 | 61 | Distribution directive | yes |  |
 | 62 | scheduling constraint statement | partial | parsed and recorded; the engine walks the activity in one deterministic order, so `sequence` holds by construction |

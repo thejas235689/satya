@@ -13,6 +13,44 @@ approximated.
 
 ---
 
+## 0.19.0 — 2026-10-26
+
+New randomisation and coverage examples, and four defects they found
+
+Added `examples/randomisation/` (three models) and `examples/coverage/` (three
+models), plus `tools/rand_cov_check.py`, which measures the *solutions* against
+each model's intent rather than trusting the tool's own report. Results and
+numbers in [`docs/RANDOMISATION-COVERAGE.md`](docs/RANDOMISATION-COVERAGE.md).
+
+**`dist` weights are honoured.** Over 200 seeds, chi-square **1.55** against the
+declared 1:3:2:2:2 proportions, and `:/` really distributes rather than
+assigning.
+
+Four defects found while writing the examples:
+
+- **`cover { ... }` dropped its body.** `cover { do b; }` skipped the traversal
+  to the next `;`, so the scenario came out empty — zero steps, no error.
+- **A modulo constraint was never enforced.** `addr % 4 == 0` was reported
+  unsatisfied on every seed. Over a small domain the disallowed values can
+  simply be forbidden, which it now does.
+- **`if/else` constraints were dropped entirely** — not applied *and* not
+  counted, so the report read `1/1 satisfied` while the branch was
+  unconstrained. They now lower onto two implications, and the implication
+  repair handles `==`, `<=`, `>=`, `<`, `>` and `in` range/set consequents.
+- **A cross never sampled unlabelled coverpoints.** `cross len, m` found nothing
+  unless the coverpoints carried a `label`. A coverpoint is now keyed by its
+  label or its expression.
+
+The checker also caught a fault in my own example — an if/else branch that
+contradicted a READ implication, making one draw in sixty unsatisfiable.
+
+**Corrected an overclaim in `docs/FEATURES.md`:** `foreach` and `unique`
+constraints were marked *partial* because the parser accepted them. They are
+parsed and then **dropped** — not enforced and not counted. Both are now `no`,
+which moves the matrix to 92 implemented, 51 partial, 3 not.
+
+96 tests (5 new).
+
 ## 0.18.0 — 2026-10-26
 
 andestech/pss-gen: a crash on open ranges

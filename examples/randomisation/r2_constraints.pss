@@ -1,0 +1,48 @@
+// Randomisation example 2 — constraint forms (PSS 16.1).
+//
+// Implication, if/else, arithmetic relations and set membership. Every seed
+// must produce a solution that satisfies all of them; tools/rand_cov_check.py
+// checks that rather than trusting the solver's own report.
+package rand_constr_pkg {
+
+    enum kind_e { READ, WRITE, IDLE };
+
+    component rand_constr_c {
+        action constr_a {
+            rand int len;
+            rand int addr;
+            rand kind_e kind;
+            rand int burst;
+
+            // A range plus alignment: the address is a multiple of 4.
+            constraint len in [1..64];
+            constraint addr in [0..1023];
+            constraint addr % 4 == 0;
+
+            // Implication: a WRITE always carries a burst, a READ never does.
+            constraint kind == WRITE -> burst in [2..8];
+            constraint kind == READ  -> burst == 0;
+
+            // if/else inside a constraint block. Note this must not contradict
+            // the READ implication above: `burst >= 1` for short transfers
+            // would make a READ unsatisfiable (it forces burst == 0), and the
+            // checker in tools/rand_cov_check.py catches exactly that.
+            constraint {
+                if (len > 32) {
+                    burst <= 4;
+                } else {
+                    burst <= 2;
+                }
+            }
+        };
+
+        action ordered_a {
+            rand int lo;
+            rand int hi;
+            // A relation between two random variables.
+            constraint lo in [0..50];
+            constraint hi in [0..50];
+            constraint lo < hi;
+        };
+    };
+};

@@ -260,6 +260,7 @@ impl Parser {
             if self.at_ident("coverpoint") {
                 self.bump();
                 let expr = self.parse_expr(0)?;
+                let mut label = label;
                 let mut iff = None;
                 if self.eat_ident("iff") {
                     self.expect_punct("(")?;
@@ -271,6 +272,14 @@ impl Parser {
                     self.bump();
                     while !self.at_punct("}") && !self.at_eof() {
                         if self.eat_punct(";") {
+                            continue;
+                        }
+                        // `label <ident>;` names the coverpoint, which is what
+                        // a cross refers to (PSS 18.3).
+                        if self.at_ident("label") {
+                            self.bump();
+                            label = Some(self.expect_ident()?);
+                            self.eat_punct(";");
                             continue;
                         }
                         let is_bins = self.at_ident("bins");
@@ -320,8 +329,23 @@ impl Parser {
                     iff = Some(self.parse_expr(0)?);
                     self.expect_punct(")")?;
                 }
+                let mut label = label;
                 if self.at_punct("{") {
-                    self.skip_braced_or_semicolon();
+                    // `cross a, b { label X; }` — the cross's own label.
+                    self.bump();
+                    while !self.at_punct("}") && !self.at_eof() {
+                        if self.eat_punct(";") {
+                            continue;
+                        }
+                        if self.at_ident("label") {
+                            self.bump();
+                            label = Some(self.expect_ident()?);
+                            self.eat_punct(";");
+                            continue;
+                        }
+                        self.skip_to_semicolon();
+                    }
+                    self.expect_punct("}")?;
                 }
                 self.eat_punct(";");
                 items.push(CoverItem::Cross { label, refs, iff });
@@ -1748,7 +1772,7 @@ impl Parser {
                 // `cover { <monitor body> }` — the body may declare an in-line
                 // covergroup and/or an activity to observe.
                 self.bump();
-                let mut body = None;
+                let mut stmts: Vec<ActivityStmt> = Vec::new();
                 while !self.at_punct("}") && !self.at_eof() {
                     if self.eat_punct(";") {
                         continue;
@@ -1760,7 +1784,9 @@ impl Parser {
                     }
                     if self.at_ident("activity") {
                         self.bump();
-                        body = Some(self.parse_activity_block()?);
+                        match self.parse_activity_block()? {
+                            Activity::Sequence(v) => stmts.extend(v),
+                        }
                         continue;
                     }
                     if self.at_ident("monitor") || self.at_ident("constraint") || self.at_ident("rand")
@@ -1768,10 +1794,25 @@ impl Parser {
                         self.skip_braced_or_semicolon();
                         continue;
                     }
-                    self.skip_to_semicolon();
+                    // The body of a `cover` block is an activity statement
+                    // (PSS 19.2). Anything else here used to be skipped to the
+                    // next `;`, which silently dropped `cover { do b; }`.
+                    match self.parse_activity_stmt()? {
+                        Some(st) => stmts.push(st),
+                        None => {
+                            if !self.at_punct("}") {
+                                self.skip_to_semicolon();
+                            }
+                        }
+                    }
                 }
                 self.expect_punct("}")?;
                 self.eat_punct(";");
+                let body = if stmts.is_empty() {
+                    None
+                } else {
+                    Some(Activity::Sequence(stmts))
+                };
                 return Ok(Some(ActivityStmt::Cover { label: None, body, monitor: None }));
             }
             // `cover <monitor_type>;` — match the named monitor (PSS 19.2).

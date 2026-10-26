@@ -874,7 +874,35 @@ pub fn solve_with(
                 }
             }
             Atom::Implies(_, _) => {}
-            Atom::General(_, _, _) => {}
+            Atom::General(l, op, r) => {
+                // `addr % k == c` — a modulo/alignment constraint, which is
+                // common in address models. It cannot be inverted by bound
+                // propagation, but over a small domain the disallowed values
+                // can simply be forbidden.
+                if matches!(op, Op::Eq) {
+                    if let Expr::Binary(bop, base, div) = l {
+                        if bop == "%" {
+                            if let (Some(v), Some(k), Some(c)) = (
+                                as_var(&**base),
+                                eval(div, bindings, &env),
+                                eval(r, bindings, &env),
+                            ) {
+                                if k > 0 {
+                                    if let Some(d) = vars.get_mut(&v) {
+                                        if (d.hi as i128 - d.lo as i128) < 1_000_000 {
+                                            for val in d.lo..=d.hi {
+                                                if val % k != c {
+                                                    d.forbidden.insert(val);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             Atom::Unsupported(e) => unsupported.push(render_expr(e)),
         }
     }
@@ -1120,10 +1148,52 @@ fn repair(
                             if check_atom(c, values, env, class_domain) {
                                 continue;
                             }
-                            if let Atom::Rel(v, Op::Eq, rhs) = c {
-                                if let Some(t) = eval(rhs, values, env) {
-                                    let nv = clamp(v, t);
-                                    if values.get(v).copied() != Some(nv) {
+                            if let Atom::Rel(v, op, rhs) = c {
+                                // A relational consequent (`burst <= 4`) must be
+                                // repaired too, not only `==`.
+                                if let (Some(t), Some(cur)) =
+                                    (eval(rhs, values, env), values.get(v).copied())
+                                {
+                                    let nv = match op {
+                                        Op::Eq => Some(t),
+                                        Op::Le => Some(cur.min(t)),
+                                        Op::Lt => Some(cur.min(t - 1)),
+                                        Op::Ge => Some(cur.max(t)),
+                                        Op::Gt => Some(cur.max(t + 1)),
+                                        _ => None,
+                                    };
+                                    if let Some(nv) = nv {
+                                        let nv = clamp(v, nv);
+                                        if nv != cur {
+                                            values.insert(v.clone(), nv);
+                                            changed = true;
+                                        }
+                                    }
+                                }
+                            } else if let Atom::InRange(v, lo, hi) = c {
+                                // `kind == W -> burst in [2..8]`: a range
+                                // consequent was not repaired, so the
+                                // implication was reported unsatisfied even
+                                // though a satisfying value was in reach.
+                                if let Some(cur) = values.get(v).copied() {
+                                    let nv = cur.clamp(*lo, *hi);
+                                    if nv != cur {
+                                        values.insert(v.clone(), nv);
+                                        changed = true;
+                                    }
+                                }
+                            } else if let Atom::InSet(v, items) = c {
+                                // A set consequent: move to the nearest member.
+                                if let Some(cur) = values.get(v).copied() {
+                                    let allowed: Vec<i64> = items
+                                        .iter()
+                                        .flat_map(|it| set_item_values(it, values, env))
+                                        .collect();
+                                    if !allowed.is_empty() && !allowed.contains(&cur) {
+                                        let nv = *allowed
+                                            .iter()
+                                            .min_by_key(|a| ((**a as i128) - cur as i128).abs())
+                                            .unwrap();
                                         values.insert(v.clone(), nv);
                                         changed = true;
                                     }
@@ -2080,6 +2150,25 @@ fn split_and(expr: &Expr, out: &mut Vec<Atom>) {
             let mut cons = Vec::new();
             split_and(b, &mut cons);
             out.push(Atom::Implies((**a).clone(), cons));
+        }
+        // `if (c) { a } else { b }` inside a constraint (PSS 16.1.7) is an
+        // implication in both directions. It used to be dropped entirely — not
+        // applied *and* not counted, so the report read "1/1 satisfied" while
+        // the branch was unconstrained.
+        Expr::Ternary(c, t, e) => {
+            let mut then_atoms = Vec::new();
+            split_and(t, &mut then_atoms);
+            if !then_atoms.is_empty() {
+                out.push(Atom::Implies((**c).clone(), then_atoms));
+            }
+            let mut else_atoms = Vec::new();
+            split_and(e, &mut else_atoms);
+            if !else_atoms.is_empty() {
+                out.push(Atom::Implies(
+                    Expr::Unary("!".into(), c.clone()),
+                    else_atoms,
+                ));
+            }
         }
         Expr::Unary(op, e) if op == "!" => {
             if let Some(v) = as_var(e) {

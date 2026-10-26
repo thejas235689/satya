@@ -1,0 +1,33 @@
+// Randomisation example 3 — arrays and collections (PSS 7.9, 8.5).
+//
+// NOTE ON SCOPE: `constraint foreach (a[i]) { ... }` and `a.sum()` are *parsed*
+// but not applied by the solver — the constraint is dropped rather than
+// enforced (see docs/FEATURES.md entries 57 and the array-method notes in
+// docs/SEMANTICS.md). This example therefore constrains the elements
+// individually, which does work, and the checker verifies exactly that.
+package rand_array_pkg {
+
+    component rand_array_c {
+        action array_a {
+            rand bit[8] payload[4];
+            rand int n;
+
+            constraint n in [1..4];
+
+            // Per-element constraints. A `foreach` would be the idiomatic way
+            // to write this; until foreach is applied, the elements are named.
+            constraint payload[0] in [0..15];
+            constraint payload[1] in [0..15];
+            constraint payload[2] in [0..15];
+            constraint payload[3] in [0..15];
+        };
+
+        action sized_a {
+            rand int ids[4];
+            constraint ids[0] in [1..4];
+            constraint ids[1] in [1..4];
+            constraint ids[2] in [1..4];
+            constraint ids[3] in [1..4];
+        };
+    };
+};

@@ -1,0 +1,27 @@
+// Coverage example 2 — cross coverage (PSS 18.4, Syntax 67).
+//
+// A cross combines two coverpoints, so each (len-bin, kind) pair is its own
+// coverage point. `cross len, kind` refers to the coverpoints by their
+// expressions, which is the unlabelled form.
+package cov_cross_pkg {
+
+    enum op_e { READ, WRITE };
+
+    component cov_cross_c {
+        covergroup xfer_cg (int len, op_e kind) {
+            coverpoint len { bins small = [0..3]; bins large = [4..7]; }
+            coverpoint kind;
+            cross len, kind;
+        }
+
+        action top_a {
+            activity { cover { do item_a; } }
+        };
+
+        action item_a {
+            rand int len;
+            rand op_e kind;
+            constraint len in [0..7];
+        };
+    };
+};
