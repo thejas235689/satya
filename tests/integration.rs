@@ -1941,3 +1941,14 @@ component C {
 "#;
     assert!(compile_pss(src).is_ok());
 }
+
+#[test]
+fn an_unmatched_closing_brace_at_end_of_file_is_an_error() {
+    // Found by pssparser's error-suite (syntax.braces). A stray trailing `}`
+    // used to be ignored, because the item loop simply stopped at it.
+    let src = "component C {\n    action A { }\n}\n}\n";
+    let err = compile_pss(src).unwrap_err();
+    assert!(format!("{}", err).contains("unmatched"), "{err}");
+    // The balanced version still loads.
+    assert!(compile_pss("component C { action A { } }\n").is_ok());
+}

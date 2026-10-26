@@ -205,6 +205,26 @@ impl Parser {
 
     pub fn parse_file(&mut self) -> PssResult<SourceFile> {
         let items = self.parse_items(true)?;
+        // `parse_items` stops at a `}`; at file level that means an unmatched
+        // one, which used to be ignored silently.
+        if !self.at_eof() {
+            let (line, col) = (self.peek().line, self.peek().col);
+            return Err(PssError::new(
+                format!("unmatched {} at end of file", describe(self.peek())),
+                line,
+                col,
+            ));
+        }
+        // `parse_items` stops at a `}`; at file level that means an unmatched
+        // one, which used to be ignored silently.
+        if !self.at_eof() {
+            let (line, col) = (self.peek().line, self.peek().col);
+            return Err(PssError::new(
+                format!("unmatched {} at end of file", describe(self.peek())),
+                line,
+                col,
+            ));
+        }
         Ok(SourceFile {
             items,
             covergroups: std::mem::take(&mut self.covergroups),

@@ -216,6 +216,69 @@ LRM strict count from 129 to 90, because `enum`, `monitor`, `covergroup`,
 So the honest result for this repository is that there was nothing to check —
 but checking it anyway found a bug worth more than the check itself.
 
+## The pssparser error-suite
+
+[`psstools/pssparser`](https://github.com/psstools/pssparser) — the reference
+ANTLR-based PSS parser — ships `error-suite/`, a corpus of deliberately-broken
+**and** deliberately-valid PSS, with a `//!` header on every case stating what a
+tool should do with it. That is the most useful kind of check: 190 graded cases
+whose expectations are set outside this repository.
+
+Reproduce with:
+
+```bash
+python3 tools/pssparser_errsuite_check.py <pssparser>/error-suite ./target/release/satya
+```
+
+The suite's own harness could not be used directly — its `pss_errsuite/cli.py`
+imports a `compare` module that is not present in the published snapshot — so
+the tool here honours the same documented conventions instead (`NAME.pss` graded
+on its header, `NAME.ok.pss` is the repaired source, `_NAME.pss` companions
+skipped), taken from the suite's own `case.py`.
+
+### Result
+
+```
+  accept    expect=accept      2 correct    0 wrong
+  syntax    expect=error      64 correct  101 wrong
+  semantic  expect=error       0 correct   19 wrong
+  semantic  expect=warning     1 correct    3 wrong
+  TOTAL                       67 correct  123 wrong   (35%)
+  controls (repaired source, must parse): 112/113
+```
+
+Read in the two directions this means very different things.
+
+**Satya accepts valid PSS.** 112 of 113 repaired controls parse, and both
+`accept/` cases pass. The one control that does not is
+`enum_invalid_base_type_keyword.ok.pss`, whose "repaired" source still contains
+the defect (`enum E : int`), so failing it is right.
+
+**Satya is too lenient on malformed syntax.** It rejects only **64 of 165**
+deliberately-broken cases. This is the real finding, and it is a bigger gap than
+anything the shared corpus exposed: `x + ;`, `== x;`, `x == 5 &&;` and `x = ;`
+inside an `exec` body are all accepted.
+
+**It does no semantic analysis.** 0 of 19 `semantic/` error cases are caught,
+because `satya parse` is a syntax pass; those cases need a checker phase
+(register widths, template arity, instance qualifiers). That is a scope boundary
+rather than a defect, but it is a boundary worth stating plainly.
+
+### What was fixed
+
+`extra_close_brace_component` and `extra_close_brace_after_struct`: a stray `}`
+at the end of a file was silently ignored, because the item loop simply stopped
+at it. It is now an error. That is 2 of the 165.
+
+### What was tried and reverted
+
+Making the `exec` statement parser strict looked like the biggest win — many
+failing cases are malformed `exec` bodies. It was reverted: it rejected two
+valid compliance files (`|=` compound assignment, and `break` inside a nested
+block) and still did not catch `x = ;`, because that parser consumes tokens
+before giving up. A parser cannot be made strict before it can parse the valid
+language; the procedural grammar needs `|=` and nested blocks first.
+
 ## A note on the `dist` spelling
 
 `lexical/operators.pss` writes a distribution as `<expr> dist { item := w, ... }`

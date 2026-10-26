@@ -13,6 +13,44 @@ approximated.
 
 ---
 
+## 0.17.0 — 2026-10-26
+
+Checked against pssparser's error-suite: Satya is too lenient
+
+`psstools/pssparser` ships `error-suite/`, 190 graded cases of deliberately
+broken and deliberately valid PSS, each with a `//!` header saying what a tool
+should do with it. `tools/pssparser_errsuite_check.py` runs it.
+
+```
+  accept    expect=accept      2 correct    0 wrong
+  syntax    expect=error      64 correct  101 wrong
+  semantic  expect=error       0 correct   19 wrong
+  semantic  expect=warning     1 correct    3 wrong
+  TOTAL                       67 correct  123 wrong   (35%)
+  controls (repaired source, must parse): 112/113
+```
+
+The two directions mean different things. **Satya accepts valid PSS** — 112 of
+113 repaired controls parse and both `accept/` cases pass. **But it is too
+lenient on malformed syntax**: it rejects only 64 of 165 deliberately-broken
+cases. `x + ;`, `== x;`, `x == 5 &&;` and `x = ;` in an `exec` body are all
+accepted. That is a larger gap than the shared corpus exposed, and it is now
+recorded rather than hidden.
+
+Fixed: a stray `}` at the end of a file was silently ignored; it is now an
+error (2 of the 165).
+
+Tried and reverted: making the `exec` statement parser strict. It rejected two
+valid compliance files (`|=` compound assignment, `break` inside a nested block)
+and still did not catch `x = ;`, because that parser consumes tokens before
+giving up. A parser cannot be strict before it can parse the valid language.
+
+The suite's own harness could not be used as-is: `pss_errsuite/cli.py` imports a
+`compare` module absent from the published snapshot. The tool here honours the
+same conventions, taken from the suite's own `case.py`.
+
+89 tests (1 new).
+
 ## 0.16.0 — 2026-10-26
 
 A file of foreign syntax is no longer reported as a success
