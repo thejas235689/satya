@@ -1,6 +1,6 @@
 [package]
 name = "satya"
-version = "0.22.0"
+version = "0.23.0"
 edition = "2021"
 description = "Satya — a portable test-stimulus engine in Rust. One PSS model, six realizations: UVM/SystemVerilog, native C, firmware reference, post-silicon bench, JSON and trace."
 license = "MIT"

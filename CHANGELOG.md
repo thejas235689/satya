@@ -13,6 +13,37 @@ approximated.
 
 ---
 
+## 0.23.0 — 2026-10-26
+
+Address claims match region traits
+
+Claims were allocated first-fit from the first region with room, ignoring the
+trait attributes entirely. That was the one remaining place where the tool's
+behaviour quietly **differed** from the standard rather than honestly reporting
+a gap, which made it the most misleading thing left in the codebase.
+
+PSS 24.7.3: *"Regions with trait values that satisfy the claim's trait
+constraints are the candidate matching regions."* Now:
+
+- a region's trait values are collected from `reg.trait.<attr> = v;` in
+  `exec init_up` (24.7.3.2);
+- a claim's requirements are read from `claim.trait.<attr> == k` on the action;
+- allocation only considers regions whose trait values satisfy every attribute
+  the claim constrains;
+- an unmatched constraint is reported instead of allocating from the wrong
+  region.
+
+`examples/address/trait_matching.pss` has two regions differing only in `core`:
+a claim asking for `core == 1` lands at 0x2000 and one asking for `core == 0`
+lands at 0x1000. Asking for `core == 7` warns
+`no region matches the claim's trait constraints {core=7}`.
+
+Still partial, and now recorded as such: a claim does not span several matching
+regions, and regions are modelled from their assignments rather than built
+through `add_region` calls.
+
+102 tests (2 new).
+
 ## 0.22.0 — 2026-10-26
 
 `arr.sum()` now works inside constraints

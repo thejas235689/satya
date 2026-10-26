@@ -1,0 +1,45 @@
+// Address claims with trait matching (PSS 24.7.3, 24.8.6).
+//
+// An address space is composed of regions, and a region is characterised by
+// values assigned to address space traits. A claim states which traits it needs
+// through constraints on its trait struct, and the tool must allocate it from a
+// region whose trait values satisfy those constraints:
+//
+//   "Regions with trait values that satisfy the claim's trait constraints are
+//    the candidate matching regions."  — PSS 24.7.3
+//
+// Here two regions differ only in `core`, and the claim asks for core == 1, so
+// it must land in `region1` at 0x2000 and not in `region0` at 0x1000.
+package addr_trait_pkg {
+
+    struct core_trait_s : addr_trait_s {
+        rand int core;
+    };
+
+    component addr_trait_c {
+        contiguous_addr_space_c<core_trait_s> region0;
+        contiguous_addr_space_c<core_trait_s> region1;
+
+        exec init_up {
+            region0.addr = 0x1000;
+            region0.size = 0x100;
+            region0.trait.core = 0;
+
+            region1.addr = 0x2000;
+            region1.size = 0x100;
+            region1.trait.core = 1;
+        }
+
+        action on_core1_a {
+            transparent_addr_claim_s<core_trait_s> claim;
+            constraint claim.size == 64;
+            constraint claim.trait.core == 1;
+        };
+
+        action on_core0_a {
+            transparent_addr_claim_s<core_trait_s> claim;
+            constraint claim.size == 64;
+            constraint claim.trait.core == 0;
+        };
+    };
+};

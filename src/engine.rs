@@ -1076,11 +1076,19 @@ impl<'a> Engine<'a> {
 
     /// Allocate `size` bytes from the model's address regions, first fit
     /// (PSS 24.8). Returns the absolute address.
-    fn alloc_claim(&mut self, size: i64) -> Option<i64> {
+    /// Allocate `size` bytes from a region whose trait values satisfy the
+    /// claim's trait constraints (PSS 24.8.6). A region is a candidate when
+    /// every trait the claim constrains matches the region's value; a region
+    /// that does not set an attribute is not a candidate for it.
+    fn alloc_claim(&mut self, size: i64, want: &BTreeMap<String, i64>) -> Option<i64> {
         let regions: Vec<(i64, i64)> = self
             .model
             .addr_regions
             .iter()
+            .filter(|r| {
+                want.iter()
+                    .all(|(attr, v)| r.traits.get(attr).map(|rv| rv == v).unwrap_or(false))
+            })
             .map(|r| (r.base, r.size))
             .collect();
         if regions.is_empty() {
@@ -1877,15 +1885,32 @@ impl<'a> Engine<'a> {
                 continue;
             }
             let size = solved.get(&format!("{}.size", f.name)).copied().unwrap_or(64);
-            match self.alloc_claim(size) {
+            // Traits the claim requires: `claim.trait.<attr> == k` (PSS 24.8.6).
+            let mut want: BTreeMap<String, i64> = BTreeMap::new();
+            for c in &action.constraints {
+                collect_trait_equalities(&c.expr, &f.name, &mut want);
+            }
+            match self.alloc_claim(size, &want) {
                 Some(addr) => {
                     solved.insert(format!("{}.addr", f.name), addr);
                     solved.insert(format!("{}.size", f.name), size);
                 }
-                None => self.warnings.push(format!(
-                    "address claim `{}` could not be satisfied: no region has {} bytes free (PSS 24.8)",
-                    f.name, size
-                )),
+                None => {
+                    let why = if want.is_empty() {
+                        "no region has enough free space".to_string()
+                    } else {
+                        let attrs: Vec<String> =
+                            want.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
+                        format!(
+                            "no region matches the claim's trait constraints {{{}}}",
+                            attrs.join(", ")
+                        )
+                    };
+                    self.warnings.push(format!(
+                        "address claim `{}` could not be satisfied: {} (PSS 24.8)",
+                        f.name, why
+                    ));
+                }
             }
         }
 
@@ -2363,4 +2388,28 @@ pub fn eval_condition(
 ) -> bool {
     let env = Env::new(model);
     solver::eval(expr, values, &env).unwrap_or(0) != 0
+}
+
+/// Collect `claim.trait.<attr> == <const>` requirements for one claim field
+/// (PSS 24.8.6).
+fn collect_trait_equalities(e: &crate::ast::Expr, claim: &str, out: &mut BTreeMap<String, i64>) {
+    use crate::ast::Expr;
+    match e {
+        Expr::Binary(op, a, b) if op == "&&" => {
+            collect_trait_equalities(a, claim, out);
+            collect_trait_equalities(b, claim, out);
+        }
+        Expr::Binary(op, l, r) if op == "==" => {
+            let (path, val) = match (&**l, &**r) {
+                (Expr::Path(p), Expr::Int(k)) => (p, *k),
+                (Expr::Int(k), Expr::Path(p)) => (p, *k),
+                _ => return,
+            };
+            let segs = &path.segments;
+            if segs.len() == 3 && segs[0] == claim && segs[1] == "trait" {
+                out.insert(segs[2].clone(), val);
+            }
+        }
+        _ => {}
+    }
 }

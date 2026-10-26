@@ -157,6 +157,9 @@ pub struct AddrRegion {
     pub name: String,
     pub base: i64,
     pub size: i64,
+    /// Trait attribute values for this region, e.g. `core -> 1` from
+    /// `reg.trait.core = 1;` in an `exec init_up` block (PSS 24.7.3.2).
+    pub traits: std::collections::BTreeMap<String, i64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -501,12 +504,24 @@ impl Lowerer {
     /// `<region>.size`.
     fn build_addr_regions(&self) -> Vec<AddrRegion> {
         let mut acc: Vec<(String, Option<i64>, Option<i64>)> = Vec::new();
+        // Trait attribute values, keyed by region then attribute.
+        let mut trait_vals: std::collections::BTreeMap<String, std::collections::BTreeMap<String, i64>> =
+            std::collections::BTreeMap::new();
         let mut consider = |path: &Path, rhs: &Expr| {
             let segs = &path.segments;
             if segs.len() < 2 {
                 return;
             }
             let last = segs.last().unwrap().clone();
+            // `reg.trait.<attr> = v` describes the region's traits (24.7.3.2).
+            if segs.len() >= 3 && segs[segs.len() - 2] == "trait" {
+                let Some(v) = rhs.eval_const(&|n| self.model.constants.get(n).copied()) else {
+                    return;
+                };
+                let region = segs[..segs.len() - 2].join(".");
+                trait_vals.entry(region).or_default().insert(last, v);
+                return;
+            }
             let key = segs[..segs.len() - 1].join(".");
             let Some(v) = rhs.eval_const(&|n| self.model.constants.get(n).copied()) else {
                 return;
@@ -534,14 +549,23 @@ impl Lowerer {
             }
         }
         acc.into_iter()
-            .filter_map(|(name, base, size)| match (base, size) {
-                (Some(base), Some(size)) => Some(AddrRegion { name, base, size }),
-                (Some(base), None) => Some(AddrRegion {
-                    name,
-                    base,
-                    size: 0,
-                }),
-                _ => None,
+            .filter_map(|(name, base, size)| {
+                let traits = trait_vals.get(&name).cloned().unwrap_or_default();
+                match (base, size) {
+                    (Some(base), Some(size)) => Some(AddrRegion {
+                        name,
+                        base,
+                        size,
+                        traits,
+                    }),
+                    (Some(base), None) => Some(AddrRegion {
+                        name,
+                        base,
+                        size: 0,
+                        traits,
+                    }),
+                    _ => None,
+                }
             })
             .collect()
     }

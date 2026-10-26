@@ -2213,3 +2213,59 @@ fn a_sum_constraint_is_solved() {
         }
     }
 }
+
+#[test]
+fn a_claim_is_allocated_from_a_region_whose_traits_match() {
+    // PSS 24.7.3 / 24.8.6: "Regions with trait values that satisfy the claim's
+    // trait constraints are the candidate matching regions." Two regions differ
+    // only in `core`; the claim asks for one of them and must land there.
+    let src = r#"
+package p { struct core_trait_s : addr_trait_s { rand int core; }; };
+component C {
+  contiguous_addr_space_c<core_trait_s> region0;
+  contiguous_addr_space_c<core_trait_s> region1;
+  exec init_up {
+    region0.addr = 0x1000; region0.size = 0x100; region0.trait.core = 0;
+    region1.addr = 0x2000; region1.size = 0x100; region1.trait.core = 1;
+  }
+  action a {
+    transparent_addr_claim_s<core_trait_s> claim;
+    constraint claim.size == 64;
+    constraint claim.trait.core == 1;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let addr = s.steps[0]
+        .fields
+        .iter()
+        .find(|(k, _)| k == "claim.addr")
+        .map(|(_, v)| *v);
+    assert_eq!(addr, Some(0x2000), "must be allocated in the core=1 region");
+}
+
+#[test]
+fn an_unmatched_trait_constraint_is_reported() {
+    // No region has core == 7, so the claim cannot be satisfied and the tool
+    // must say so rather than silently allocating from the wrong region.
+    let src = r#"
+package p { struct core_trait_s : addr_trait_s { rand int core; }; };
+component C {
+  contiguous_addr_space_c<core_trait_s> region0;
+  exec init_up { region0.addr = 0x1000; region0.size = 0x100; region0.trait.core = 0; }
+  action a {
+    transparent_addr_claim_s<core_trait_s> claim;
+    constraint claim.size == 64;
+    constraint claim.trait.core == 7;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    assert!(
+        s.warnings.iter().any(|w| w.contains("trait constraints")),
+        "expected a trait warning, got {:?}",
+        s.warnings
+    );
+}
