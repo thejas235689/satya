@@ -147,6 +147,7 @@ def check_constraints(binary, seeds, failures):
     print("-" * 62)
     model = os.path.join(RAND, "r2_constraints.pss")
     array_model = os.path.join(RAND, "r3_arrays.pss")
+    unique_model = os.path.join(RAND, "r4_unique.pss")
 
     def constr_a(f):
         errs = []
@@ -183,15 +184,34 @@ def check_constraints(binary, seeds, failures):
     def sized_a(f):
         return [] if all(1 <= f.get("ids[%d]" % i, 0) <= 4 for i in range(4)) else ["ids out of [1..4]"]
 
+    def unique_ok_a(f):
+        vals = [f.get("ids[%d]" % i) for i in range(4)]
+        if any(v is None or not (1 <= v <= 4) for v in vals):
+            return ["ids out of [1..4]"]
+        return [] if len(set(vals)) == 4 else ["ids are not distinct: %s" % vals]
+
+    def unique_scalars_a(f):
+        vals = [f.get("x"), f.get("y"), f.get("z")]
+        if any(v is None or not (1 <= v <= 3) for v in vals):
+            return ["x/y/z out of [1..3]"]
+        return [] if len(set(vals)) == 3 else ["x/y/z not distinct: %s" % vals]
+
     for action, checker in (
         ("constr_a", constr_a),
         ("ordered_a", ordered_a),
         ("array_a", array_a),
         ("sized_a", sized_a),
+        ("unique_ok_a", unique_ok_a),
+        ("unique_scalars_a", unique_scalars_a),
     ):
         bad = 0
         sample = None
-        mdl = array_model if action in ("array_a", "sized_a") else model
+        if action in ("array_a", "sized_a"):
+            mdl = array_model
+        elif action in ("unique_ok_a", "unique_scalars_a"):
+            mdl = unique_model
+        else:
+            mdl = model
         for s in range(1, seeds + 1):
             out = run(binary, mdl, action, s)
             f = solved(out)
@@ -206,6 +226,27 @@ def check_constraints(binary, seeds, failures):
             s, f, errs = sample
             print("    seed %d: %s -> %s" % (s, f, ", ".join(errs)))
             failures.append("constraints: %s violates its model" % action)
+
+
+def check_unique_unsatisfiable(binary, failures):
+    """Five distinct values from [1..4] cannot exist: the tool must say so."""
+    print("\nrandomisation: an unsatisfiable unique is reported, not faked")
+    print("-" * 62)
+    model = os.path.join(RAND, "r4_unique.pss")
+    out = run(binary, model, "unique_impossible_a", 1)
+    f = solved(out)
+    vals = [f.get("five[%d]" % i) for i in range(5)]
+    tot = constraint_totals(out)
+    honest = tot is not None and tot[0] < tot[1]
+    print("  values %s, constraints %s" % (vals, "%d/%d" % tot if tot else "none"))
+    if len(set(v for v in vals if v is not None)) == 5:
+        print("  FAIL returned five distinct values from a domain of four")
+        failures.append("unique: impossible case produced a fake solution")
+    elif not honest:
+        print("  FAIL did not report the constraint as unsatisfied")
+        failures.append("unique: impossible case reported as satisfied")
+    else:
+        print("  ok: reported unsatisfied")
 
 
 def check_coverage(binary, seeds, failures):
@@ -236,7 +277,12 @@ def check_coverage(binary, seeds, failures):
         hit = collections.Counter()
         reported = set()
         sampled = 0
-        mdl = array_model if action in ("array_a", "sized_a") else model
+        if action in ("array_a", "sized_a"):
+            mdl = array_model
+        elif action in ("unique_ok_a", "unique_scalars_a"):
+            mdl = unique_model
+        else:
+            mdl = model
         for s in range(1, seeds + 1):
             out = run(binary, mdl, action, s)
             f = solved(out)
@@ -275,6 +321,7 @@ def main():
     print("=" * 62)
     check_dist(binary, seeds, failures)
     check_constraints(binary, min(seeds, 60), failures)
+    check_unique_unsatisfiable(binary, failures)
     check_coverage(binary, min(seeds, 60), failures)
     print("\n" + "=" * 62)
     if failures:

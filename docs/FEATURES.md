@@ -18,9 +18,9 @@ marked implemented that were not.
 
 | Status | Count |
 |---|---|
-| yes | 93 |
+| yes | 94 |
 | partial | 51 |
-| no | 2 |
+| no | 1 |
 | **total** | **146** |
 
 ## Every construct
@@ -85,7 +85,7 @@ marked implemented that were not.
 | 56 | Conditional constraint | yes | lowered onto two implications (`if (c) a else b` becomes `c -> a` and `!c -> b`) |
 | 57 | foreach constraint | yes | expanded into one constraint per element at atom extraction, using the element count from the model; braced and unbraced bodies both work |
 | 58 | forall constraint | partial | parsed; forall is not expanded |
-| 59 | unique constraint | no | parsed, then dropped; not enforced and not counted |
+| 59 | unique constraint | yes | `unique { arr }` and `unique { a, b, c }`; duplicates are moved to a free value in the repair pass, and an unsatisfiable set is reported rather than faked |
 | 60 | Default constraints | yes |  |
 | 61 | Distribution directive | yes |  |
 | 62 | scheduling constraint statement | partial | parsed and recorded; the engine walks the activity in one deterministic order, so `sequence` holds by construction |

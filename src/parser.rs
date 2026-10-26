@@ -917,8 +917,12 @@ impl Parser {
             forall_binding = Some((var, ty));
         }
 
-        // Named block: `constraint name { ... }`
-        let name = if matches!(self.peek().kind, TokKind::Ident(_)) && self.peek_at(1).is_punct("{") {
+        // Named block: `constraint name { ... }`. `unique` is a directive, not a
+        // name, so `constraint unique { a, b };` must not be taken for one.
+        let name = if matches!(self.peek().kind, TokKind::Ident(_))
+            && !self.at_ident("unique")
+            && self.peek_at(1).is_punct("{")
+        {
             Some(self.expect_ident()?)
         } else {
             None
@@ -977,6 +981,22 @@ impl Parser {
 
     /// One constraint body item: an `if`/`else` constraint, or an expression.
     fn parse_constraint_body_item(&mut self) -> PssResult<Expr> {
+        // `unique { a, b, c };` or `unique { arr };` (PSS 16.1.5): every listed
+        // value must differ. It used to be parsed as junk and dropped.
+        if self.at_ident("unique") {
+            self.bump();
+            self.expect_punct("{")?;
+            let mut args = Vec::new();
+            while !self.at_punct("}") && !self.at_eof() {
+                if self.eat_punct(";") || self.eat_punct(",") {
+                    continue;
+                }
+                args.push(self.parse_expr(0)?);
+            }
+            self.expect_punct("}")?;
+            self.eat_punct(";");
+            return Ok(Expr::Call("__unique".into(), args));
+        }
         // `foreach (a[i]) { body }` in a constraint (PSS 16.1.6). The solver
         // expands it into one constraint per element; without this branch the
         // whole directive was parsed as junk and dropped.

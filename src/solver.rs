@@ -61,6 +61,9 @@ enum Atom {
     InSet(String, Vec<Expr>),
     /// `x in collection` where the collection is a named array/list (PSS 8.5.9).
     InArray(String, String),
+    /// `unique { a, b, c }` — every listed variable must take a different value
+    /// (PSS 16.1.5).
+    Unique(Vec<String>),
     Implies(Expr, Vec<Atom>),
     /// A relation between two expressions, neither of which is a bare
     /// variable (e.g. `a + b == c`). Solved by single-unknown inversion.
@@ -874,6 +877,7 @@ pub fn solve_with(
                 }
             }
             Atom::Implies(_, _) => {}
+            Atom::Unique(_) => {}
             Atom::General(l, op, r) => {
                 // `addr % k == c` — a modulo/alignment constraint, which is
                 // common in address models. It cannot be inverted by bound
@@ -1202,6 +1206,42 @@ fn repair(
                         }
                     }
                 }
+                // `unique { a, b, c }`: move a duplicate to a free value in its
+                // own domain. This is a different shape of repair from the
+                // others — it picks a value rather than clamping one.
+                Atom::Unique(names) => {
+                    for i in 1..names.len() {
+                        let vi = match values.get(&names[i]).copied() {
+                            Some(v) => v,
+                            None => continue,
+                        };
+                        let clash = names[..i]
+                            .iter()
+                            .any(|n| values.get(n).copied() == Some(vi));
+                        if !clash {
+                            continue;
+                        }
+                        if let Some(d) = class_domain.get(&names[i]) {
+                            let span = d.hi as i128 - d.lo as i128;
+                            if span <= 4096 {
+                                for cand in d.lo..=d.hi {
+                                    if cand == vi || d.forbidden.contains(&cand) {
+                                        continue;
+                                    }
+                                    if names[..i]
+                                        .iter()
+                                        .any(|n| values.get(n).copied() == Some(cand))
+                                    {
+                                        continue;
+                                    }
+                                    values.insert(names[i].clone(), cand);
+                                    changed = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
                 Atom::Rel(var, op, rhs) => {
                     // `arrA == arrB`: copy the elements of B into A.
                     if matches!(op, Op::Eq) && !bindings.contains_key(var) {
@@ -1512,6 +1552,22 @@ fn check_atom(
                 _ => true,
             }
         }
+        // `unique`: every listed value must differ.
+        Atom::Unique(names) => {
+            let mut seen: Vec<i64> = Vec::new();
+            for n in names {
+                match values.get(n) {
+                    Some(v) => {
+                        if seen.contains(v) {
+                            return false;
+                        }
+                        seen.push(*v);
+                    }
+                    None => return true,
+                }
+            }
+            true
+        }
         Atom::Implies(_, _) => true,
         Atom::Unsupported(_) => true,
     }
@@ -1630,6 +1686,7 @@ fn render_atom(a: &Atom) -> String {
         Atom::InRange(v, lo, hi) => format!("{} in [{}..{}]", v, lo, hi),
         Atom::InSet(v, items) => format!("{} in {{{}}}", v, items.len()),
         Atom::InArray(v, c) => format!("{} in {}", v, c),
+        Atom::Unique(names) => format!("unique {{{}}}", names.join(", ")),
         Atom::Implies(e, _) => render_expr(e),
         Atom::Unsupported(e) => render_expr(e),
     }
@@ -2225,6 +2282,35 @@ fn split_and(expr: &Expr, out: &mut Vec<Atom>, vars: &BTreeMap<String, Domain>) 
             let mut cons = Vec::new();
             split_and(b, &mut cons, vars);
             out.push(Atom::Implies((**a).clone(), cons));
+        }
+        // `unique { arr }` / `unique { a, b }` (PSS 16.1.5).
+        Expr::Call(name, args) if name == "__unique" => {
+            let mut names: Vec<String> = Vec::new();
+            for a in args {
+                match a {
+                    // A bare array name stands for all of its elements.
+                    Expr::Path(p) => {
+                        let base = p.segments.join(".");
+                        let prefix = format!("{}[", base);
+                        let elems: Vec<String> =
+                            vars.keys().filter(|k| k.starts_with(&prefix)).cloned().collect();
+                        if elems.is_empty() {
+                            names.push(base);
+                        } else {
+                            names.extend(elems);
+                        }
+                    }
+                    other => match as_var(other) {
+                        Some(v) => names.push(v),
+                        None => {}
+                    },
+                }
+            }
+            if names.len() >= 2 {
+                out.push(Atom::Unique(names));
+            } else {
+                out.push(Atom::Unsupported(expr.clone()));
+            }
         }
         // `constraint foreach (a[i]) { body }` (PSS 16.1.6): one constraint per
         // element. This used to fall through to `Unsupported`, which is excluded

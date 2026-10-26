@@ -1,0 +1,35 @@
+// Randomisation example 4 — unique constraints (PSS 16.1.5).
+//
+// `unique { ... }` requires every listed value to differ. It applies to a whole
+// array (`unique { ids }`) or to named variables (`unique { x, y, z }`).
+//
+// Note the second action is deliberately unsatisfiable — five distinct values
+// drawn from [1..4]. The solver must *report* that rather than return a
+// duplicate assignment; tools/rand_cov_check.py checks both directions.
+package rand_unique_pkg {
+
+    component rand_unique_c {
+        // Satisfiable: four distinct values from a domain of four.
+        action unique_ok_a {
+            rand int ids[4];
+            constraint foreach (ids[i]) { ids[i] in [1..4]; }
+            constraint unique { ids };
+        };
+
+        // Satisfiable over separate variables.
+        action unique_scalars_a {
+            rand int x; rand int y; rand int z;
+            constraint x in [1..3];
+            constraint y in [1..3];
+            constraint z in [1..3];
+            constraint unique { x, y, z };
+        };
+
+        // Unsatisfiable: five distinct values cannot fit in [1..4].
+        action unique_impossible_a {
+            rand int five[5];
+            constraint foreach (five[i]) { five[i] in [1..4]; }
+            constraint unique { five };
+        };
+    };
+};

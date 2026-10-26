@@ -115,14 +115,14 @@ These parse but are **dropped** — not enforced and not counted, which is the
 worst of the three possible behaviours and is recorded as such in
 `docs/FEATURES.md`:
 
-- **`unique` constraints** (entry 59). `constraint unique { ids }` is dropped:
-  the four draws come out with duplicates in 36 of 40 seeds, while the report
-  reads `4/4 satisfied`.
+- **`a.sum()`** and the other array fold methods inside constraints: counted,
+  but not solved, so they are honestly reported unsatisfied rather than
+  silently ignored.
 - **`a.sum()`** and the other array fold methods inside constraints: counted,
   but not solved, so they are honestly reported unsatisfied rather than
   silently ignored.
 
-### `foreach` was fixed, `unique` was not
+### `foreach` and `unique` were fixed
 
 `foreach` constraints (entry 57) now work. They were parsed into
 `Expr::Foreach` and then fell through to `Unsupported`, which is excluded from
@@ -132,6 +132,11 @@ constraint per element at atom extraction, using the element count from the
 model. `examples/randomisation/r3_arrays.pss` uses the idiomatic form and
 reports `9/9 satisfied` across 60 seeds.
 
-`unique` (entry 59) is still dropped, and is now recorded as `no` rather than
-`partial`. Both were previously marked *partial* on the strength of the parser
-accepting them, which was an overclaim.
+`unique` (entry 59) now works too. It was not even parsed: `constraint unique
+{ ids }` was taken for a *named* constraint block called `unique`, so the
+directive became a constraint name and the body was parsed as an ordinary
+constraint. It is now an atom, duplicates are moved to a free value in the
+repair pass, and an unsatisfiable set (five distinct values from `[1..4]`) is
+reported as `5/6 satisfied` naming the constraint rather than returning a
+duplicate assignment. Both were previously marked *partial* on the strength of
+the parser accepting them, which was an overclaim.

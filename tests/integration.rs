@@ -2127,3 +2127,57 @@ component C {
         }
     }
 }
+
+#[test]
+fn a_unique_constraint_makes_values_distinct() {
+    // `constraint unique { arr }` was not even parsed: it was taken for a named
+    // constraint block called `unique`.
+    let src = r#"
+component C {
+  action a {
+    rand int ids[4];
+    constraint foreach (ids[i]) { ids[i] in [1..4]; }
+    constraint unique { ids };
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    for seed in 1..=40 {
+        let s = engine::run_scenario(&m, "a", seed);
+        let vals: Vec<i64> = (0..4)
+            .map(|i| {
+                s.steps[0]
+                    .fields
+                    .iter()
+                    .find(|(k, _)| k == &format!("ids[{i}]"))
+                    .map(|(_, v)| *v)
+                    .unwrap()
+            })
+            .collect();
+        let distinct: std::collections::BTreeSet<_> = vals.iter().collect();
+        assert_eq!(distinct.len(), 4, "seed {seed}: {vals:?} not distinct");
+    }
+}
+
+#[test]
+fn an_impossible_unique_is_reported_not_faked() {
+    // Five distinct values cannot come from [1..4]. The tool must say so.
+    let src = r#"
+component C {
+  action a {
+    rand int five[5];
+    constraint foreach (five[i]) { five[i] in [1..4]; }
+    constraint unique { five };
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let st = &s.steps[0];
+    assert!(
+        st.satisfied < st.total,
+        "the unsatisfiable constraint must be reported: {}/{}",
+        st.satisfied,
+        st.total
+    );
+}

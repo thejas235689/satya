@@ -13,6 +13,40 @@ approximated.
 
 ---
 
+## 0.21.0 — 2026-10-26
+
+`unique` constraints now work
+
+`constraint unique { ids }` was not even parsed: `unique` was taken for the
+*name* of a constraint block, so the directive became a constraint name and its
+body was parsed as an ordinary constraint. It is now an atom of its own.
+
+```
+constraint unique { ids };        // all elements distinct
+constraint unique { x, y, z };    // named variables distinct
+```
+
+Duplicates are moved to a free value in the repair pass — a different shape of
+repair from the others, which clamp a value rather than choosing one. An
+unsatisfiable set (five distinct values from `[1..4]`) is reported as
+`5/6 satisfied` naming the constraint, rather than returning a duplicate
+assignment:
+
+```
+solved: ids.size=5 ids[0]=2 ids[1]=1 ids[2]=3 ids[3]=4 ids[4]=2
+constraints: 5/6 satisfied
+  not satisfied: unique {ids[0], ids[1], ids[2], ids[3], ids[4]}
+```
+
+`examples/randomisation/r4_unique.pss` covers all three cases, and
+`tools/rand_cov_check.py` checks both directions: 60 seeds of distinctness, and
+that the impossible case is reported rather than faked.
+
+The feature matrix moves to **94 implemented, 51 partial, 1 not** — the string
+slice operator is the only construct left with no implementation.
+
+99 tests (2 new).
+
 ## 0.20.0 — 2026-10-26
 
 `foreach` constraints now work, in both forms
