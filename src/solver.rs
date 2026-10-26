@@ -712,7 +712,7 @@ pub fn solve_with(
     }
     let mut constraints = collect_constraints(model, action, &vars, extra);
     let directives = take_directives(&mut constraints, &env);
-    let atoms = extract_atoms(&constraints);
+    let atoms = extract_atoms(&constraints, &vars);
 
     // Union-find over variables to merge equality classes.
     let mut uf = UnionFind::new(vars.keys().cloned().collect());
@@ -2132,24 +2132,136 @@ fn prefix_paths(
 // Atom extraction
 // ---------------------------------------------------------------------------
 
-fn extract_atoms(exprs: &[Expr]) -> Vec<Atom> {
+fn extract_atoms(exprs: &[Expr], vars: &BTreeMap<String, Domain>) -> Vec<Atom> {
     let mut out = Vec::new();
     for e in exprs {
-        split_and(e, &mut out);
+        split_and(e, &mut out, vars);
     }
     out
 }
 
-fn split_and(expr: &Expr, out: &mut Vec<Atom>) {
+/// Replace the loop variable of a `foreach` with a constant index, so its body
+/// can become one constraint per element.
+fn subst_loop_var(e: &Expr, var: &str, idx: i64) -> Expr {
+    match e {
+        Expr::Path(p) if p.segments.len() == 1 && p.segments[0] == var => Expr::Int(idx),
+        Expr::Index(b, i) => Expr::Index(
+            Box::new(subst_loop_var(b, var, idx)),
+            Box::new(subst_loop_var(i, var, idx)),
+        ),
+        Expr::Binary(op, a, b) => Expr::Binary(
+            op.clone(),
+            Box::new(subst_loop_var(a, var, idx)),
+            Box::new(subst_loop_var(b, var, idx)),
+        ),
+        Expr::Unary(op, a) => Expr::Unary(op.clone(), Box::new(subst_loop_var(a, var, idx))),
+        Expr::Ternary(c, t, f) => Expr::Ternary(
+            Box::new(subst_loop_var(c, var, idx)),
+            Box::new(subst_loop_var(t, var, idx)),
+            Box::new(subst_loop_var(f, var, idx)),
+        ),
+        Expr::InRange(v, lo, hi) => Expr::InRange(
+            Box::new(subst_loop_var(v, var, idx)),
+            Box::new(subst_loop_var(lo, var, idx)),
+            Box::new(subst_loop_var(hi, var, idx)),
+        ),
+        Expr::InSet(v, items) => Expr::InSet(
+            Box::new(subst_loop_var(v, var, idx)),
+            items.iter().map(|i| subst_loop_var(i, var, idx)).collect(),
+        ),
+        Expr::Call(name, args) => Expr::Call(
+            name.clone(),
+            args.iter().map(|a| subst_loop_var(a, var, idx)).collect(),
+        ),
+        Expr::Cast(t, a) => Expr::Cast(t.clone(), Box::new(subst_loop_var(a, var, idx))),
+        other => other.clone(),
+    }
+}
+
+/// Replace the loop variable of a bound `foreach` with an element expression.
+fn subst_loop_elem(e: &Expr, var: &str, elem: &Expr) -> Expr {
+    match e {
+        Expr::Path(p) if p.segments.len() == 1 && p.segments[0] == var => elem.clone(),
+        Expr::Index(b, i) => Expr::Index(
+            Box::new(subst_loop_elem(b, var, elem)),
+            Box::new(subst_loop_elem(i, var, elem)),
+        ),
+        Expr::Binary(op, a, b) => Expr::Binary(
+            op.clone(),
+            Box::new(subst_loop_elem(a, var, elem)),
+            Box::new(subst_loop_elem(b, var, elem)),
+        ),
+        Expr::Unary(op, a) => Expr::Unary(op.clone(), Box::new(subst_loop_elem(a, var, elem))),
+        Expr::Ternary(c, t, f) => Expr::Ternary(
+            Box::new(subst_loop_elem(c, var, elem)),
+            Box::new(subst_loop_elem(t, var, elem)),
+            Box::new(subst_loop_elem(f, var, elem)),
+        ),
+        Expr::InRange(v, lo, hi) => Expr::InRange(
+            Box::new(subst_loop_elem(v, var, elem)),
+            Box::new(subst_loop_elem(lo, var, elem)),
+            Box::new(subst_loop_elem(hi, var, elem)),
+        ),
+        Expr::InSet(v, items) => Expr::InSet(
+            Box::new(subst_loop_elem(v, var, elem)),
+            items.iter().map(|i| subst_loop_elem(i, var, elem)).collect(),
+        ),
+        Expr::Call(name, args) => Expr::Call(
+            name.clone(),
+            args.iter().map(|a| subst_loop_elem(a, var, elem)).collect(),
+        ),
+        Expr::Cast(t, a) => Expr::Cast(t.clone(), Box::new(subst_loop_elem(a, var, elem))),
+        other => other.clone(),
+    }
+}
+
+fn split_and(expr: &Expr, out: &mut Vec<Atom>, vars: &BTreeMap<String, Domain>) {
     match expr {
         Expr::Binary(op, a, b) if op == "&&" => {
-            split_and(a, out);
-            split_and(b, out);
+            split_and(a, out, vars);
+            split_and(b, out, vars);
         }
         Expr::Binary(op, a, b) if op == "->" => {
             let mut cons = Vec::new();
-            split_and(b, &mut cons);
+            split_and(b, &mut cons, vars);
             out.push(Atom::Implies((**a).clone(), cons));
+        }
+        // `constraint foreach (a[i]) { body }` (PSS 16.1.6): one constraint per
+        // element. This used to fall through to `Unsupported`, which is excluded
+        // from the constraint count, so it was neither applied nor reported.
+        Expr::Foreach { vars: fvars, iter, body, bound } => {
+            let base = match &**iter {
+                Expr::Path(p) => p.segments.join("."),
+                _ => {
+                    out.push(Atom::Unsupported(expr.clone()));
+                    return;
+                }
+            };
+            let loop_var = match fvars.first() {
+                Some(v) => v.clone(),
+                None => {
+                    out.push(Atom::Unsupported(expr.clone()));
+                    return;
+                }
+            };
+            let prefix = format!("{}[", base);
+            let n = vars.keys().filter(|k| k.starts_with(&prefix)).count();
+            if n == 0 {
+                out.push(Atom::Unsupported(expr.clone()));
+                return;
+            }
+            for i in 0..n {
+                let sub = if *bound {
+                    // `foreach (x : coll)`: `x` stands for `coll[i]`.
+                    let elem = Expr::Path(crate::ast::Path::new(
+                        format!("{}[{}]", base, i).split('.').map(|s| s.to_string()).collect(),
+                    ));
+                    subst_loop_elem(body, &loop_var, &elem)
+                } else {
+                    subst_loop_var(body, &loop_var, i as i64)
+                };
+                split_and(&sub, out, vars);
+            }
         }
         // `if (c) { a } else { b }` inside a constraint (PSS 16.1.7) is an
         // implication in both directions. It used to be dropped entirely — not
@@ -2157,12 +2269,12 @@ fn split_and(expr: &Expr, out: &mut Vec<Atom>) {
         // the branch was unconstrained.
         Expr::Ternary(c, t, e) => {
             let mut then_atoms = Vec::new();
-            split_and(t, &mut then_atoms);
+            split_and(t, &mut then_atoms, vars);
             if !then_atoms.is_empty() {
                 out.push(Atom::Implies((**c).clone(), then_atoms));
             }
             let mut else_atoms = Vec::new();
-            split_and(e, &mut else_atoms);
+            split_and(e, &mut else_atoms, vars);
             if !else_atoms.is_empty() {
                 out.push(Atom::Implies(
                     Expr::Unary("!".into(), c.clone()),

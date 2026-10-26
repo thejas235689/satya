@@ -13,6 +13,39 @@ approximated.
 
 ---
 
+## 0.20.0 — 2026-10-26
+
+`foreach` constraints now work, in both forms
+
+`constraint foreach (a[i]) { ... }` was parsed into `Expr::Foreach` and then
+fell through to `Unsupported`, which is excluded from the constraint count — so
+it was neither applied nor reported. It is now expanded into one constraint per
+element at atom extraction, using the element count from the model.
+
+Both spellings in the standard's own examples work:
+
+```
+constraint foreach (payload[i]) { payload[i] in [0..15]; }   // index form
+constraint foreach (e : payload) { e in [0..15]; }           // bound form
+```
+
+The bound form binds the variable to the *element* (`e` stands for
+`payload[i]`), the index form to the index; `Expr::Foreach` now carries a
+`bound` flag so the solver substitutes the right thing. The DVCon 2025 workshop
+uses the bound form, which is how the omission surfaced: the first attempt
+handled only the index form and took the workshop from 17/17 to 15/17.
+
+`examples/randomisation/r3_arrays.pss` uses the idiomatic form and reports
+`9/9 satisfied` across 60 seeds.
+
+`unique` (entry 59) is **still dropped** — `constraint unique { ids }` yields
+duplicates in 36 of 40 seeds while reporting `4/4 satisfied`. It stays `no`.
+
+The feature matrix moves to **93 implemented, 51 partial, 2 not** (the string
+slice operator and `unique`).
+
+97 tests (1 new).
+
 ## 0.19.0 — 2026-10-26
 
 New randomisation and coverage examples, and four defects they found

@@ -115,14 +115,23 @@ These parse but are **dropped** — not enforced and not counted, which is the
 worst of the three possible behaviours and is recorded as such in
 `docs/FEATURES.md`:
 
-- **`foreach` constraints** (entry 57). `constraint foreach (a[i]) { a[i] in
-  [0..15]; }` leaves the elements unconstrained. The examples name the elements
-  individually instead, which works.
-- **`unique` constraints** (entry 59).
+- **`unique` constraints** (entry 59). `constraint unique { ids }` is dropped:
+  the four draws come out with duplicates in 36 of 40 seeds, while the report
+  reads `4/4 satisfied`.
 - **`a.sum()`** and the other array fold methods inside constraints: counted,
   but not solved, so they are honestly reported unsatisfied rather than
   silently ignored.
 
-`docs/FEATURES.md` previously marked `foreach` and `unique` as *partial* on the
-strength of the parser accepting them. That was an overclaim and has been
-corrected to `no`.
+### `foreach` was fixed, `unique` was not
+
+`foreach` constraints (entry 57) now work. They were parsed into
+`Expr::Foreach` and then fell through to `Unsupported`, which is excluded from
+the constraint count — so `constraint foreach (a[i]) { a[i] in [0..15]; }` was
+neither applied nor reported. The constraint body is now expanded into one
+constraint per element at atom extraction, using the element count from the
+model. `examples/randomisation/r3_arrays.pss` uses the idiomatic form and
+reports `9/9 satisfied` across 60 seeds.
+
+`unique` (entry 59) is still dropped, and is now recorded as `no` rather than
+`partial`. Both were previously marked *partial* on the strength of the parser
+accepting them, which was an overclaim.

@@ -170,14 +170,14 @@ def check_constraints(binary, seeds, failures):
 
     def array_a(f):
         errs = []
-        for i in range(4):
+        for i in range(8):
             v = f.get("payload[%d]" % i)
             if v is None:
                 errs.append("payload[%d] missing" % i)
             elif not (0 <= v <= 15):
                 errs.append("payload[%d]=%d out of [0..15]" % (i, v))
-        if not (1 <= f.get("n", 0) <= 4):
-            errs.append("n out of [1..4]")
+        if not (1 <= f.get("n", 0) <= 8):
+            errs.append("n out of [1..8]")
         return errs
 
     def sized_a(f):

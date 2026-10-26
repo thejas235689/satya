@@ -2103,3 +2103,27 @@ component C {
     assert!(names.contains(&"cg.mode_bin"), "{names:?}");
     assert!(names.contains(&"cg.len_x_mode"), "the cross is sampled: {names:?}");
 }
+
+#[test]
+fn a_foreach_constraint_is_expanded_per_element() {
+    // `constraint foreach (a[i]) { ... }` used to fall through to Unsupported,
+    // which is excluded from the constraint count — so it was neither applied
+    // nor reported. It is now one constraint per element.
+    let src = r#"
+component C {
+  action a {
+    rand bit[8] payload[8];
+    constraint foreach (payload[i]) { payload[i] in [0..15]; }
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    for seed in 1..=40 {
+        let s = engine::run_scenario(&m, "a", seed);
+        let f: std::collections::BTreeMap<_, _> = s.steps[0].fields.iter().cloned().collect();
+        for i in 0..8 {
+            let v = f[&format!("payload[{i}]")];
+            assert!(v <= 15, "seed {seed}: payload[{i}] = {v}");
+        }
+    }
+}

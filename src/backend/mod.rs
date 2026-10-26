@@ -121,7 +121,7 @@ pub fn render_sv(expr: &Expr) -> String {
             let a: Vec<String> = items.iter().map(render_sv).collect();
             format!("{{{}}}", a.join(", "))
         }
-        Expr::Foreach { vars, iter, body } => format!(
+        Expr::Foreach { vars, iter, body, bound: _ } => format!(
             "foreach ({} in {}) {{ {} }}",
             vars.join(","),
             render_sv(iter),

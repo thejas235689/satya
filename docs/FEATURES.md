@@ -18,9 +18,9 @@ marked implemented that were not.
 
 | Status | Count |
 |---|---|
-| yes | 92 |
+| yes | 93 |
 | partial | 51 |
-| no | 3 |
+| no | 2 |
 | **total** | **146** |
 
 ## Every construct
@@ -83,7 +83,7 @@ marked implemented that were not.
 | 54 | Expression constraint | yes |  |
 | 55 | Implication constraint | yes | the consequent is repaired for `==`, `<=`, `>=`, `<`, `>` and `in` range/set forms |
 | 56 | Conditional constraint | yes | lowered onto two implications (`if (c) a else b` becomes `c -> a` and `!c -> b`) |
-| 57 | foreach constraint | no | parsed, then dropped: it is neither applied nor counted, so `constraint foreach (a[i]) { a[i] in [0..15]; }` leaves the elements unconstrained |
+| 57 | foreach constraint | yes | expanded into one constraint per element at atom extraction, using the element count from the model; braced and unbraced bodies both work |
 | 58 | forall constraint | partial | parsed; forall is not expanded |
 | 59 | unique constraint | no | parsed, then dropped; not enforced and not counted |
 | 60 | Default constraints | yes |  |

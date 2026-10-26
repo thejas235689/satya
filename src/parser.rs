@@ -977,6 +977,48 @@ impl Parser {
 
     /// One constraint body item: an `if`/`else` constraint, or an expression.
     fn parse_constraint_body_item(&mut self) -> PssResult<Expr> {
+        // `foreach (a[i]) { body }` in a constraint (PSS 16.1.6). The solver
+        // expands it into one constraint per element; without this branch the
+        // whole directive was parsed as junk and dropped.
+        if self.at_ident("foreach") {
+            self.bump();
+            self.expect_punct("(")?;
+            // `foreach (x : coll)` binds `x` to each *element*; `foreach (a[i])`
+            // binds the variable to the *index*. Both are in use.
+            let mut bound = false;
+            let mut bound_var = None;
+            if matches!(self.peek().kind, TokKind::Ident(_))
+                && (self.peek_at(1).is_punct(":") || self.peek_at(1).is_ident("in"))
+            {
+                bound_var = Some(self.expect_ident()?);
+                self.bump(); // `:` or `in`
+                bound = true;
+            }
+            let head = self.parse_expr(0)?;
+            self.expect_punct(")")?;
+            let (loop_vars, iter) = match (bound_var, head) {
+                (Some(v), coll) => (vec![v], coll),
+                (None, Expr::Index(b, i)) => match (*b, *i) {
+                    (Expr::Path(bp), Expr::Path(ip)) => {
+                        (vec![ip.leaf().to_string()], Expr::Path(bp))
+                    }
+                    (b, i) => (Vec::new(), Expr::Index(Box::new(b), Box::new(i))),
+                },
+                (None, other) => (Vec::new(), other),
+            };
+            let body = if self.at_punct("{") {
+                self.parse_constraint_set()?
+            } else {
+                self.parse_constraint_body_item()?
+            };
+            self.eat_punct(";");
+            return Ok(Expr::Foreach {
+                vars: loop_vars,
+                iter: Box::new(iter),
+                body: Box::new(body),
+                bound,
+            });
+        }
         // `dist <expr> in [ item [:= w | :/ w], ... ] ;` (PSS 16.1.9).
         if self.at_ident("dist") {
             self.bump();
@@ -2746,6 +2788,7 @@ impl Parser {
             vars,
             iter: Box::new(iter),
             body: Box::new(body),
+            bound: false,
         })
     }
 }

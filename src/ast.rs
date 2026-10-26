@@ -456,11 +456,14 @@ pub enum Expr {
     Cast(String, Box<Expr>),
     /// `a..b`
     Range(Box<Expr>, Box<Expr>),
-    /// `foreach (it : T) { body }` used inside constraints.
+    /// `foreach (it : T) { body }` used inside constraints. `bound` is true for
+    /// the `foreach (x : coll)` form, where `x` names the *element*; false for
+    /// `foreach (a[i])`, where the variable is the index.
     Foreach {
         vars: Vec<String>,
         iter: Box<Expr>,
         body: Box<Expr>,
+        bound: bool,
     },
     /// `a[i]`
     Index(Box<Expr>, Box<Expr>),
