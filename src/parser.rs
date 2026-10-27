@@ -453,7 +453,12 @@ impl Parser {
         if self.at_ident("enum") {
             return Ok(Item::Enum(self.parse_enum(false, None)?));
         }
-        if self.at_ident("struct") || self.at_ident("resource") || self.at_ident("buffer") || self.at_ident("state") {
+        if self.at_ident("struct")
+            || self.at_ident("resource")
+            || self.at_ident("buffer")
+            || self.at_ident("state")
+            || self.at_ident("stream")
+        {
             return Ok(Item::Struct(self.parse_type_decl(false)?));
         }
         if self.at_ident("component") {
@@ -1519,7 +1524,12 @@ impl Parser {
         if self.at_ident("enum") {
             return Ok(CompItem::Enum(self.parse_enum(false, None)?));
         }
-        if self.at_ident("struct") || self.at_ident("resource") || self.at_ident("buffer") || self.at_ident("state") {
+        if self.at_ident("struct")
+            || self.at_ident("resource")
+            || self.at_ident("buffer")
+            || self.at_ident("state")
+            || self.at_ident("stream")
+        {
             return Ok(CompItem::Struct(self.parse_type_decl(false)?));
         }
         if self.at_ident("static") || self.at_ident("const") {
@@ -2384,7 +2394,12 @@ impl Parser {
         if self.at_ident("enum") {
             return Ok(Item::Enum(self.parse_enum(true, None)?));
         }
-        if self.at_ident("struct") || self.at_ident("resource") || self.at_ident("buffer") || self.at_ident("state") {
+        if self.at_ident("struct")
+            || self.at_ident("resource")
+            || self.at_ident("buffer")
+            || self.at_ident("state")
+            || self.at_ident("stream")
+        {
             return Ok(Item::Struct(self.parse_type_decl(true)?));
         }
         if self.at_ident("action") || self.at_ident("abstract") {

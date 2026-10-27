@@ -2749,3 +2749,40 @@ fn a_monitor_constraint_discards_a_violating_match() {
     }
     assert!(matched > 0 && discarded > 0, "both paths must be exercised");
 }
+
+#[test]
+fn a_stream_is_consumed_once_a_buffer_is_shared() {
+    // PSS 13: a stream object goes to the first input that takes it, while a
+    // buffer may be read by several. Neither distinction was modelled — the
+    // `stream` keyword was not even parsed.
+    let src = |kw: &str| {
+        format!(
+            r#"
+package p {{
+  {kw} data_b {{ rand int payload; }};
+  component C {{
+    action prod_a  {{ output data_b out; }};
+    action cons1_a {{ input data_b in1; }};
+    action cons2_a {{ input data_b in2; }};
+    action top_a   {{ activity {{ sequence {{ do prod_a; do cons1_a; do cons2_a; }} }} }};
+  }};
+}};"#
+        )
+    };
+    // A stream: the second consumer finds nothing left.
+    let m = compile_pss(&src("stream")).unwrap();
+    let s = engine::run_scenario(&m, "top_a", 1);
+    assert!(
+        s.warnings.iter().any(|w| w.contains("in2") && w.contains("unconsumed")),
+        "the second consumer of a stream must not reuse the object: {:?}",
+        s.warnings
+    );
+    // A buffer: both may read the same object.
+    let m = compile_pss(&src("buffer")).unwrap();
+    let s = engine::run_scenario(&m, "top_a", 1);
+    assert!(
+        s.warnings.is_empty(),
+        "a buffer may be shared: {:?}",
+        s.warnings
+    );
+}

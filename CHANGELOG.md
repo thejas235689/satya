@@ -13,6 +13,30 @@ approximated.
 
 ---
 
+## 0.31.0 — 2026-10-27
+
+Streams are consumed once
+
+`stream` was not even a parsed declaration keyword — the three sites that
+recognise `struct`/`resource`/`buffer`/`state` did not include it, so a stream
+declaration was skipped and its type never existed.
+
+With the keyword recognised, a stream now has consume-once semantics (PSS 13):
+the object goes to the first input that takes it, and a later consumer of the
+same stream is reported rather than silently sharing it:
+
+```
+- flow-object ordering: input `in2` of type `data_b` has no unconsumed
+  preceding output (PSS 13)
+```
+
+A **buffer** keeps the old behaviour — several inputs may read the same object,
+which is what the standard allows. Both directions are pinned by a test.
+
+Matrix: **112 implemented, 34 partial, 0 not**.
+
+121 tests (1 new).
+
 ## 0.30.0 — 2026-10-27
 
 Monitors work: `cover <monitor>;` matches and samples

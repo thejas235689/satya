@@ -18,8 +18,8 @@ marked implemented that were not.
 
 | Status | Count |
 |---|---|
-| yes | 111 |
-| partial | 35 |
+| yes | 112 |
+| partial | 34 |
 | no | 0 |
 | **total** | **146** |
 
@@ -72,7 +72,7 @@ marked implemented that were not.
 | 43 | symbol declaration | yes |  |
 | 44 | bind statement | yes |  |
 | 45 | buffer declaration | yes |  |
-| 46 | stream declaration | partial | parsed; stream consume-once is not enforced |
+| 46 | stream declaration | yes | a stream is consumed once: the object goes to the first input that takes it, and a later consumer is reported. A buffer is still shareable |
 | 47 | state declaration | partial | parsed; state objects are not persisted |
 | 48 | Flow object reference | yes |  |
 | 49 | resource declaration | yes |  |

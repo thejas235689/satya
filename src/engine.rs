@@ -2170,24 +2170,43 @@ impl<'a> Engine<'a> {
                 }
                 FieldKind::Input => {
                     let mut rec = self.consume(f, "input");
-                    // Several inputs may reference the same flow object (a
-                    // buffer is shared), so the object is not marked used up;
-                    // it only has to have been produced by an earlier step.
-                    let avail = self
-                        .flow_produced
-                        .get(&f.type_name)
-                        .and_then(|v| v.iter().find(|(at, _, _)| *at < step_no));
-                    match avail {
-                        Some((_, id, _)) => {
+                    // A `stream` is consumed once: the object goes to the first
+                    // input that takes it (PSS 13). A `buffer` may be read by
+                    // several inputs, so it is not marked used up.
+                    let is_stream = self
+                        .lookup_type(&f.type_name)
+                        .map(|t| t.keyword == "stream")
+                        .unwrap_or(false);
+                    let picked = {
+                        let list = self.flow_produced.get_mut(&f.type_name);
+                        match list {
+                            Some(v) => v
+                                .iter_mut()
+                                .find(|(at, _, used)| *at < step_no && !(is_stream && *used))
+                                .map(|entry| {
+                                    if is_stream {
+                                        entry.2 = true;
+                                    }
+                                    entry.1
+                                }),
+                            None => None,
+                        }
+                    };
+                    match picked {
+                        Some(id) => {
                             if rec.obj_id.is_none() {
-                                rec.obj_id = Some(*id);
+                                rec.obj_id = Some(id);
                             }
                         }
                         None => {
+                            let why = if is_stream {
+                                "has no unconsumed preceding output"
+                            } else {
+                                "has no preceding output"
+                            };
                             self.warnings.push(format!(
-                                "flow-object ordering: input `{}` of type `{}` has no \
-                                 preceding output (PSS 13)",
-                                f.name, f.type_name
+                                "flow-object ordering: input `{}` of type `{}` {} (PSS 13)",
+                                f.name, f.type_name, why
                             ));
                         }
                     }
