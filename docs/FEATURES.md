@@ -94,7 +94,7 @@ marked implemented that were not.
 | 65 | coverpoint declaration | yes |  |
 | 66 | bins declaration | yes |  |
 | 67 | cross declaration | yes |  |
-| 68 | Cover statement and monitor declaration | yes | monitors are declared and matched; see 69-78 |
+| 68 | Cover statement and monitor declaration | partial | monitors are declared and collected, but no model I construct produces coverage from `cover <monitor>;` — matching appears not to fire. `cover { ... }` works |
 | 69 | Monitor activity | yes |  |
 | 70 | Action traversal statement | yes |  |
 | 71 | Sequence monitor activity statement | yes |  |
@@ -104,7 +104,7 @@ marked implemented that were not.
 | 75 | Select monitor activity statement | yes |  |
 | 76 | Schedule monitor activity statement | partial | as overlap: branches are matched independently |
 | 77 | Monitor traversal statement | partial | nested monitors are matched by name; monitor inheritance is not applied |
-| 78 | Monitor constraints | partial | parsed; a monitor constraint does not filter the matched steps |
+| 78 | Monitor constraints | partial | a monitor's `constraint { }` block is parsed and checked against the bound handles, and a violating match is discarded — but this cannot be verified while monitor matching does not fire |
 | 79 | type extension | yes |  |
 | 80 | override declaration | yes | type and instance overrides are applied when an action is traversed |
 | 81 | package declaration | yes |  |
@@ -165,7 +165,7 @@ marked implemented that were not.
 | 136 | addr_value function | yes |  |
 | 137 | addr_value_solve function | yes |  |
 | 138 | addr_value_abs function | yes |  |
-| 139 | get_tag function | partial | the region's tag *index* is returned; the engine has no string values |
+| 139 | get_tag function | yes | returns the region's `tag` string, which is set by `reg.tag = \"name\"` |
 | 140 | Primitive read operations for byte addressable spaces | yes |  |
 | 141 | Primitive write operations for byte addressable spaces | yes |  |
 | 142 | Read and write series of bytes | yes | `write_bytes` takes a literal list; `read_bytes` fills one |

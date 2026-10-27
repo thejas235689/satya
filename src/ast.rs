@@ -357,6 +357,9 @@ pub struct Monitor {
     pub component: Option<String>,
     pub pattern: MonStmt,
     pub covergroups: Vec<crate::ast::Covergroup>,
+    /// Constraints on the monitor's action handles (PSS 19.4): a match whose
+    /// bound values violate them is not a match.
+    pub constraints: Vec<crate::ast::Expr>,
 }
 
 

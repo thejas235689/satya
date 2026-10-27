@@ -2655,3 +2655,41 @@ component C { action a { rand int x; constraint x in [1, NOPE, 3]; }; };
         "the constraint must be reported as not evaluated"
     );
 }
+
+#[test]
+fn get_tag_returns_the_regions_tag_string() {
+    // PSS 24.10.8: `get_tag()` on a handle gives the tag of the region the
+    // claim was satisfied from. It returned a numeric index before strings
+    // existed.
+    let src = r#"
+package p {
+  component C {
+    contiguous_addr_space_c<addr_trait_s> low_mem;
+    contiguous_addr_space_c<addr_trait_s> high_mem;
+    exec init_up {
+      low_mem.addr = 0x1000;  low_mem.size = 0x100;  low_mem.tag = "low";
+      high_mem.addr = 0x9000; high_mem.size = 0x100; high_mem.tag = "high";
+    }
+    action a {
+      transparent_addr_claim_s<addr_trait_s> claim;
+      string where;
+      constraint claim.size == 64;
+      exec post_solve { where = get_tag(make_handle_from_claim(claim, 0)); }
+    };
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let st = &s.steps[0];
+    let tag = st
+        .strings
+        .iter()
+        .find(|(k, _)| k == "where")
+        .map(|(_, v)| v.clone())
+        .unwrap_or_default();
+    let addr = st.fields.iter().find(|(k, _)| k == "claim.addr").map(|(_, v)| *v).unwrap();
+    // The claim lands in the first region with room, which is `low_mem`.
+    assert_eq!(addr, 0x1000);
+    assert_eq!(tag, "low", "the tag of the region that satisfied the claim");
+}

@@ -406,7 +406,28 @@ impl<'a> Engine<'a> {
                         let mut binds: BTreeMap<String, usize> = BTreeMap::new();
                         let mut hits: Vec<usize> = Vec::new();
                         let hit = self.match_monitor(&m.pattern, 0, 0, &mut binds, &mut hits);
-                        if hit.is_some() {
+                        // A monitor constraint filters the match (PSS 19.4): a
+                        // realization whose bound values violate it is not a
+                        // realization. A constraint that cannot be evaluated
+                        // does not reject the match.
+                        let holds = m.constraints.iter().all(|c| {
+                            let mut scope: BTreeMap<String, i64> = BTreeMap::new();
+                            for (h, idx) in &binds {
+                                if let Some(st) = self.steps.get(*idx) {
+                                    for (k, v) in &st.fields {
+                                        scope.insert(format!("{}.{}", h, k), *v);
+                                    }
+                                }
+                            }
+                            eval_condition_opt(c, &scope, self.model, self.seed) != Some(false)
+                        });
+                        if !holds {
+                            self.warnings.push(format!(
+                                "monitor `{}` matched but its constraints do not hold; the match is discarded (PSS 19.4)",
+                                m.name
+                            ));
+                        }
+                        if hit.is_some() && holds {
                             let cgs = m.covergroups.clone();
                             // Only the steps the pattern actually matched — a
                             // gap allowed by `concat` is not part of the
@@ -992,6 +1013,33 @@ impl<'a> Engine<'a> {
                 let base = path.segments.join(".");
                 // A string assignment is carried in the string store rather than
                 // the numeric one (PSS 7.2).
+                // `tag = get_tag(handle)` — the tag of the region the claim came
+                // from, as a string (PSS 24.10.8).
+                if let crate::ast::Expr::Call(fname, fargs) = rhs {
+                    if fname == "get_tag" && fargs.len() == 1 {
+                        // The handle may itself be built by a call, which only
+                        // the engine can allocate.
+                        let h = match &fargs[0] {
+                            crate::ast::Expr::Call(inner, iargs) => {
+                                self.alloc_handle(inner, iargs, values)
+                            }
+                            other => eval_value(other, values, self.model, self.seed),
+                        };
+                        if let Some(h) = h {
+                            if let Some(idx) = values.get(&format!("__h.{}.tag", h)).copied() {
+                                if let Some(t) = self
+                                    .model
+                                    .addr_regions
+                                    .get(idx as usize)
+                                    .and_then(|r| r.tag.clone())
+                                {
+                                    self.strings.insert(base.clone(), t);
+                                    return Flow::Normal;
+                                }
+                            }
+                        }
+                    }
+                }
                 // `format(fmt, args...)` — printf-style string building
                 // (PSS 22.2). Supports %d, %x, %s and %%.
                 if let crate::ast::Expr::Call(fname, fargs) = rhs {
@@ -1225,28 +1273,31 @@ impl<'a> Engine<'a> {
     /// claim's trait constraints (PSS 24.8.6). A region is a candidate when
     /// every trait the claim constrains matches the region's value; a region
     /// that does not set an attribute is not a candidate for it.
-    fn alloc_claim(&mut self, size: i64, want: &BTreeMap<String, i64>) -> Option<i64> {
-        let regions: Vec<(i64, i64)> = self
+    fn alloc_claim(&mut self, size: i64, want: &BTreeMap<String, i64>) -> Option<(i64, usize)> {
+        let regions: Vec<(i64, i64, usize)> = self
             .model
             .addr_regions
             .iter()
-            .filter(|r| {
+            .enumerate()
+            .filter(|(_, r)| {
                 want.iter()
                     .all(|(attr, v)| r.traits.get(attr).map(|rv| rv == v).unwrap_or(false))
             })
-            .map(|r| (r.base, r.size))
+            .map(|(i, r)| (r.base, r.size, i))
             .collect();
         if regions.is_empty() {
             return None;
         }
-        while self.claim_cursor.len() < regions.len() {
+        // The cursor is per *region*, and `regions` is the filtered candidate
+        // list, so size it by the whole set or the index can run past the end.
+        while self.claim_cursor.len() < self.model.addr_regions.len() {
             self.claim_cursor.push(0);
         }
-        for (i, (base, rsize)) in regions.iter().enumerate() {
-            let used = self.claim_cursor[i];
+        for (base, rsize, region_index) in regions.iter() {
+            let used = self.claim_cursor[*region_index];
             if used + size <= *rsize {
-                self.claim_cursor[i] = used + size;
-                return Some(base + used);
+                self.claim_cursor[*region_index] = used + size;
+                return Some((base + used, *region_index));
             }
         }
         None
@@ -1464,7 +1515,11 @@ impl<'a> Engine<'a> {
                             .map(|r| r.base)
                     })
                     .unwrap_or(0);
-                (base, 0)
+                let region = values
+                    .get(&format!("__claim.{}.region", claim))
+                    .copied()
+                    .unwrap_or(0);
+                (base, region)
             }
             "make_handle_from_handle" => {
                 let h = arg(0)?;
@@ -2036,9 +2091,11 @@ impl<'a> Engine<'a> {
                 collect_trait_equalities(&c.expr, &f.name, &mut want);
             }
             match self.alloc_claim(size, &want) {
-                Some(addr) => {
+                Some((addr, region_index)) => {
                     solved.insert(format!("{}.addr", f.name), addr);
                     solved.insert(format!("{}.size", f.name), size);
+                    // Which region satisfied the claim, for `get_tag()`.
+                    solved.insert(format!("__claim.{}.region", f.name), region_index as i64);
                 }
                 None => {
                     let why = if want.is_empty() {

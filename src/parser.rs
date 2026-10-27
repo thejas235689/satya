@@ -2788,6 +2788,7 @@ impl Parser {
         self.expect_punct("{")?;
         let mut pattern = MonStmt::Empty;
         let mut covergroups = Vec::new();
+        let mut constraints: Vec<Expr> = Vec::new();
         let mut handles: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
         while !self.at_punct("}") && !self.at_eof() {
@@ -2813,6 +2814,27 @@ impl Parser {
                 covergroups.push(self.parse_covergroup()?);
                 continue;
             }
+            // `constraint [name] { ... }` on the monitor's handles (PSS 19.4).
+            if self.at_ident("constraint") {
+                self.bump();
+                if matches!(self.peek().kind, TokKind::Ident(_)) && self.peek_at(1).is_punct("{") {
+                    self.bump();
+                }
+                if self.at_punct("{") {
+                    self.bump();
+                    while !self.at_punct("}") && !self.at_eof() {
+                        if self.eat_punct(";") {
+                            continue;
+                        }
+                        let e = self.parse_expr(0)?;
+                        self.eat_punct(";");
+                        constraints.push(e);
+                    }
+                    self.expect_punct("}")?;
+                    self.eat_punct(";");
+                }
+                continue;
+            }
             self.skip_braced_or_semicolon();
         }
         self.expect_punct("}")?;
@@ -2822,6 +2844,7 @@ impl Parser {
             component: None,
             pattern,
             covergroups,
+            constraints,
         })
     }
 

@@ -160,6 +160,8 @@ pub struct AddrRegion {
     /// Trait attribute values for this region, e.g. `core -> 1` from
     /// `reg.trait.core = 1;` in an `exec init_up` block (PSS 24.7.3.2).
     pub traits: std::collections::BTreeMap<String, i64>,
+    /// The region's `tag` string (PSS 24.7.3.1), returned by `get_tag()`.
+    pub tag: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -578,12 +580,22 @@ impl Lowerer {
         // Trait attribute values, keyed by region then attribute.
         let mut trait_vals: std::collections::BTreeMap<String, std::collections::BTreeMap<String, i64>> =
             std::collections::BTreeMap::new();
+        // Region tag strings: `reg.tag = "name";`.
+        let mut tag_vals: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
         let mut consider = |path: &Path, rhs: &Expr| {
             let segs = &path.segments;
             if segs.len() < 2 {
                 return;
             }
             let last = segs.last().unwrap().clone();
+            // `reg.tag = "name"` names the region (24.7.3.1).
+            if last == "tag" {
+                if let Expr::Str(t) = rhs {
+                    tag_vals.insert(segs[..segs.len() - 1].join("."), t.clone());
+                    return;
+                }
+            }
             // `reg.trait.<attr> = v` describes the region's traits (24.7.3.2).
             if segs.len() >= 3 && segs[segs.len() - 2] == "trait" {
                 let Some(v) = rhs.eval_const(&|n| self.model.constants.get(n).copied()) else {
@@ -622,18 +634,21 @@ impl Lowerer {
         acc.into_iter()
             .filter_map(|(name, base, size)| {
                 let traits = trait_vals.get(&name).cloned().unwrap_or_default();
+                let tag = tag_vals.get(&name).cloned();
                 match (base, size) {
                     (Some(base), Some(size)) => Some(AddrRegion {
                         name,
                         base,
                         size,
                         traits,
+                        tag,
                     }),
                     (Some(base), None) => Some(AddrRegion {
                         name,
                         base,
                         size: 0,
                         traits,
+                        tag,
                     }),
                     _ => None,
                 }

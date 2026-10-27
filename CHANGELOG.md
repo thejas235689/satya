@@ -13,6 +13,41 @@ approximated.
 
 ---
 
+## 0.29.0 — 2026-10-27
+
+`get_tag`, and an honest correction about monitors
+
+**`get_tag()` returns the region's tag string** (PSS 24.10.8). It used to return
+a numeric index because the engine had no string values. A region's tag is now
+collected from `reg.tag = "name"` (24.7.3.1), the region that satisfied a claim
+is recorded when the claim is allocated, and `get_tag(make_handle_from_claim(…))`
+yields the tag as a string.
+
+**Monitor constraints are now parsed and checked** (PSS 19.4): a `constraint { }`
+block inside a monitor is captured, evaluated against the matched handles, and a
+match whose values violate it is discarded with a warning.
+
+**But I could not verify that**, and the reason matters: no model I construct
+produces coverage from `cover <monitor>;` at all — with or without a constraint,
+inside a component or a package. Either monitor matching does not fire, or every
+model I tried is wrong. `cover { … }` (the block form) works.
+
+So `docs/FEATURES.md` was overclaiming: entries 68–78 were marked implemented on
+the strength of the parser and the matcher existing, not on observed behaviour.
+68 is now `partial` with that stated plainly, and 78 is `partial` because it
+cannot be verified while matching does not fire. This is the same class of
+overclaim as `foreach`/`unique` earlier — a construct that parses and is
+believed to work, recorded as working without a test that shows it.
+
+Also fixed: allocating a claim after trait matching indexed a per-region cursor
+that was sized by the *filtered* candidate list, which panicked as soon as a
+trait filter excluded a region. Caught by the existing trait test.
+
+Matrix: **109 implemented, 37 partial, 0 not** — one more implemented, three
+corrected downward.
+
+118 tests (1 new).
+
 ## 0.28.0 — 2026-10-27
 
 The two remaining rv64_core reproducers: sets and wide domains
