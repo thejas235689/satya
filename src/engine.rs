@@ -972,6 +972,58 @@ impl<'a> Engine<'a> {
                 let base = path.segments.join(".");
                 // A string assignment is carried in the string store rather than
                 // the numeric one (PSS 7.2).
+                // `format(fmt, args...)` — printf-style string building
+                // (PSS 22.2). Supports %d, %x, %s and %%.
+                if let crate::ast::Expr::Call(fname, fargs) = rhs {
+                    if fname == "format" && !fargs.is_empty() {
+                        if let crate::ast::Expr::Str(fmt) = &fargs[0] {
+                            let mut out = String::new();
+                            let mut it = fargs[1..].iter();
+                            let mut chars = fmt.chars().peekable();
+                            while let Some(c) = chars.next() {
+                                if c != '%' {
+                                    out.push(c);
+                                    continue;
+                                }
+                                match chars.next() {
+                                    Some('%') => out.push('%'),
+                                    Some('d') => {
+                                        if let Some(a) = it.next() {
+                                            if let Some(v) =
+                                                eval_value(a, values, self.model, self.seed)
+                                            {
+                                                out.push_str(&v.to_string());
+                                            }
+                                        }
+                                    }
+                                    Some('x') => {
+                                        if let Some(a) = it.next() {
+                                            if let Some(v) =
+                                                eval_value(a, values, self.model, self.seed)
+                                            {
+                                                out.push_str(&format!("{:x}", v));
+                                            }
+                                        }
+                                    }
+                                    Some('s') => {
+                                        if let Some(a) = it.next() {
+                                            if let Some(sv) = self.eval_string(a) {
+                                                out.push_str(&sv);
+                                            }
+                                        }
+                                    }
+                                    Some(o) => {
+                                        out.push('%');
+                                        out.push(o);
+                                    }
+                                    None => out.push('%'),
+                                }
+                            }
+                            self.strings.insert(base.clone(), out);
+                            return Flow::Normal;
+                        }
+                    }
+                }
                 if let Some(sv) = self.eval_string(rhs) {
                     self.strings.insert(base.clone(), sv);
                     return Flow::Normal;

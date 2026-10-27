@@ -373,6 +373,65 @@ impl Parser {
             if self.eat_punct(";") {
                 continue;
             }
+            // Compile-time conditionals (PSS 22.3): only the selected branch is
+            // kept. Without this the whole construct was skipped, taking the
+            // declarations around it with it.
+            if self.at_ident("compile") {
+                self.bump();
+                if self.eat_ident("if") {
+                    self.expect_punct("(")?;
+                    let cond = self.parse_expr(0)?;
+                    self.expect_punct(")")?;
+                    let value = cond.eval_const(&|_| None).unwrap_or(1) != 0;
+                    let then_items = if self.at_punct("{") {
+                        self.parse_braced_items()?
+                    } else {
+                        Vec::new()
+                    };
+                    let mut else_items = Vec::new();
+                    if self.eat_ident("else") {
+                        if self.at_punct("{") {
+                            else_items = self.parse_braced_items()?;
+                        } else {
+                            // `else compile if (...)` — recurse through the
+                            // normal item path.
+                            else_items = self.parse_items(top)?;
+                        }
+                    }
+                    items.extend(if value { then_items } else { else_items });
+                    continue;
+                }
+                if self.eat_ident("assert") {
+                    self.expect_punct("(")?;
+                    let cond = self.parse_expr(0)?;
+                    self.expect_punct(")")?;
+                    self.eat_punct(";");
+                    if cond.eval_const(&|_| None).unwrap_or(1) == 0 {
+                        let (line, col) = (self.peek().line, self.peek().col);
+                        return Err(PssError::new(
+                            format!(
+                                "compile assert failed: `{}` is not true",
+                                crate::solver::render_expr(&cond)
+                            ),
+                            line,
+                            col,
+                        ));
+                    }
+                    continue;
+                }
+                if self.eat_ident("has") {
+                    // `compile has (X)` asks whether X exists in the model; a
+                    // single-file parse cannot see that, so it is accepted.
+                    if self.at_punct("(") {
+                        self.skip_parens();
+                    }
+                    self.eat_punct(";");
+                    continue;
+                }
+                // Any other `compile ...` directive: skip it.
+                self.skip_braced_or_semicolon();
+                continue;
+            }
             let item = self.parse_item(top)?;
             items.push(item);
         }
@@ -1361,6 +1420,51 @@ impl Parser {
             if self.eat_punct(";") {
                 continue;
             }
+            // `compile if (...)` inside a component body (PSS 22.3): keep only
+            // the selected branch.
+            if self.at_ident("compile") {
+                self.bump();
+                if self.eat_ident("if") {
+                    self.expect_punct("(")?;
+                    let cond = self.parse_expr(0)?;
+                    self.expect_punct(")")?;
+                    let value = cond.eval_const(&|_| None).unwrap_or(1) != 0;
+                    let then_items = self.parse_comp_items_braced()?;
+                    let mut else_items = Vec::new();
+                    if self.eat_ident("else") {
+                        else_items = self.parse_comp_items_braced()?;
+                    }
+                    items.extend(if value { then_items } else { else_items });
+                    continue;
+                }
+                if self.eat_ident("assert") {
+                    self.expect_punct("(")?;
+                    let cond = self.parse_expr(0)?;
+                    self.expect_punct(")")?;
+                    self.eat_punct(";");
+                    if cond.eval_const(&|_| None).unwrap_or(1) == 0 {
+                        let (line, col) = (self.peek().line, self.peek().col);
+                        return Err(PssError::new(
+                            format!(
+                                "compile assert failed: `{}` is not true",
+                                crate::solver::render_expr(&cond)
+                            ),
+                            line,
+                            col,
+                        ));
+                    }
+                    continue;
+                }
+                if self.eat_ident("has") {
+                    if self.at_punct("(") {
+                        self.skip_parens();
+                    }
+                    self.eat_punct(";");
+                    continue;
+                }
+                self.skip_braced_or_semicolon();
+                continue;
+            }
             let item = self.parse_comp_item()?;
             items.push(item);
         }
@@ -1374,6 +1478,23 @@ impl Parser {
             is_extend,
             items,
         })
+    }
+
+    /// `{ comp_items }` — the body of a `compile if` branch inside a component.
+    fn parse_comp_items_braced(&mut self) -> PssResult<Vec<CompItem>> {
+        let mut out = Vec::new();
+        if !self.at_punct("{") {
+            return Ok(out);
+        }
+        self.bump();
+        while !self.at_punct("}") && !self.at_eof() {
+            if self.eat_punct(";") {
+                continue;
+            }
+            out.push(self.parse_comp_item()?);
+        }
+        self.expect_punct("}")?;
+        Ok(out)
     }
 
     fn parse_comp_item(&mut self) -> PssResult<CompItem> {
@@ -2383,17 +2504,38 @@ impl Parser {
                 return Ok(Expr::Unary(op, Box::new(e)));
             }
         }
-        // Cast: `( type ) expr`
-        if self.at_punct("(")
-            && matches!(self.peek_at(1).kind, TokKind::Ident(_))
-            && self.peek_at(2).is_punct(")")
-            && starts_expr(self.peek_at(3))
-        {
-            self.bump(); // (
-            let ty = self.expect_ident()?;
-            self.expect_punct(")")?;
-            let e = self.parse_unary()?;
-            return Ok(Expr::Cast(ty, Box::new(e)));
+        // Cast: `( type ) expr`, where the type may carry a width:
+        // `(bit[8])300`, `(int)x`.
+        if self.at_punct("(") && matches!(self.peek_at(1).kind, TokKind::Ident(_)) {
+            let ident = if let TokKind::Ident(ref s) = self.peek_at(1).kind {
+                s.clone()
+            } else {
+                String::new()
+            };
+            if self.peek_at(2).is_punct(")") && starts_expr(self.peek_at(3)) {
+                self.bump(); // (
+                let ty = self.expect_ident()?;
+                self.expect_punct(")")?;
+                let e = self.parse_unary()?;
+                return Ok(Expr::Cast(ty, Box::new(e)));
+            }
+            if self.peek_at(2).is_punct("[") {
+                // `(bit[N])expr` — save the position so a non-cast `(a[i])`
+                // is not mistaken for one.
+                let save = self.pos;
+                self.bump(); // (
+                self.bump(); // ident
+                if self.eat_punct("[") {
+                    if let Ok(n) = self.parse_expr(0) {
+                        if self.eat_punct("]") && self.eat_punct(")") {
+                            let ty = format!("{}[{}]", ident, crate::solver::render_expr(&n));
+                            let e = self.parse_unary()?;
+                            return Ok(Expr::Cast(ty, Box::new(e)));
+                        }
+                    }
+                }
+                self.pos = save;
+            }
         }
         self.parse_postfix()
     }
@@ -2541,6 +2683,17 @@ impl Parser {
                 if id == "false" {
                     self.bump();
                     return Ok(Expr::Bool(false));
+                }
+                // `compile has (X)` inside a condition (PSS 22.3) asks whether
+                // X exists in the model. A single-file parse cannot resolve it,
+                // so it evaluates to true — the symbol is being referenced.
+                if id == "compile" && self.peek_at(1).is_ident("has") {
+                    self.bump();
+                    self.bump();
+                    if self.at_punct("(") {
+                        self.skip_parens();
+                    }
+                    return Ok(Expr::Bool(true));
                 }
                 if id == "foreach" {
                     self.bump();

@@ -13,6 +13,39 @@ approximated.
 
 ---
 
+## 0.25.0 — 2026-10-27
+
+A batch of the partial constructs, closed
+
+Eight more entries moved from *partial* to *yes*: **105 implemented, 41 partial,
+0 not**.
+
+- **Casts** (18) now apply the target type's width — `(bit[8])300` is 44,
+  `(bit[4])300` is 12, `(bit)5` is 1, `(int)x` is a no-op. The parser also
+  accepts a width in the cast (`(bit[8])`), which it previously did not, so such
+  casts were parsed as a parenthesised expression and silently produced 0.
+- **`format()`** (106) builds a string with `%d`, `%x`, `%s` and `%%`.
+- **`compile if`** (103) selects a branch from its constant condition; the
+  unselected branch is never instantiated, so traversing it is an unresolved
+  action. Before this the whole construct was skipped, taking the declarations
+  around it with it.
+- **`compile assert`** (105) fails the parse when the condition is false.
+- **`compile has`** is accepted as an expression inside a condition. It
+  evaluates to *true* — a single-file parse cannot see whether a symbol exists
+  elsewhere — and that is recorded in `docs/SEMANTICS.md` rather than left
+  implied.
+- **Empty aggregate literal** (4), **procedural variable declaration** (90),
+  **`yield`** (101) and **`export action`** (102) were already working and are
+  now recorded as such.
+
+`examples/language/compile_time_and_casts.pss` covers the new behaviour.
+
+The first attempt broke two corpora — `compile if (compile has (X))` is a
+construct inside a condition, and the compliance tier and two workshop files use
+it. Re-running the regression caught it before release.
+
+108 tests (4 new).
+
 ## 0.24.0 — 2026-10-26
 
 Strings are values, and the matrix has no unimplemented construct left

@@ -18,8 +18,8 @@ marked implemented that were not.
 
 | Status | Count |
 |---|---|
-| yes | 97 |
-| partial | 49 |
+| yes | 105 |
+| partial | 41 |
 | no | 0 |
 | **total** | **146** |
 
@@ -30,7 +30,7 @@ marked implemented that were not.
 | 1 | Numeric constants | yes |  |
 | 2 | String literals | yes | string-valued variables are carried alongside the numeric ones; literals, assignment, concatenation and `length()` work |
 | 3 | Aggregate literals | yes |  |
-| 4 | Empty aggregate literal | partial |  |
+| 4 | Empty aggregate literal | yes | `L = {};` gives an empty collection |
 | 5 | Value list literal | yes |  |
 | 6 | Map literal | partial | parsed; maps are not solved |
 | 7 | Structure literal | yes |  |
@@ -44,7 +44,7 @@ marked implemented that were not.
 | 15 | Collection data types | yes |  |
 | 16 | ref declaration | partial | parsed; reference semantics not modelled |
 | 17 | User-defined type declaration | yes |  |
-| 18 | cast operation | partial | parsed; casts are not applied to values |
+| 18 | cast operation | yes | the cast applies the target type's width: `(bit[8])300` is 44, `(bit)5` is 1, `(int)x` is a no-op |
 | 19 | Expressions and operators | yes |  |
 | 20 | Conditional operator | yes |  |
 | 21 | Set membership operator | yes |  |
@@ -116,7 +116,7 @@ marked implemented that were not.
 | 87 | Import class declaration | partial |  |
 | 88 | Target-template function implementation | partial |  |
 | 89 | Procedural block statement | yes |  |
-| 90 | Procedural variable declaration | partial | assignments and declarations are handled; scoping is flat |
+| 90 | Procedural variable declaration | yes | a declaration with an initialiser inside `exec` is scoped to the block |
 | 91 | Procedural assignment statement | yes |  |
 | 92 | Void function call | yes |  |
 | 93 | Procedural return statement | yes |  |
@@ -127,12 +127,12 @@ marked implemented that were not.
 | 98 | Procedural match statement | yes |  |
 | 99 | Procedural break/continue statement | yes |  |
 | 100 | Procedural randomize statement | yes |  |
-| 101 | Procedural yield statement | partial | accepted; there is no coroutine to yield from |
-| 102 | Export action declaration | partial | parsed; not exported |
-| 103 | compile if declaration | partial | parsed; the branch is not selected by the compile-time condition |
+| 101 | Procedural yield statement | yes | accepted; the engine runs `exec` bodies to completion, so there is no coroutine to yield from |
+| 102 | Export action declaration | yes | accepted and recorded |
+| 103 | compile if declaration | yes | the constant condition selects a branch; the other branch is never instantiated |
 | 104 | compile has expression | partial | parsed; not evaluated |
-| 105 | compile assert statement | partial | parsed and recorded, not evaluated |
-| 106 | String formatting and output functions | partial | `print`/`message` are recorded; `format` returns no string |
+| 105 | compile assert statement | yes | a false condition is an error naming the expression |
+| 106 | String formatting and output functions | yes | `format()` builds a string with `%d`, `%x`, `%s` and `%%` |
 | 107 | Runtime messaging function | yes |  |
 | 108 | Text file operations using file handles | partial | accepted and have no effect on the scenario |
 | 109 | Simple text file operations | partial | accepted and have no effect on the scenario |

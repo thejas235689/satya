@@ -220,7 +220,17 @@ pub fn eval(expr: &Expr, values: &BTreeMap<String, i64>, env: &Env) -> Option<i6
                 _ => None,
             }
         }
-        Expr::Cast(_, e) => eval(e, values, env),
+        // A cast applies the target type's width to the value (PSS 8.4):
+        // `(bit[8])300` is 44. An untyped cast (`(int)`) is a no-op.
+        Expr::Cast(ty, e) => {
+            let v = eval(e, values, env)?;
+            let bits = cast_width(ty);
+            match bits {
+                Some(n) if n > 0 && n < 64 => Some(v & ((1i64 << n) - 1)),
+                Some(n) if n >= 64 => Some(v),
+                _ => Some(v),
+            }
+        }
         Expr::Binary(op, a, b) => {
             // Array operators whose operands are collections rather than values
             // (PSS 7.9.2.1): set membership and element-wise equality.
@@ -2350,6 +2360,20 @@ fn subst_loop_elem(e: &Expr, var: &str, elem: &Expr) -> Expr {
         ),
         Expr::Cast(t, a) => Expr::Cast(t.clone(), Box::new(subst_loop_elem(a, var, elem))),
         other => other.clone(),
+    }
+}
+
+/// The width in bits of a cast target, if it has one.
+fn cast_width(ty: &str) -> Option<u32> {
+    let t = ty.trim();
+    if let Some(rest) = t.strip_prefix("bit[") {
+        return rest.trim_end_matches(']').trim().parse::<u32>().ok();
+    }
+    match t {
+        "bit" => Some(1),
+        "int" | "unsigned" => Some(32),
+        "longint" | "int64" => Some(64),
+        _ => None,
     }
 }
 

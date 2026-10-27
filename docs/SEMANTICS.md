@@ -142,6 +142,7 @@ methods for arrays (7.9.2.2). The real list is below.
 | `import`-based scope checking | 9 | name resolution uses `pkg::name` and `Component::action`, not `import` |
 | `exec body` | 22.1 | not run at solve time, which is correct: the body is *target* code and is emitted into the generated C and SystemVerilog. `pre_body` is the solve-time hook. |
 | register group offsets | 24.11.2 | `reg_group_c` is parsed, but the offsets come from the group's own `get_offset_of_instance` / `get_offset_of_instance_array` / `get_offset_of_path` functions, which are not evaluated |
+| `compile has (X)` | 22.3 | evaluates to **true**: a single-file parse cannot see whether a symbol exists elsewhere in the model, and a referenced symbol is normally one that does. `compile if` itself selects the branch correctly from a constant condition |
 | address trait matching | 24.8.6 | a claim is allocated from a region whose trait values satisfy the constraints the claim places on its trait struct; an unmatched constraint is reported. A claim does not span more than one region |
 | executor behaviour | 24.10.9.5 | executor components are parsed, but read/write/`addr_value` are implemented in the engine rather than delegated to an executor instance |
 | register read/write primitives | 24.10.9 | register access is modelled over a register store, not translated into the primitive byte-level read/write operations on an address |

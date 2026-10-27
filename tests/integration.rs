@@ -2338,3 +2338,89 @@ component C {
         .unwrap();
     assert_eq!(c, "l");
 }
+
+// ---------------------------------------------------------------------------
+// Casts, format(), compile-time conditionals (PSS 8.4, 22.2, 22.3)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_cast_applies_the_target_width() {
+    // `(bit[8])300` is 44 — the cast truncates to the target type's width.
+    let src = r#"
+component C {
+  action a {
+    int w8; int w4; int b1; int full;
+    exec pre_solve {
+      w8 = (bit[8])300;
+      w4 = (bit[4])300;
+      b1 = (bit)5;
+      full = (int)300;
+    }
+    rand int v;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| {
+        s.steps[0]
+            .fields
+            .iter()
+            .find(|(k, _)| k == n)
+            .map(|(_, v)| *v)
+            .unwrap()
+    };
+    assert_eq!(get("w8"), 300 & 0xFF);
+    assert_eq!(get("w4"), 300 & 0xF);
+    assert_eq!(get("b1"), 1);
+    assert_eq!(get("full"), 300);
+}
+
+#[test]
+fn format_builds_a_string() {
+    let src = r#"
+component C {
+  action a {
+    string s; string h; int n;
+    exec pre_solve { n = 42; s = format("v=%d", n); h = format("0x%x", 255); }
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |k: &str| {
+        s.steps[0]
+            .strings
+            .iter()
+            .find(|(n, _)| n == k)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
+    };
+    assert_eq!(get("s"), "v=42");
+    assert_eq!(get("h"), "0xff");
+}
+
+#[test]
+fn compile_if_keeps_only_the_selected_branch() {
+    // The unselected branch is never instantiated, so traversing it is
+    // unresolved — and before this, the whole construct was skipped, taking the
+    // surrounding declarations with it.
+    let src = r#"
+component C {
+  compile if (1) { action live_a { rand int x; }; } else { action dead_a { rand int y; }; }
+  compile if (0) { action never_a { rand int z; }; }
+  action t { activity { do live_a; } };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    assert!(m.find_action(Some("C"), "live_a").is_some(), "the taken branch");
+    assert!(m.find_action(Some("C"), "dead_a").is_none(), "the untaken branch");
+    assert!(m.find_action(Some("C"), "never_a").is_none(), "a false branch");
+}
+
+#[test]
+fn a_false_compile_assert_is_an_error() {
+    assert!(compile_pss("package p { compile assert (1 == 1); };").is_ok());
+    let err = compile_pss("package p { compile assert (1 == 2); };").unwrap_err();
+    assert!(format!("{}", err).contains("compile assert failed"), "{err}");
+}

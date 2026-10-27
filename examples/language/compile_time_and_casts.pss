@@ -1,0 +1,46 @@
+// Compile-time conditionals and casts (PSS 22.3, 8.4).
+//
+// `compile if` selects a branch while the model is built — the other branch is
+// never instantiated, so a traversal of it is an unresolved action. Without
+// this the whole construct used to be skipped, taking the declarations around
+// it with it.
+//
+// A cast applies the target type's width to the value: `(bit[8])300` is 44.
+package compile_time_pkg {
+
+    component compile_time_c {
+        // Enabled: this action exists in the model.
+        compile if (1) {
+            action enabled_a { rand int x; };
+        } else {
+            action disabled_a { rand int y; };
+        }
+
+        // Disabled: this action does not exist.
+        compile if (0) {
+            action never_a { rand int z; };
+        }
+
+        compile assert (1 + 1 == 2);
+
+        action casts_a {
+            int wide; int narrow; int single;
+            exec pre_solve {
+                wide   = (bit[16])70000;   // 70000 & 0xFFFF = 4464
+                narrow = (bit[8])300;      // 300 & 0xFF      = 44
+                single = (bit)5;           // 5 & 1           = 1
+            }
+            rand int v;
+        };
+
+        action format_a {
+            string msg;
+            int n;
+            exec pre_solve {
+                n = 42;
+                msg = format("value=%d", n);
+            }
+            rand int v;
+        };
+    };
+};
