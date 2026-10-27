@@ -30,7 +30,10 @@ rand e_t sel;  constraint sel in [A1..A3];   (i.e. 1..3)
 seeds 1..5 -> sel = 3, 0, 5, 5, 0
 ```
 
-Three of five seeds return a value outside the constraint. The trace makes this
+Three of five seeds return a value outside the constraint. Note the reporting
+half of this too: two steps in a larger model printed `not satisfied` while
+holding exactly the pinned values, so the solution was right and the report was
+wrong -- the summary and the detail disagree in both directions. The trace makes this
 visible but also contradicts itself: it prints `constraints: 2/2 satisfied`
 while listing `not satisfied: <expr>`.
 
@@ -44,6 +47,17 @@ reporting -- which needs a debugger rather than reading.
 Note also that `set_item_intervals` returns an *empty* vector when either bound
 fails to evaluate, which silently drops a constraint. That is a second, quieter
 hazard: an unresolvable bound should be an error, not a no-op.
+
+## bug5_set_membership.pss — set membership always returns the first element
+
+```
+rand int x;  constraint x in [0x40, 0x7F, 0x4000, 0x7FFF];
+seeds 1..5 -> x = 64 every time
+```
+
+The same holds for `bit[64]`. A **range** (`x in [64..32767]`) randomises
+correctly across seeds, so a value list is not randomisation at all -- it is a
+constant. Anything relying on a set for coverage is silently getting one value.
 
 ## bug3_wide_domains_oom.pss — wide operand domains exhaust memory
 

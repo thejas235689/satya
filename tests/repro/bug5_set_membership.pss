@@ -1,0 +1,10 @@
+// Set membership is not randomised: it returns the first element every time.
+// Run across seeds; x is 64 for all of them, never 127/16384/32767.
+// A RANGE (`x in [64..32767]`) randomises correctly, which is the workaround.
+component c {
+  action a {
+    rand int x;
+    constraint x in [0x40, 0x7F, 0x4000, 0x7FFF];
+  };
+};
+component pss_top { c cc; action test { activity { do c::a; }; }; };
