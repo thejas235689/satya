@@ -41,6 +41,23 @@ impl Backend for UvmBackend {
         s.push_str("`ifndef SATYA_GENERATED_SV\n`define SATYA_GENERATED_SV\n\n");
         s.push_str("import uvm_pkg::*;\n`include \"uvm_macros.svh\"\n\n");
 
+        // PSS enums referenced by the generated constraints have to exist in
+        // SystemVerilog too, or `op inside {[PADD:PDIV]}` cannot compile.
+        if !model.enums.is_empty() {
+            let mut names: Vec<&String> = model.enums.keys().collect();
+            names.sort();
+            for name in names {
+                let variants = &model.enums[name];
+                let leaf = name.rsplit("::").next().unwrap_or(name);
+                s.push_str(&format!(
+                    "typedef enum {{ {} }} {};\n",
+                    variants.join(", "),
+                    leaf
+                ));
+            }
+            s.push('\n');
+        }
+
         // Emit one sequence per distinct action used in the schedule.
         let mut emitted: BTreeSet<String> = BTreeSet::new();
         for step in &scenario.steps {
@@ -242,7 +259,20 @@ fn field_decl(model: &Model, f: &crate::ir::Field) -> Option<String> {
             };
             Some(format!("{}{} {};{}", r, ty, f.name, comment))
         }
-        TypeCategory::Enum(_) => Some(format!("{}int {};{}  // enum", r, f.name, comment)),
+        // Name the enum's type so the constraint below compiles against it.
+        TypeCategory::Enum(_) => {
+            let ty = if model.enums.contains_key(&f.type_name) {
+                f.type_name.clone()
+            } else {
+                model
+                    .enums
+                    .keys()
+                    .find(|k| k.rsplit("::").next() == Some(f.type_name.as_str()))
+                    .cloned()
+                    .unwrap_or_else(|| "int".to_string())
+            };
+            Some(format!("{}{} {};{}", r, ty, f.name, comment))
+        }
         TypeCategory::Struct(t) => {
             let _ = model;
             Some(format!("{}{} {};{}", r, t, f.name, comment))

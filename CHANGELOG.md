@@ -13,6 +13,111 @@ approximated.
 
 ---
 
+## 0.28.0 — 2026-10-27
+
+The two remaining rv64_core reproducers: sets and wide domains
+
+Both were the same root cause, and both were reported with a reproducer.
+
+**Set membership returned the first member every time.** `x in [0x40, 0x7F,
+0x4000, 0x7FFF]` gave 64 on every seed. The set narrowed the domain correctly,
+but selection used rejection sampling — 4 allowed values in a 32704-wide hull —
+which never hit a member in 64 tries and then fell back to the *first* allowed
+value. A set is now sampled uniformly from its members, and a narrow hull with
+gaps is enumerated rather than rejected. All four members are now reachable, and
+`tools/repro_check.py` asserts that across 60 seeds.
+
+**Wide value sets exhausted memory.** The same constraint on a `bit[64]` filled
+the gaps between members into a `forbidden` set — one entry per value in
+between, 2^63 of them, the 1.2 GB allocation that failed. A domain can now carry
+its allowed set directly (`allowed: Option<Vec<i64>>`) instead of being
+described by its gaps. The wide case solves within 400 MB.
+
+**A set member that does not evaluate is now reported, not dropped.** The
+report noted this as "a second, quieter hazard": an unresolvable member yielded
+no intervals and the constraint vanished. It is now `not evaluated`, and that
+line prints even when nothing at all was countable.
+
+`tools/repro_check.py` runs all five reproducers under `tests/repro/` against a
+binary, with an address-space cap so an OOM fails fast instead of swapping.
+
+Note on the repository: the reproducers were committed on top of a v0.25.0
+checkout, which reverted the v0.26.0 and v0.27.0 source. This release restores
+that source (templates, the `bit[64]` domain, enum ranges, the report split, the
+UVM enum declarations) on top of the reproducers, so all five fixes are present
+together.
+
+117 tests (3 new).
+
+## 0.27.0 — 2026-10-27
+
+Three defects reported from use
+
+**`bit[64]` literals with bit 63 set solved as 0.** The domain for a `bit[N]`
+field was clamped to 62 bits, so `constraint x == 0x8000_0000_0000_0000` had no
+representable solution and `x` was clamped to 0 while the constraint was
+reported unsatisfied. Values are carried in an i64, so a 64-bit pattern with
+bit 63 set *is* negative — the domain for `bit[64]` is now the whole i64 range.
+All three patterns (`0x7FFF…`, `0x8000…`, `0xFFFF…`) now solve to their bit
+pattern with the constraint satisfied.
+
+Two follow-on bugs this exposed:
+
+- the sampler computed `hi - lo + 1` in i64, which overflows to 0 over the full
+  range and **panicked** with a divide by zero — the workshop corpus caught it
+  (36/36 → 30/36). The span is computed in i128.
+- one RNG draw yields only 47 bits, so a full-width domain never reached its
+  upper half. Wide domains now combine two draws.
+
+**Enum range constraints were not enforced.** `constraint sel in [A1..A3]` used
+enum *items* as bounds; they were resolved against the constant table only, so
+they came out `None`, the constraint became unsupported, and `sel` solved
+anywhere in `0..5`. Enum items now resolve during extraction, so the range is
+enforced and counted.
+
+**The summary contradicted its detail.** The trace printed
+`constraints: 2/2 satisfied` and then listed `not satisfied: <expr>`, because
+constraints the solver could not evaluate were filed with the ones it evaluated
+and failed — while being excluded from the total. They are now reported
+separately as `not evaluated:`, which is what they are.
+
+**The UVM backend named PSS enum items without declaring them.** It emitted
+`rand int op;` and `op inside {[PADD:PDIV]};`, which cannot compile. It now
+emits a `typedef enum` for each enum the model uses and types the field with it:
+`typedef enum { PADD, PSUB, PMUL, PDIV } op_e;` and `rand op_e op;`.
+
+Not verified: no SystemVerilog compiler is available here, so the generated
+output is checked by inspection and by asserting on its text, not by compiling
+it.
+
+114 tests (4 new).
+
+## 0.26.0 — 2026-10-27
+
+Template instantiation, and a width bug it exposed
+
+A templated type is now instantiated at each use (PSS 12.6): a `type` parameter
+substitutes the field's type and a value parameter substitutes into a `bit[W]`
+width. `pair_s<bit[16], 4>` and `pair_s<bit[8], 16>` are two distinct types,
+each with its own field widths.
+
+`examples/language/templates.pss` shows it: both instantiations are assigned
+200, and only the 16-bit field can hold it.
+
+Getting there exposed a **pre-existing bug**, independent of templates: an
+assignment was not masked to the target field's width. `bit[4] x; x = 200;`
+stored 200, not 8 — an over-wide value silently escaped its field. That affects
+any model, and it is now masked at the point of assignment.
+
+The first attempt at mangling also broke seven existing tests, because it put
+the width into *every* field's type name (`bit[32]` instead of `bit`), which
+changed how domains are computed. The width is now part of a template
+*argument* only. The regression suite caught it.
+
+The matrix moves to **109 implemented, 37 partial, 0 not**.
+
+110 tests (2 new).
+
 ## 0.25.0 — 2026-10-27
 
 A batch of the partial constructs, closed

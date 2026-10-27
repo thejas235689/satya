@@ -92,6 +92,11 @@ impl Backend for TraceBackend {
                     s.push_str(&format!("{}       not satisfied: {}\n", indent, u));
                 }
             }
+            // Reported outside the total, because these are not counted in it —
+            // and they must still show when nothing at all was countable.
+            for u in &step.unevaluated {
+                s.push_str(&format!("{}     not evaluated: {}\n", indent, u));
+            }
             for fr in &step.flow {
                 let obj = match fr.obj_id {
                     Some(id) => format!("#{}", id),

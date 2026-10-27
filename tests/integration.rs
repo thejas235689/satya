@@ -2424,3 +2424,234 @@ fn a_false_compile_assert_is_an_error() {
     let err = compile_pss("package p { compile assert (1 == 2); };").unwrap_err();
     assert!(format!("{}", err).contains("compile assert failed"), "{err}");
 }
+
+// ---------------------------------------------------------------------------
+// Template instantiation and field-width masking (PSS 12.6, 7.2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_templated_type_is_instantiated_with_its_arguments() {
+    // `pair_s<bit[16], 4>`: the type parameter substitutes the field's type and
+    // the value parameter its `bit[W]` width, so the two instantiations differ.
+    let src = r#"
+package p {
+  struct pair_s<type T, int W = 8> { T a; bit[W] b; };
+};
+component C {
+  action act {
+    pair_s<bit[16], 4>  narrow;
+    pair_s<bit[8], 16>  wide;
+    exec pre_solve { narrow.b = 200; wide.b = 200; }
+    rand int v;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "act", 1);
+    let get = |n: &str| {
+        s.steps[0]
+            .fields
+            .iter()
+            .find(|(k, _)| k == n)
+            .map(|(_, v)| *v)
+            .unwrap()
+    };
+    assert_eq!(get("narrow.b"), 200 & 0xF, "4-bit field");
+    assert_eq!(get("wide.b"), 200, "16-bit field holds it");
+}
+
+#[test]
+fn an_assignment_is_masked_to_the_field_width() {
+    // A `bit[4]` holds four bits: assigning 200 leaves 8. This was stored
+    // verbatim before, so an over-wide value silently escaped its field.
+    let src = r#"
+component C {
+  action a { bit[4] x; int y; exec pre_solve { x = 200; y = x; } rand int v; };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| {
+        s.steps[0]
+            .fields
+            .iter()
+            .find(|(k, _)| k == n)
+            .map(|(_, v)| *v)
+            .unwrap()
+    };
+    assert_eq!(get("x"), 200 & 0xF);
+    assert_eq!(get("y"), 8, "the assigned value is the masked one");
+}
+
+// ---------------------------------------------------------------------------
+// Defects reported from use: bit[64] literals, enum ranges, the summary
+// contradicting its detail, and the UVM backend's enum names.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_bit64_literal_with_bit_63_set_is_solvable() {
+    // Values are carried in an i64, so a 64-bit pattern with bit 63 set is
+    // negative. The domain for `bit[64]` must therefore be the whole i64 range;
+    // it used to be clamped to 62 bits, so such a literal was unsatisfiable and
+    // the field solved to 0.
+    for (lit, want) in [
+        ("0x7FFF_FFFF_FFFF_FFFF", i64::MAX),
+        ("0x8000_0000_0000_0000", i64::MIN),
+        ("0xFFFF_FFFF_FFFF_FFFF", -1),
+    ] {
+        let src = format!(
+            "component C {{ action a {{ rand bit[64] x; constraint x == {lit}; }}; }};"
+        );
+        let m = compile_pss(&src).unwrap();
+        let s = engine::run_scenario(&m, "a", 1);
+        let st = &s.steps[0];
+        let x = st.fields.iter().find(|(k, _)| k == "x").map(|(_, v)| *v).unwrap();
+        assert_eq!(x, want, "{lit} should solve to its 64-bit pattern");
+        assert_eq!(st.satisfied, st.total, "{lit} must satisfy its constraint");
+    }
+}
+
+#[test]
+fn an_enum_range_constraint_is_enforced() {
+    // `sel in [A1..A3]` — the bounds are enum items, which resolve to 1 and 3.
+    // They were not resolvable at extraction, so the constraint was dropped.
+    let src = r#"
+package p { enum e_t { A0, A1, A2, A3, A4, A5 }; };
+component C {
+  action a { rand e_t sel; constraint sel in [A1..A3]; };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    for seed in 1..=40 {
+        let s = engine::run_scenario(&m, "a", seed);
+        let st = &s.steps[0];
+        let v = st.fields.iter().find(|(k, _)| k == "sel").map(|(_, x)| *x).unwrap();
+        assert!((1..=3).contains(&v), "seed {seed}: sel={v} is outside [A1..A3]");
+        assert_eq!(st.satisfied, st.total, "seed {seed}: the constraint is counted");
+    }
+}
+
+#[test]
+fn the_summary_does_not_contradict_its_detail() {
+    // An unevaluated constraint is not counted in the total, so listing it as
+    // "not satisfied" made the report contradict itself. It is now reported
+    // separately from a constraint that was evaluated and failed.
+    let src = r#"
+package p {
+  enum e_t { A0, A1, A2 };
+  component C { action a { rand e_t sel; rand int y;
+    constraint y == 5;
+    constraint sel.mystery_op(3) == 1;
+  }; };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let st = &s.steps[0];
+    assert_eq!(st.satisfied, st.total, "every counted constraint is satisfied");
+    assert!(
+        !st.unevaluated.is_empty(),
+        "the unsupported constraint is recorded as unevaluated"
+    );
+    assert!(
+        st.unsatisfied.is_empty(),
+        "nothing counted was left unsatisfied: {:?}",
+        st.unsatisfied
+    );
+}
+
+#[test]
+fn the_uvm_backend_declares_the_enums_it_uses() {
+    // `op inside {[PADD:PDIV]}` names PSS enum items; without a matching
+    // SystemVerilog enum declaration the output cannot compile.
+    let src = r#"
+package p { enum op_e { PADD, PSUB, PMUL, PDIV }; };
+component C {
+  action leaf_a { rand op_e op; constraint op in [PADD..PDIV]; };
+  action t { activity { do leaf_a; } };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let sc = engine::run_scenario(&m, "t", 1);
+    let backend = get("uvm").expect("the uvm backend is registered");
+    let sv = backend
+        .emit(&m, &sc, &BackendOptions::default())
+        .expect("the uvm backend emits");
+    assert!(
+        sv.contains("typedef enum { PADD, PSUB, PMUL, PDIV } op_e;"),
+        "the enum must be declared:\n{sv}"
+    );
+    assert!(
+        sv.contains("rand op_e op;"),
+        "the field must use the enum's type, not `int`:\n{sv}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Reproducers from rv64_core (tests/repro/): set membership and wide domains
+// ---------------------------------------------------------------------------
+
+#[test]
+fn set_membership_is_randomised_across_its_members() {
+    // `x in [64, 127, 16384, 32767]` is a set, not a range. Rejection sampling
+    // almost never hit a member (4 in 32704), so it fell back to the first
+    // member — 64 on every seed — and anything relying on a set for coverage
+    // silently got one value.
+    let src = r#"
+component C {
+  action a { rand int x; constraint x in [0x40, 0x7F, 0x4000, 0x7FFF]; };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let want = [0x40i64, 0x7F, 0x4000, 0x7FFF];
+    let mut seen = std::collections::BTreeSet::new();
+    for seed in 1..=60 {
+        let s = engine::run_scenario(&m, "a", seed);
+        let x = s.steps[0].fields.iter().find(|(k, _)| k == "x").map(|(_, v)| *v).unwrap();
+        assert!(want.contains(&x), "seed {seed}: {x} is not a member");
+        seen.insert(x);
+    }
+    assert_eq!(seen.len(), 4, "every member must be reachable, saw {seen:?}");
+}
+
+#[test]
+fn a_wide_value_set_does_not_exhaust_memory() {
+    // Filling the gaps between members of a `bit[64]` set means one entry per
+    // value in between — 2^63 of them, a 1.2 GB allocation that failed.
+    let src = r#"
+component C {
+  action wide {
+    rand bit[64] a;
+    rand bit[64] b;
+    constraint a in [0, 0x180000000, 0x4000000000000000, 0x7FFFFFFFFFFFFFFF];
+    constraint b in [0, 0x180000000, 0x4000000000000000, 0x7FFFFFFFFFFFFFFF];
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let want = [0i64, 0x180000000, 0x4000000000000000, 0x7FFFFFFFFFFFFFFF];
+    for seed in 1..=20 {
+        let s = engine::run_scenario(&m, "wide", seed);
+        let st = &s.steps[0];
+        for name in ["a", "b"] {
+            let v = st.fields.iter().find(|(k, _)| k == name).map(|(_, x)| *x).unwrap();
+            assert!(want.contains(&v), "seed {seed}: {name}={v} is not a member");
+        }
+        assert_eq!(st.satisfied, st.total, "seed {seed}");
+    }
+}
+
+#[test]
+fn an_unresolvable_set_member_is_reported_not_dropped() {
+    // A set whose member does not evaluate used to yield no intervals and drop
+    // the constraint silently.
+    let src = r#"
+component C { action a { rand int x; constraint x in [1, NOPE, 3]; }; };
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    assert!(
+        !s.steps[0].unevaluated.is_empty(),
+        "the constraint must be reported as not evaluated"
+    );
+}
