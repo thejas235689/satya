@@ -1,0 +1,27 @@
+// Template instantiation (PSS 12.6).
+//
+// A templated type is instantiated at each use: a `type` parameter substitutes
+// the field's type, and a value parameter substitutes into a `bit[W]` width. Two
+// uses with different arguments are two distinct types, each with its own field
+// widths — `narrow.b` is 4 bits, `wide.b` is 16.
+package template_pkg {
+
+    struct pair_s<type T, int W = 8> {
+        T       value;
+        bit[W]  raw;
+    };
+
+    component template_c {
+        action sizes_a {
+            pair_s<bit[16], 4>  narrow;
+            pair_s<bit[8], 16>  wide;
+
+            exec pre_solve {
+                // Both are assigned 200; only the 16-bit field can hold it.
+                narrow.raw = 200;
+                wide.raw   = 200;
+            }
+            rand int v;
+        };
+    };
+};

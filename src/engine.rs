@@ -922,6 +922,23 @@ impl<'a> Engine<'a> {
         Flow::Normal
     }
 
+    /// The declared width of an assignment target, following one level of
+    /// struct field so `narrow.b` resolves through `narrow`'s type.
+    fn exec_target_bits(&self, segments: &[String]) -> Option<i64> {
+        let action = self.exec_action.as_ref()?;
+        let first = segments.first()?;
+        let f = action.fields.iter().find(|f| &f.name == first)?;
+        let mut bits = f.bits;
+        let mut ty = f.type_name.clone();
+        for seg in &segments[1..] {
+            let dt = self.lookup_type(&ty)?;
+            let nf = dt.fields.iter().find(|x| &x.name == seg)?;
+            bits = nf.bits;
+            ty = nf.type_name.clone();
+        }
+        bits
+    }
+
     /// Evaluate an expression as a string, if it is one (PSS 7.2, 8.6.3).
     ///
     /// Handles a literal, a string variable, concatenation with `+`, and the
@@ -1060,6 +1077,13 @@ impl<'a> Engine<'a> {
                     }
                 }
                 if let Some(v) = eval_value(rhs, values, self.model, self.seed) {
+                    // A sized field holds its declared width: assigning 200 to a
+                    // `bit[4]` leaves 8 (PSS 7.2). This was not applied, so an
+                    // over-wide value was stored verbatim.
+                    let v = match self.exec_target_bits(&path.segments) {
+                        Some(n) if n > 0 && n < 64 => v & ((1i64 << n) - 1),
+                        _ => v,
+                    };
                     values.insert(base, v);
                 }
                 Flow::Normal

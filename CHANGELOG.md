@@ -13,6 +13,32 @@ approximated.
 
 ---
 
+## 0.26.0 — 2026-10-27
+
+Template instantiation, and a width bug it exposed
+
+A templated type is now instantiated at each use (PSS 12.6): a `type` parameter
+substitutes the field's type and a value parameter substitutes into a `bit[W]`
+width. `pair_s<bit[16], 4>` and `pair_s<bit[8], 16>` are two distinct types,
+each with its own field widths.
+
+`examples/language/templates.pss` shows it: both instantiations are assigned
+200, and only the 16-bit field can hold it.
+
+Getting there exposed a **pre-existing bug**, independent of templates: an
+assignment was not masked to the target field's width. `bit[4] x; x = 200;`
+stored 200, not 8 — an over-wide value silently escaped its field. That affects
+any model, and it is now masked at the point of assignment.
+
+The first attempt at mangling also broke seven existing tests, because it put
+the width into *every* field's type name (`bit[32]` instead of `bit`), which
+changed how domains are computed. The width is now part of a template
+*argument* only. The regression suite caught it.
+
+The matrix moves to **109 implemented, 37 partial, 0 not**.
+
+110 tests (2 new).
+
 ## 0.25.0 — 2026-10-27
 
 A batch of the partial constructs, closed

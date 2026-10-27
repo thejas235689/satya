@@ -2424,3 +2424,61 @@ fn a_false_compile_assert_is_an_error() {
     let err = compile_pss("package p { compile assert (1 == 2); };").unwrap_err();
     assert!(format!("{}", err).contains("compile assert failed"), "{err}");
 }
+
+// ---------------------------------------------------------------------------
+// Template instantiation and field-width masking (PSS 12.6, 7.2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_templated_type_is_instantiated_with_its_arguments() {
+    // `pair_s<bit[16], 4>`: the type parameter substitutes the field's type and
+    // the value parameter its `bit[W]` width, so the two instantiations differ.
+    let src = r#"
+package p {
+  struct pair_s<type T, int W = 8> { T a; bit[W] b; };
+};
+component C {
+  action act {
+    pair_s<bit[16], 4>  narrow;
+    pair_s<bit[8], 16>  wide;
+    exec pre_solve { narrow.b = 200; wide.b = 200; }
+    rand int v;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "act", 1);
+    let get = |n: &str| {
+        s.steps[0]
+            .fields
+            .iter()
+            .find(|(k, _)| k == n)
+            .map(|(_, v)| *v)
+            .unwrap()
+    };
+    assert_eq!(get("narrow.b"), 200 & 0xF, "4-bit field");
+    assert_eq!(get("wide.b"), 200, "16-bit field holds it");
+}
+
+#[test]
+fn an_assignment_is_masked_to_the_field_width() {
+    // A `bit[4]` holds four bits: assigning 200 leaves 8. This was stored
+    // verbatim before, so an over-wide value silently escaped its field.
+    let src = r#"
+component C {
+  action a { bit[4] x; int y; exec pre_solve { x = 200; y = x; } rand int v; };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| {
+        s.steps[0]
+            .fields
+            .iter()
+            .find(|(k, _)| k == n)
+            .map(|(_, v)| *v)
+            .unwrap()
+    };
+    assert_eq!(get("x"), 200 & 0xF);
+    assert_eq!(get("y"), 8, "the assigned value is the masked one");
+}

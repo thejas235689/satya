@@ -261,6 +261,66 @@ struct Lowerer {
     component_names: Vec<String>,
 }
 
+/// The name a field's type is keyed by. A templated use carries its arguments,
+/// so `pair_s<bit[16], 4>` is a distinct type from `pair_s` (PSS 12.6).
+fn mangle_type(ty: &crate::ast::TypeRef) -> String {
+    let leaf = ty.path.leaf();
+    if ty.template_args.is_empty() && ty.const_args.is_empty() {
+        return leaf;
+    }
+    let mut parts: Vec<String> = Vec::new();
+    for a in &ty.template_args {
+        // An argument carries its width: `bit[16]` is not `bit`.
+        let mut text = mangle_type(a);
+        if let Some(w) = &a.width {
+            if let Some(n) = w.eval_const(&|_| None) {
+                text = format!("{}[{}]", text, n);
+            }
+        }
+        parts.push(text);
+    }
+    for c in &ty.const_args {
+        parts.push(crate::solver::render_expr(c));
+    }
+    if parts.is_empty() {
+        leaf
+    } else {
+        format!("{}<{}>", leaf, parts.join(","))
+    }
+}
+
+/// The width of a rendered type argument such as `bit[16]`.
+fn type_arg_bits(a: &str) -> Option<i64> {
+    let t = a.trim();
+    if let Some(rest) = t.strip_prefix("bit[") {
+        return rest.trim_end_matches(']').trim().parse::<i64>().ok();
+    }
+    match t {
+        "bit" => Some(1),
+        "int" => Some(32),
+        _ => None,
+    }
+}
+
+/// Evaluate a `bit[N]` width with the template's value parameters substituted.
+fn substituted_width(
+    w: &crate::ast::Expr,
+    params: &[String],
+    args: &[String],
+) -> Option<i64> {
+    let subst = |e: &crate::ast::Expr| -> Option<i64> {
+        match e {
+            crate::ast::Expr::Path(p) => {
+                let name = p.segments.join(".");
+                let pos = params.iter().position(|x| *x == name)?;
+                args.get(pos)?.trim().parse::<i64>().ok()
+            }
+            other => other.eval_const(&|_| None),
+        }
+    };
+    subst(w)
+}
+
 #[derive(Default)]
 struct RawType {
     name: String,
@@ -268,6 +328,8 @@ struct RawType {
     base: Option<String>,
     members: Vec<Member>,
     constraints: Vec<ConstraintBlock>,
+    /// Template parameter names, in declaration order (PSS 12.6).
+    template_params: Vec<String>,
 }
 
 #[derive(Default)]
@@ -369,8 +431,12 @@ impl Lowerer {
             name: t.name.clone(),
             keyword: t.keyword.clone(),
             base: t.base.as_ref().map(|b| b.name()),
+            template_params: t.template_params.clone(),
             ..Default::default()
         });
+        if !t.template_params.is_empty() {
+            e.template_params = t.template_params.clone();
+        }
         if t.base.is_some() {
             e.base = t.base.as_ref().map(|b| b.name());
         }
@@ -486,6 +552,11 @@ impl Lowerer {
     fn finish(&mut self) {
         // Enums are already populated; classify types and components.
         self.model.types = self.build_types();
+        // Instantiate every templated type the model uses, now that the base
+        // types exist (PSS 12.6).
+        let mut with_inst = self.model.types.clone();
+        self.instantiate_types(&mut with_inst);
+        self.model.types = with_inst;
         self.model.components = self.build_components();
         self.model.actions = self.build_actions();
         self.model.top = self.pick_top();
@@ -626,7 +697,7 @@ impl Lowerer {
     }
 
     fn lower_member(&self, m: &Member) -> Field {
-        let type_name = m.ty.name();
+        let type_name = mangle_type(&m.ty);
         let bits = m
             .ty
             .width
@@ -724,6 +795,119 @@ impl Lowerer {
                 None
             }
             _ => Some(e.clone()),
+        }
+    }
+
+    /// Build the instantiated form of every templated type the model uses
+    /// (PSS 12.6). A type parameter substitutes the field's type; a value
+    /// parameter substitutes into a `bit[N]` width.
+    fn instantiate_types(&self, out: &mut HashMap<String, DataType>) {
+        let mut used: Vec<String> = Vec::new();
+        let mut note = |ty: &crate::ast::TypeRef| {
+            let n = mangle_type(ty);
+            if n.contains('<') && !used.contains(&n) {
+                used.push(n);
+            }
+        };
+        for rt in self.raw_types.values() {
+            for m in &rt.members {
+                note(&m.ty);
+            }
+        }
+        for rc in self.raw_components.values() {
+            for m in &rc.members {
+                note(&m.ty);
+            }
+            for a in &rc.actions {
+                for m in &a.members {
+                    note(&m.ty);
+                }
+            }
+        }
+        for mangled in used {
+            if out.contains_key(&mangled) {
+                continue;
+            }
+            let (base_name, arg_text) = match mangled.split_once('<') {
+                Some((b, a)) => (b.to_string(), a.trim_end_matches('>').to_string()),
+                None => continue,
+            };
+            // `raw_types` is keyed by qualified name (`pkg::pair_s`), so fall
+            // back to a leaf match.
+            let base = match self
+                .raw_types
+                .get(&base_name)
+                .or_else(|| {
+                    self.raw_types
+                        .values()
+                        .find(|rt| rt.name == base_name)
+                })
+            {
+                Some(b) => b,
+                None => continue,
+            };
+            // Split the argument text at top-level commas.
+            let mut args: Vec<String> = Vec::new();
+            let mut depth = 0i32;
+            let mut cur = String::new();
+            for ch in arg_text.chars() {
+                match ch {
+                    '<' | '[' | '(' => {
+                        depth += 1;
+                        cur.push(ch);
+                    }
+                    '>' | ']' | ')' => {
+                        depth -= 1;
+                        cur.push(ch);
+                    }
+                    ',' if depth == 0 => {
+                        args.push(cur.trim().to_string());
+                        cur.clear();
+                    }
+                    _ => cur.push(ch),
+                }
+            }
+            if !cur.trim().is_empty() {
+                args.push(cur.trim().to_string());
+            }
+            let params = base.template_params.clone();
+            let mut fields: Vec<Field> = Vec::new();
+            let mut constraints: Vec<Constraint> = Vec::new();
+            for m in &base.members {
+                let mut f = self.lower_member(m);
+                // A type parameter used as the member's type.
+                if let Some(pos) = params.iter().position(|p| *p == m.ty.name()) {
+                    if let Some(a) = args.get(pos) {
+                        f.type_name = a.clone();
+                        f.bits = type_arg_bits(a);
+                    }
+                }
+                // A value parameter used as a `bit[N]` width.
+                if let Some(w) = &m.ty.width {
+                    if let Some(bits) = substituted_width(w, &params, &args) {
+                        f.bits = Some(bits);
+                    }
+                }
+                if let Some(inline) = &f.inline_constraint {
+                    constraints.push(Constraint {
+                        name: None,
+                        expr: inline.clone(),
+                        is_default: false,
+                        is_disable: false,
+                    });
+                }
+                fields.push(f);
+            }
+            out.insert(
+                mangled.clone(),
+                DataType {
+                    name: mangled,
+                    keyword: base.keyword.clone(),
+                    base: base.base.clone(),
+                    fields,
+                    constraints,
+                },
+            );
         }
     }
 
