@@ -1,0 +1,10 @@
+// satya gen --backend uvm emits `op inside {[PADD:PDIV]}` with PADD/PDIV as
+// undeclared SystemVerilog identifiers.
+package p { enum op_e { PADD, PSUB, PMUL, PDIV }; };
+component c {
+  action a {
+    rand op_e op;
+    constraint op in [PADD..PDIV];
+  };
+};
+component pss_top { c cc; action test { activity { do c::a; }; }; };

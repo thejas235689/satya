@@ -18,8 +18,8 @@ marked implemented that were not.
 
 | Status | Count |
 |---|---|
-| yes | 109 |
-| partial | 37 |
+| yes | 105 |
+| partial | 41 |
 | no | 0 |
 | **total** | **146** |
 
@@ -51,10 +51,10 @@ marked implemented that were not.
 | 22 | String slice operator | yes | all four forms: `s[i]`, `s[i..j]` (ends inclusive), `s[i..]`, `s[..j]` |
 | 23 | component declaration | yes |  |
 | 24 | action declaration | yes |  |
-| 25 | Template type declaration | yes | a templated type is declared with its parameters and instantiated at each use |
-| 26 | Template value parameter declaration | yes | a value parameter substitutes into a `bit[W]` width |
-| 27 | Template type parameter declaration | yes | a type parameter substitutes the field's type |
-| 28 | Template type instantiation | yes | `pair_s<bit[16], 4>` and `pair_s<bit[8], 16>` are distinct types, each with its own field widths |
+| 25 | Template type declaration | partial | parsed; template parameters are not instantiated |
+| 26 | Template value parameter declaration | partial |  |
+| 27 | Template type parameter declaration | partial |  |
+| 28 | Template type instantiation | partial |  |
 | 29 | activity statement | yes |  |
 | 30 | Action traversal statement | yes |  |
 | 31 | Activity sequence block | yes |  |

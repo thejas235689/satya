@@ -91,11 +91,6 @@ impl Backend for TraceBackend {
                 for u in &step.unsatisfied {
                     s.push_str(&format!("{}       not satisfied: {}\n", indent, u));
                 }
-                // Not counted in the total above, so it must not be labelled
-                // "not satisfied".
-                for u in &step.unevaluated {
-                    s.push_str(&format!("{}       not evaluated: {}\n", indent, u));
-                }
             }
             for fr in &step.flow {
                 let obj = match fr.obj_id {

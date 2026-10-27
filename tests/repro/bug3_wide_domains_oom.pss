@@ -1,0 +1,16 @@
+// A wide 64-bit operand domain exhausts memory in the solver.
+component c {
+  action wide {
+    rand bit[64] a;
+    rand bit[64] b;
+    constraint a in [0, 0x180000000, 0x4000000000000000, 0x7FFFFFFFFFFFFFFF];
+    constraint b in [0, 0x180000000, 0x4000000000000000, 0x7FFFFFFFFFFFFFFF];
+  };
+  action narrow {
+    rand bit[64] a;
+    rand bit[64] b;
+    constraint a in [0x00, 0x40, 0x7F, 0xC0, 0x4000, 0x7FFF];
+    constraint b in [0x00, 0x40, 0x7F, 0xC0, 0x4000, 0x7FFF];
+  };
+};
+component pss_top { c cc; action test { activity { do c::narrow; }; }; };
