@@ -13,6 +13,49 @@ approximated.
 
 ---
 
+## 0.27.0 — 2026-10-27
+
+Three defects reported from use
+
+**`bit[64]` literals with bit 63 set solved as 0.** The domain for a `bit[N]`
+field was clamped to 62 bits, so `constraint x == 0x8000_0000_0000_0000` had no
+representable solution and `x` was clamped to 0 while the constraint was
+reported unsatisfied. Values are carried in an i64, so a 64-bit pattern with
+bit 63 set *is* negative — the domain for `bit[64]` is now the whole i64 range.
+All three patterns (`0x7FFF…`, `0x8000…`, `0xFFFF…`) now solve to their bit
+pattern with the constraint satisfied.
+
+Two follow-on bugs this exposed:
+
+- the sampler computed `hi - lo + 1` in i64, which overflows to 0 over the full
+  range and **panicked** with a divide by zero — the workshop corpus caught it
+  (36/36 → 30/36). The span is computed in i128.
+- one RNG draw yields only 47 bits, so a full-width domain never reached its
+  upper half. Wide domains now combine two draws.
+
+**Enum range constraints were not enforced.** `constraint sel in [A1..A3]` used
+enum *items* as bounds; they were resolved against the constant table only, so
+they came out `None`, the constraint became unsupported, and `sel` solved
+anywhere in `0..5`. Enum items now resolve during extraction, so the range is
+enforced and counted.
+
+**The summary contradicted its detail.** The trace printed
+`constraints: 2/2 satisfied` and then listed `not satisfied: <expr>`, because
+constraints the solver could not evaluate were filed with the ones it evaluated
+and failed — while being excluded from the total. They are now reported
+separately as `not evaluated:`, which is what they are.
+
+**The UVM backend named PSS enum items without declaring them.** It emitted
+`rand int op;` and `op inside {[PADD:PDIV]};`, which cannot compile. It now
+emits a `typedef enum` for each enum the model uses and types the field with it:
+`typedef enum { PADD, PSUB, PMUL, PDIV } op_e;` and `rand op_e op;`.
+
+Not verified: no SystemVerilog compiler is available here, so the generated
+output is checked by inspection and by asserting on its text, not by compiling
+it.
+
+114 tests (4 new).
+
 ## 0.26.0 — 2026-10-27
 
 Template instantiation, and a width bug it exposed

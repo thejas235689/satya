@@ -2482,3 +2482,107 @@ component C {
     assert_eq!(get("x"), 200 & 0xF);
     assert_eq!(get("y"), 8, "the assigned value is the masked one");
 }
+
+// ---------------------------------------------------------------------------
+// Defects reported from use: bit[64] literals, enum ranges, the summary
+// contradicting its detail, and the UVM backend's enum names.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_bit64_literal_with_bit_63_set_is_solvable() {
+    // Values are carried in an i64, so a 64-bit pattern with bit 63 set is
+    // negative. The domain for `bit[64]` must therefore be the whole i64 range;
+    // it used to be clamped to 62 bits, so such a literal was unsatisfiable and
+    // the field solved to 0.
+    for (lit, want) in [
+        ("0x7FFF_FFFF_FFFF_FFFF", i64::MAX),
+        ("0x8000_0000_0000_0000", i64::MIN),
+        ("0xFFFF_FFFF_FFFF_FFFF", -1),
+    ] {
+        let src = format!(
+            "component C {{ action a {{ rand bit[64] x; constraint x == {lit}; }}; }};"
+        );
+        let m = compile_pss(&src).unwrap();
+        let s = engine::run_scenario(&m, "a", 1);
+        let st = &s.steps[0];
+        let x = st.fields.iter().find(|(k, _)| k == "x").map(|(_, v)| *v).unwrap();
+        assert_eq!(x, want, "{lit} should solve to its 64-bit pattern");
+        assert_eq!(st.satisfied, st.total, "{lit} must satisfy its constraint");
+    }
+}
+
+#[test]
+fn an_enum_range_constraint_is_enforced() {
+    // `sel in [A1..A3]` — the bounds are enum items, which resolve to 1 and 3.
+    // They were not resolvable at extraction, so the constraint was dropped.
+    let src = r#"
+package p { enum e_t { A0, A1, A2, A3, A4, A5 }; };
+component C {
+  action a { rand e_t sel; constraint sel in [A1..A3]; };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    for seed in 1..=40 {
+        let s = engine::run_scenario(&m, "a", seed);
+        let st = &s.steps[0];
+        let v = st.fields.iter().find(|(k, _)| k == "sel").map(|(_, x)| *x).unwrap();
+        assert!((1..=3).contains(&v), "seed {seed}: sel={v} is outside [A1..A3]");
+        assert_eq!(st.satisfied, st.total, "seed {seed}: the constraint is counted");
+    }
+}
+
+#[test]
+fn the_summary_does_not_contradict_its_detail() {
+    // An unevaluated constraint is not counted in the total, so listing it as
+    // "not satisfied" made the report contradict itself. It is now reported
+    // separately from a constraint that was evaluated and failed.
+    let src = r#"
+package p {
+  enum e_t { A0, A1, A2 };
+  component C { action a { rand e_t sel; rand int y;
+    constraint y == 5;
+    constraint sel.mystery_op(3) == 1;
+  }; };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let st = &s.steps[0];
+    assert_eq!(st.satisfied, st.total, "every counted constraint is satisfied");
+    assert!(
+        !st.unevaluated.is_empty(),
+        "the unsupported constraint is recorded as unevaluated"
+    );
+    assert!(
+        st.unsatisfied.is_empty(),
+        "nothing counted was left unsatisfied: {:?}",
+        st.unsatisfied
+    );
+}
+
+#[test]
+fn the_uvm_backend_declares_the_enums_it_uses() {
+    // `op inside {[PADD:PDIV]}` names PSS enum items; without a matching
+    // SystemVerilog enum declaration the output cannot compile.
+    let src = r#"
+package p { enum op_e { PADD, PSUB, PMUL, PDIV }; };
+component C {
+  action leaf_a { rand op_e op; constraint op in [PADD..PDIV]; };
+  action t { activity { do leaf_a; } };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let sc = engine::run_scenario(&m, "t", 1);
+    let backend = get("uvm").expect("the uvm backend is registered");
+    let sv = backend
+        .emit(&m, &sc, &BackendOptions::default())
+        .expect("the uvm backend emits");
+    assert!(
+        sv.contains("typedef enum { PADD, PSUB, PMUL, PDIV } op_e;"),
+        "the enum must be declared:\n{sv}"
+    );
+    assert!(
+        sv.contains("rand op_e op;"),
+        "the field must use the enum's type, not `int`:\n{sv}"
+    );
+}

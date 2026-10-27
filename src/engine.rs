@@ -91,6 +91,8 @@ pub struct Step {
     pub total: usize,
     /// Constraints the solver could not evaluate or satisfy (for diagnosis).
     pub unsatisfied: Vec<String>,
+    /// Constraints the solver could not evaluate; not counted in `total`.
+    pub unevaluated: Vec<String>,
     /// Flow objects produced or consumed by this step.
     pub flow: Vec<FlowRecord>,
     /// Resource claims held by this step.
@@ -871,6 +873,7 @@ impl<'a> Engine<'a> {
             satisfied: 0,
             total: 0,
             unsatisfied: Vec::new(),
+            unevaluated: Vec::new(),
             flow: Vec::new(),
             claims: Vec::new(),
             unresolved: true,
@@ -2165,6 +2168,7 @@ impl<'a> Engine<'a> {
             satisfied: report.satisfied,
             total: report.total,
             unsatisfied: report.unsupported.clone(),
+            unevaluated: report.unevaluated.clone(),
             flow,
             claims,
             unresolved: false,

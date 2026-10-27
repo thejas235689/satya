@@ -40,7 +40,12 @@ pub struct SolveReport {
     pub assignment: Assignment,
     pub satisfied: usize,
     pub total: usize,
+    /// Constraints that were evaluated and are not satisfied.
     pub unsupported: Vec<String>,
+    /// Constraints the solver could not evaluate at all. These are *not*
+    /// counted in `total`, so they must not be reported as "not satisfied" —
+    /// that made the summary contradict its own detail.
+    pub unevaluated: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -112,8 +117,20 @@ impl Rng {
         if hi <= lo {
             return lo;
         }
-        let span = (hi - lo + 1) as u64;
-        lo + (self.next_u64() % span) as i64
+        // The span is computed in i128: `bit[64]` spans the whole i64 range,
+        // whose size does not fit an i64 and would otherwise divide by zero.
+        let span = (hi as i128 - lo as i128 + 1) as u128;
+        // One draw only yields 47 bits, so a wide domain would never reach its
+        // upper half; combine two draws into a full 64-bit value.
+        let draw = if span > (1u128 << 32) {
+            let a = (self.next_u64() & 0xFFFF_FFFF) as u128;
+            let b = (self.next_u64() & 0xFFFF_FFFF) as u128;
+            (a << 32) | b
+        } else {
+            self.next_u64() as u128
+        };
+        let off = draw % span;
+        (lo as i128 + off as i128) as i64
     }
 }
 
@@ -396,8 +413,9 @@ pub fn eval(expr: &Expr, values: &BTreeMap<String, i64>, env: &Env) -> Option<i6
                     if hi <= lo {
                         Some(lo)
                     } else {
-                        let span = (hi - lo + 1) as u64;
-                        Some(lo + ((hash_values(values) ^ env.seed) % span) as i64)
+                        let span = (hi as i128 - lo as i128 + 1) as u128;
+                        let off = ((hash_values(values) ^ env.seed) as u128) % span;
+                        Some((lo as i128 + off as i128) as i64)
                     }
                 }
                 _ => None,
@@ -725,13 +743,14 @@ pub fn solve_with(
     }
     let mut constraints = collect_constraints(model, action, &vars, extra);
     let directives = take_directives(&mut constraints, &env);
-    let atoms = extract_atoms(&constraints, &vars);
+    let atoms = extract_atoms(&constraints, &vars, &env);
 
     // Union-find over variables to merge equality classes.
     let mut uf = UnionFind::new(vars.keys().cloned().collect());
 
     // Apply relational atoms.
     let mut unsupported = Vec::new();
+    let mut unevaluated: Vec<String> = Vec::new();
     for atom in &atoms {
         match atom {
             Atom::Rel(var, Op::Eq, rhs) => {
@@ -1068,7 +1087,8 @@ pub fn solve_with(
     let mut total = 0usize;
     for atom in &atoms {
         match atom {
-            Atom::Unsupported(_) => {}
+            // Not evaluated: recorded separately, never counted in `total`.
+            Atom::Unsupported(e) => unevaluated.push(render_expr(e)),
             Atom::Implies(ante, cons) => {
                 total += 1;
                 let a = eval(ante, &check_values, &env).unwrap_or(0) != 0;
@@ -1095,7 +1115,9 @@ pub fn solve_with(
                             satisfied += 1;
                         }
                     }
-                    _ => unsupported.push(render_expr(l)),
+                    // Could not evaluate either side: not counted, so not
+                    // reported as "not satisfied".
+                    _ => unevaluated.push(render_expr(l)),
                 }
             }
             other => {
@@ -1122,6 +1144,7 @@ pub fn solve_with(
         satisfied,
         total,
         unsupported,
+        unevaluated,
         notes,
     }
 }
@@ -2037,15 +2060,17 @@ fn expand_field(
 
     match &field.category {
         TypeCategory::Scalar => {
-            let hi = field
-                .bits
-                // Use the declared width (up to 62 bits); a narrower cap would
-                // truncate bit-wise results such as `~x` on a `bit[32]`.
-                .map(|b| (1i64 << b.clamp(1, 62)) - 1)
-                .unwrap_or(DEFAULT_INT_MAX);
-            let (lo, hi) = match fixed {
-                Some(v) => (v, v),
-                None => (0, hi),
+            // A `bit[N]` holds N bits. For N < 64 that is `0 .. 2^N-1`. For
+            // N >= 64 every 64-bit pattern is representable, and since values
+            // are carried in an i64 a pattern with bit 63 set *is* negative —
+            // so the domain has to be the whole i64 range, or `bit[64]` could
+            // never hold `0x8000_0000_0000_0000`.
+            let (lo, hi) = match (field.bits, fixed) {
+                (Some(b), Some(v)) => (v, v),
+                (Some(b), None) if b >= 64 => (i64::MIN, i64::MAX),
+                (Some(b), None) => (0, (1i64 << b.clamp(1, 63)) - 1),
+                (None, Some(v)) => (v, v),
+                (None, None) => (0, DEFAULT_INT_MAX),
             };
             out.insert(
                 path,
@@ -2280,10 +2305,10 @@ fn prefix_paths(
 // Atom extraction
 // ---------------------------------------------------------------------------
 
-fn extract_atoms(exprs: &[Expr], vars: &BTreeMap<String, Domain>) -> Vec<Atom> {
+fn extract_atoms(exprs: &[Expr], vars: &BTreeMap<String, Domain>, env: &Env) -> Vec<Atom> {
     let mut out = Vec::new();
     for e in exprs {
-        split_and(e, &mut out, vars);
+        split_and(e, &mut out, vars, env);
     }
     out
 }
@@ -2382,15 +2407,20 @@ fn is_sum_expr(e: &Expr) -> bool {
     matches!(e, Expr::Method(_, name, args) if name == "sum" && args.is_empty())
 }
 
-fn split_and(expr: &Expr, out: &mut Vec<Atom>, vars: &BTreeMap<String, Domain>) {
+fn split_and(
+    expr: &Expr,
+    out: &mut Vec<Atom>,
+    vars: &BTreeMap<String, Domain>,
+    env: &Env,
+) {
     match expr {
         Expr::Binary(op, a, b) if op == "&&" => {
-            split_and(a, out, vars);
-            split_and(b, out, vars);
+            split_and(a, out, vars, env);
+            split_and(b, out, vars, env);
         }
         Expr::Binary(op, a, b) if op == "->" => {
             let mut cons = Vec::new();
-            split_and(b, &mut cons, vars);
+            split_and(b, &mut cons, vars, env);
             out.push(Atom::Implies((**a).clone(), cons));
         }
         // `unique { arr }` / `unique { a, b }` (PSS 16.1.5).
@@ -2456,7 +2486,7 @@ fn split_and(expr: &Expr, out: &mut Vec<Atom>, vars: &BTreeMap<String, Domain>) 
                 } else {
                     subst_loop_var(body, &loop_var, i as i64)
                 };
-                split_and(&sub, out, vars);
+                split_and(&sub, out, vars, env);
             }
         }
         // `if (c) { a } else { b }` inside a constraint (PSS 16.1.7) is an
@@ -2465,12 +2495,12 @@ fn split_and(expr: &Expr, out: &mut Vec<Atom>, vars: &BTreeMap<String, Domain>) 
         // the branch was unconstrained.
         Expr::Ternary(c, t, e) => {
             let mut then_atoms = Vec::new();
-            split_and(t, &mut then_atoms, vars);
+            split_and(t, &mut then_atoms, vars, env);
             if !then_atoms.is_empty() {
                 out.push(Atom::Implies((**c).clone(), then_atoms));
             }
             let mut else_atoms = Vec::new();
-            split_and(e, &mut else_atoms, vars);
+            split_and(e, &mut else_atoms, vars, env);
             if !else_atoms.is_empty() {
                 out.push(Atom::Implies(
                     Expr::Unary("!".into(), c.clone()),
@@ -2487,8 +2517,10 @@ fn split_and(expr: &Expr, out: &mut Vec<Atom>, vars: &BTreeMap<String, Domain>) 
         }
         Expr::InRange(v, lo, hi) => {
             if let Some(name) = as_var(v) {
-                let l = lo.eval_const(&|_| None);
-                let h = hi.eval_const(&|_| None);
+                // Enum items are values: `sel in [A1..A3]` is `sel in [1..3]`.
+                let none = BTreeMap::new();
+                let l = eval(lo, &none, env);
+                let h = eval(hi, &none, env);
                 match (l, h) {
                     (Some(l), Some(h)) => out.push(Atom::InRange(name, l, h)),
                     _ => out.push(Atom::Unsupported(expr.clone())),
