@@ -2693,3 +2693,59 @@ package p {
     assert_eq!(addr, 0x1000);
     assert_eq!(tag, "low", "the tag of the region that satisfied the claim");
 }
+
+// ---------------------------------------------------------------------------
+// Monitors: matching and constraints (PSS 19.2, 19.4)
+// ---------------------------------------------------------------------------
+
+const MONITOR_MODEL: &str = r#"
+component c { action a { rand int x; constraint x in [0..100]; }; };
+component pss_top {
+  c cc;
+  monitor m {
+    c::a w;
+    activity { do w; }
+    constraint { w.x > 50; }
+    covergroup cg (int x) { coverpoint x { bins low = [0..50]; bins high = [51..100]; } }
+  };
+  action test { activity { do c::a; cover m; } };
+};
+"#;
+
+#[test]
+fn a_monitor_matches_and_samples_its_covergroups() {
+    // `do <handle>` used the handle *name* as the action, so a monitor never
+    // matched anything and produced no coverage at all.
+    let src = MONITOR_MODEL.replace("constraint { w.x > 50; }", "");
+    let m = compile_pss(&src).unwrap();
+    let s = engine::run_scenario(&m, "test", 1);
+    assert!(
+        !s.coverage.is_empty(),
+        "the monitor must sample its covergroups, got none"
+    );
+}
+
+#[test]
+fn a_monitor_constraint_discards_a_violating_match() {
+    // A realization whose bound values violate the monitor's constraint is not
+    // a realization: it is discarded, warned about, and its covergroup is not
+    // sampled (PSS 19.4).
+    let m = compile_pss(MONITOR_MODEL).unwrap();
+    let mut discarded = 0;
+    let mut matched = 0;
+    for seed in 1..=20 {
+        let s = engine::run_scenario(&m, "test", seed);
+        let x = s.steps[0].fields.iter().find(|(k, _)| k == "x").map(|(_, v)| *v).unwrap();
+        let warned = s.warnings.iter().any(|w| w.contains("constraints do not hold"));
+        if x > 50 {
+            assert!(!warned, "seed {seed}: x={x} satisfies the constraint");
+            assert!(!s.coverage.is_empty(), "seed {seed}: the match is sampled");
+            matched += 1;
+        } else {
+            assert!(warned, "seed {seed}: x={x} violates the constraint");
+            assert!(s.coverage.is_empty(), "seed {seed}: a discarded match samples nothing");
+            discarded += 1;
+        }
+    }
+    assert!(matched > 0 && discarded > 0, "both paths must be exercised");
+}

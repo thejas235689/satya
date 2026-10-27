@@ -13,6 +13,46 @@ approximated.
 
 ---
 
+## 0.30.0 — 2026-10-27
+
+Monitors work: `cover <monitor>;` matches and samples
+
+Last release I recorded that no model produced coverage from `cover <monitor>;`
+and marked entries 68–78 partial rather than claim otherwise. Two real bugs
+were behind it:
+
+- **`do <handle>` used the handle *name* as the action.** `a w; ... do w;`
+  became `Traverse { action: "w" }`, and no step is named `w`, so the pattern
+  matched nothing. It now resolves the handle to its declared type.
+- **A scoped handle type was never bound.** `c::a w;` is two tokens that are not
+  both plain identifiers, so the handle map stayed empty and `do w` fell back to
+  the same broken path. The declaration now parses a full type reference.
+
+Together those meant a monitor could never match, so its covergroups were never
+sampled and a constraint on it could never be evaluated — which is why the
+previous release could not verify entry 78.
+
+**Monitor constraints (19.4) now filter matches.** A realization whose bound
+values violate the monitor's `constraint { }` is discarded, its covergroups are
+not sampled, and a warning names the monitor:
+
+```
+monitor `m` matched but its constraints do not hold; the match is discarded (PSS 19.4)
+```
+
+`examples/coverage/c4_monitor.pss` shows both directions across seeds: a `high`
+draw samples the covergroup, a `low` draw is discarded.
+
+Still not modelled: `overlap`/`schedule` branches match independently rather
+than interleaved (74, 76), and monitor inheritance is not applied (77). A
+monitor declared at *package* level is not collected — it must be declared in
+the component that uses it; that is recorded in `docs/SEMANTICS.md`.
+
+Matrix: **111 implemented, 35 partial, 0 not** — 68 and 78 restored to `yes`
+now that there is a test that shows them working.
+
+120 tests (2 new).
+
 ## 0.29.0 — 2026-10-27
 
 `get_tag`, and an honest correction about monitors

@@ -1,0 +1,41 @@
+// Coverage example 4 — a monitor and its constraints (PSS 19.2, 19.4).
+//
+// A monitor declares action handles, matches its activity pattern against the
+// executed stream, and samples its covergroups over the steps that realize it.
+//
+// A `constraint { }` block on those handles filters the match: a realization
+// whose values violate it is not a realization, so it is discarded and its
+// covergroup is not sampled. Only the `high` bin should ever be hit here, and
+// the low draws are reported as discarded matches.
+//
+// The monitor is declared inside the component that uses it; a monitor declared
+// at package level is not collected (see docs/SEMANTICS.md).
+package mon_pkg {
+
+    component mon_item_c {
+        action item_a {
+            rand int len;
+            constraint len in [0..100];
+        };
+    };
+
+    component mon_top_c {
+        mon_item_c items;
+
+        monitor len_monitor {
+            mon_item_c::item_a item;
+            activity { do item; }
+            constraint { item.len > 50; }
+            covergroup len_cg (int len) {
+                coverpoint len {
+                    bins low  = [0..50];
+                    bins high = [51..100];
+                }
+            }
+        };
+
+        action top_a {
+            activity { do mon_item_c::item_a; cover len_monitor; }
+        };
+    };
+};

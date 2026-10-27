@@ -18,8 +18,8 @@ marked implemented that were not.
 
 | Status | Count |
 |---|---|
-| yes | 109 |
-| partial | 37 |
+| yes | 111 |
+| partial | 35 |
 | no | 0 |
 | **total** | **146** |
 
@@ -94,7 +94,7 @@ marked implemented that were not.
 | 65 | coverpoint declaration | yes |  |
 | 66 | bins declaration | yes |  |
 | 67 | cross declaration | yes |  |
-| 68 | Cover statement and monitor declaration | partial | monitors are declared and collected, but no model I construct produces coverage from `cover <monitor>;` — matching appears not to fire. `cover { ... }` works |
+| 68 | Cover statement and monitor declaration | yes | `cover <monitor>;` matches the monitor's activity pattern against the executed stream and samples its covergroups over the steps that realize it |
 | 69 | Monitor activity | yes |  |
 | 70 | Action traversal statement | yes |  |
 | 71 | Sequence monitor activity statement | yes |  |
@@ -104,7 +104,7 @@ marked implemented that were not.
 | 75 | Select monitor activity statement | yes |  |
 | 76 | Schedule monitor activity statement | partial | as overlap: branches are matched independently |
 | 77 | Monitor traversal statement | partial | nested monitors are matched by name; monitor inheritance is not applied |
-| 78 | Monitor constraints | partial | a monitor's `constraint { }` block is parsed and checked against the bound handles, and a violating match is discarded — but this cannot be verified while monitor matching does not fire |
+| 78 | Monitor constraints | yes | a monitor's `constraint { }` filters the match: a realization whose bound values violate it is discarded, and its covergroups are not sampled |
 | 79 | type extension | yes |  |
 | 80 | override declaration | yes | type and instance overrides are applied when an action is traversed |
 | 81 | package declaration | yes |  |

@@ -2800,16 +2800,6 @@ impl Parser {
                 pattern = self.parse_monitor_list(&mut handles)?;
                 continue;
             }
-            // `<type> <handle>;` declares an action handle for the activity.
-            if matches!(self.peek().kind, TokKind::Ident(_))
-                && matches!(self.peek_at(1).kind, TokKind::Ident(_))
-            {
-                let ty = self.expect_ident()?;
-                let h = self.expect_ident()?;
-                self.eat_punct(";");
-                handles.insert(h, ty);
-                continue;
-            }
             if self.at_ident("covergroup") {
                 covergroups.push(self.parse_covergroup()?);
                 continue;
@@ -2834,6 +2824,22 @@ impl Parser {
                     self.eat_punct(";");
                 }
                 continue;
+            }
+            // `<type> <handle>;` declares an action handle for the activity.
+            // The type may be scoped (`c::a w;`), which the plain
+            // identifier-pair test missed, so the handle was never bound and
+            // `do w` matched nothing.
+            if matches!(self.peek().kind, TokKind::Ident(_)) {
+                let save = self.pos;
+                if let Ok(ty) = self.parse_type_ref() {
+                    if matches!(self.peek().kind, TokKind::Ident(_)) {
+                        let h = self.expect_ident()?;
+                        self.eat_punct(";");
+                        handles.insert(h, ty.name());
+                        continue;
+                    }
+                }
+                self.pos = save;
             }
             self.skip_braced_or_semicolon();
         }
@@ -2941,7 +2947,10 @@ impl Parser {
         }
         if self.at_ident("do") {
             self.bump();
-            // `do <monitor_type>` — a nested monitor (19.3.9).
+            // `do <handle>` traverses the action the handle was declared with;
+            // `do <monitor_type>` is a nested monitor (19.3.9). Using the
+            // handle *name* as the action matched nothing, so a monitor never
+            // produced coverage.
             if let Ok(ty) = self.parse_type_ref() {
                 let tname = ty.name();
                 let leaf = tname.rsplit("::").next().unwrap_or(&tname).to_string();
@@ -2952,9 +2961,13 @@ impl Parser {
                         None
                     };
                     self.eat_punct(";");
+                    let (action, handle) = match handles.get(&leaf).cloned() {
+                        Some(ty) => (ty, Some(leaf)),
+                        None => (leaf, None),
+                    };
                     return Ok(MonStmt::Traverse {
-                        action: leaf,
-                        handle: None,
+                        action,
+                        handle,
                         cond,
                     });
                 }
