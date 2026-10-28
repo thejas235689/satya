@@ -18,8 +18,8 @@ marked implemented that were not.
 
 | Status | Count |
 |---|---|
-| yes | 112 |
-| partial | 34 |
+| yes | 114 |
+| partial | 32 |
 | no | 0 |
 | **total** | **146** |
 
@@ -110,8 +110,8 @@ marked implemented that were not.
 | 81 | package declaration | yes |  |
 | 82 | import statement | yes |  |
 | 83 | exec block declaration | yes |  |
-| 84 | Function declaration | partial |  |
-| 85 | Function definition | partial |  |
+| 84 | Function declaration | yes | the body is kept and run when called; a `return` expression supplies the value |
+| 85 | Function definition | yes | parameters are bound positionally into a scope restored after the call; `task` bodies run for their side effects |
 | 86 | Imported function qualifiers | partial |  |
 | 87 | Import class declaration | partial |  |
 | 88 | Target-template function implementation | partial |  |

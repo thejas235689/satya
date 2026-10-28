@@ -13,6 +13,33 @@ approximated.
 
 ---
 
+## 0.32.0 — 2026-10-28
+
+`typedef`, `function` and `task` bodies
+
+These were listed as accepted-but-not-executed; checking each against the
+binary showed three of the four were simply not implemented.
+
+- **`typedef`** (12.2) was not parsed at all, so `typedef bit[8] byte_t;` left
+  `byte_t b;` with no type and no width — an over-wide assignment was not
+  masked. Aliases now resolve when used: `b = 300` gives 44.
+- **`function` / `task`** declarations were skipped outright, so a package-level
+  `function` also swallowed the declarations after it. Bodies are now kept and
+  run when called: `y = dbl(21)` gives 42, and a `task` runs for its side
+  effects. Parameters bind positionally into a scope restored after the call.
+- Parsing a parameter list needed three things the corpus caught:
+  `const`/`ref`/`input`/`output` qualifiers, a default value (`int v = 3`), and
+  a variadic parameter (`int... args`, which the lexer splits into `..` and
+  `.`). Each was a regression against the curated corpus until fixed.
+
+**`symbol` is still not right**, and is left as it was rather than claimed:
+a `symbol` produces a step but its body's effects do not appear. That is the
+one of the four that was genuinely "accepted but not executed".
+
+Matrix: **114 implemented, 32 partial, 0 not**.
+
+124 tests (3 new).
+
 ## 0.31.0 — 2026-10-27
 
 Streams are consumed once

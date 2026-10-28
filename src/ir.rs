@@ -184,6 +184,8 @@ pub struct Model {
     pub covergroups: Vec<crate::ast::Covergroup>,
     /// Monitor declarations in the model (PSS 19.1).
     pub monitors: Vec<crate::ast::Monitor>,
+    /// `function` / `task` declarations, by name (PSS 22.1).
+    pub functions: std::collections::HashMap<String, crate::ast::Function>,
 }
 
 impl Model {
@@ -218,6 +220,9 @@ impl Model {
         lw.finish();
         lw.model.covergroups = file.covergroups.clone();
         lw.model.monitors = file.monitors.clone();
+        for f in &file.functions {
+            lw.model.functions.insert(f.name.clone(), f.clone());
+        }
         Ok(lw.model)
     }
 

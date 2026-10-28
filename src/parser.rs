@@ -16,6 +16,11 @@ pub struct Parser {
     covergroups: Vec<Covergroup>,
     /// Monitors declared so far (PSS 19.1).
     monitors: Vec<Monitor>,
+    /// `typedef <type> <name>;` aliases (PSS 12.2), resolved when the alias is
+    /// used. Without this an aliased field had no type and no width.
+    typedefs: std::collections::HashMap<String, crate::ast::TypeRef>,
+    /// `function` / `task` bodies collected so a call can run them.
+    functions: Vec<crate::ast::Function>,
 }
 
 impl Parser {
@@ -25,6 +30,8 @@ impl Parser {
             pos: 0,
             covergroups: Vec::new(),
             monitors: Vec::new(),
+            typedefs: std::collections::HashMap::new(),
+            functions: Vec::new(),
         }
     }
 
@@ -229,6 +236,7 @@ impl Parser {
             items,
             covergroups: std::mem::take(&mut self.covergroups),
             monitors: std::mem::take(&mut self.monitors),
+            functions: std::mem::take(&mut self.functions),
         })
     }
 
@@ -453,6 +461,10 @@ impl Parser {
         if self.at_ident("enum") {
             return Ok(Item::Enum(self.parse_enum(false, None)?));
         }
+        if self.at_ident("typedef") {
+            self.parse_typedef()?;
+            return self.parse_item(top);
+        }
         if self.at_ident("struct")
             || self.at_ident("resource")
             || self.at_ident("buffer")
@@ -479,8 +491,7 @@ impl Parser {
             return self.parse_extend();
         }
         if self.at_ident("function") || self.at_ident("task") {
-            self.bump();
-            self.skip_to_semicolon();
+            self.parse_function()?;
             return Ok(Item::Raw("function".into()));
         }
         if !top {
@@ -656,8 +667,7 @@ impl Parser {
                 continue;
             }
             if self.at_ident("function") || self.at_ident("task") {
-                self.bump();
-                self.skip_to_semicolon();
+                self.parse_function()?;
                 continue;
             }
             if self.at_ident("compile") {
@@ -815,6 +825,65 @@ impl Parser {
         Ok(width)
     }
 
+    /// `typedef <type> <name>;` — records the alias (PSS 12.2).
+    /// `function <type> name (params) { body }` / `task name (params) { body }`
+    /// (PSS 22.1). The body is kept so a call from `exec` can run it.
+    fn parse_function(&mut self) -> PssResult<()> {
+        let is_task = self.at_ident("task");
+        self.bump();
+        if !is_task {
+            let _ret = self.parse_type_ref()?;
+        }
+        let name = self.expect_ident()?;
+        let mut params = Vec::new();
+        if self.at_punct("(") {
+            self.bump();
+            while !self.at_punct(")") && !self.at_eof() {
+                if self.eat_punct(",") {
+                    continue;
+                }
+                // Qualifiers on a parameter: `const`, `ref`, `input`, `output`.
+                while self.at_ident("ref")
+                    || self.at_ident("const")
+                    || self.at_ident("input")
+                    || self.at_ident("output")
+                {
+                    self.bump();
+                }
+                let _ty = self.parse_type_ref()?;
+                // A variadic parameter: `int... args` — the lexer gives `..`
+                // followed by `.`, so both parts are consumed.
+                if self.eat_punct("..") {
+                    let _ = self.eat_punct(".");
+                }
+                params.push(self.expect_ident()?);
+                // A parameter may carry a default (`int v = 3`), which is
+                // skipped: a call binds positionally.
+                if self.eat_punct("=") {
+                    let _ = self.parse_expr(0)?;
+                }
+            }
+            self.expect_punct(")")?;
+        }
+        let body = self.parse_exec_block();
+        self.functions.push(crate::ast::Function {
+            name,
+            params,
+            body,
+            is_task,
+        });
+        Ok(())
+    }
+
+    fn parse_typedef(&mut self) -> PssResult<()> {
+        self.expect_ident_named("typedef")?;
+        let target = self.parse_type_ref()?;
+        let name = self.expect_ident()?;
+        self.eat_punct(";");
+        self.typedefs.insert(name, target);
+        Ok(())
+    }
+
     fn parse_type_ref(&mut self) -> PssResult<TypeRef> {
         // `ref T` reference type.
         if self.at_ident("ref") {
@@ -878,6 +947,15 @@ impl Parser {
         if self.at_punct("[") {
             let e = self.parse_bit_range()?;
             width = Some(Box::new(e));
+        }
+        // An alias resolves to its target type (PSS 12.2). Only a bare alias is
+        // substituted: `byte_t` becomes `bit[8]`, while `arr<byte_t>` keeps its
+        // own template arguments.
+        if template_args.is_empty() && const_args.is_empty() && width.is_none() {
+            let leaf = path.leaf();
+            if let Some(target) = self.typedefs.get(&leaf).cloned() {
+                return Ok(target);
+            }
         }
         Ok(TypeRef {
             path,
@@ -1596,8 +1674,7 @@ impl Parser {
             return Ok(CompItem::Raw("monitor".into()));
         }
         if self.at_ident("function") || self.at_ident("task") {
-            self.bump();
-            self.skip_to_semicolon();
+            self.parse_function()?;
             return Ok(CompItem::Raw("function".into()));
         }
         if self.at_ident("compile") {
@@ -1696,8 +1773,7 @@ impl Parser {
                 continue;
             }
             if self.at_ident("function") || self.at_ident("task") {
-                self.bump();
-                self.skip_to_semicolon();
+                self.parse_function()?;
                 continue;
             }
             if self.at_ident("compile") {

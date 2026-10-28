@@ -2786,3 +2786,58 @@ package p {{
         s.warnings
     );
 }
+
+// ---------------------------------------------------------------------------
+// typedef, function and task bodies (PSS 12.2, 22.1)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_typedef_resolves_to_its_target_type() {
+    // `typedef bit[8] byte_t;` then `byte_t b;` — the alias had no type and no
+    // width, so an over-wide assignment was not masked.
+    let src = r#"
+package p {
+  typedef bit[8] byte_t;
+  component C { action a { byte_t b; exec pre_solve { b = 300; } }; };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| {
+        s.steps[0].fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v).unwrap()
+    };
+    assert_eq!(get("b"), 300 & 0xFF, "the alias carries its width");
+}
+
+#[test]
+fn a_function_body_runs_and_returns_its_value() {
+    // The declaration was skipped outright, so `dbl(21)` evaluated to nothing.
+    let src = r#"
+package p { function int dbl(int v) { return v * 2; } };
+component C {
+  action a { int y; exec pre_solve { y = dbl(21); } rand int v; };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let y = s.steps[0].fields.iter().find(|(k, _)| k == "y").map(|(_, v)| *v).unwrap();
+    assert_eq!(y, 42);
+}
+
+#[test]
+fn a_task_body_runs_for_its_side_effects() {
+    let src = r#"
+component C {
+  action a {
+    int y;
+    task sety() { y = 7; }
+    exec pre_solve { sety(); }
+    rand int v;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let y = s.steps[0].fields.iter().find(|(k, _)| k == "y").map(|(_, v)| *v).unwrap();
+    assert_eq!(y, 7);
+}

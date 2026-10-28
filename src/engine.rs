@@ -171,6 +171,8 @@ struct Engine<'a> {
     handle_seq: i64,
     /// Bump pointer for address claims, per region (PSS 24.8).
     claim_cursor: Vec<i64>,
+    /// The value a `return` produced inside a user function (PSS 22.1).
+    ret_value: Option<i64>,
     /// String-valued variables (PSS 7.2). Numeric solving is untouched; strings
     /// are carried alongside, because a `string` has no numeric value.
     strings: BTreeMap<String, String>,
@@ -264,6 +266,7 @@ pub fn run_scenario(model: &Model, root_action: &str, seed: u64) -> Scenario {
         exec_action: None,
         handle_seq: 0,
         claim_cursor: Vec::new(),
+        ret_value: None,
         strings: BTreeMap::new(),
         coverage: BTreeMap::new(),
         coverage_bins: BTreeMap::new(),
@@ -946,6 +949,44 @@ impl<'a> Engine<'a> {
         Flow::Normal
     }
 
+    /// Run a user `function` / `task` body (PSS 22.1), binding its parameters
+    /// positionally and returning whatever its `return` produced.
+    ///
+    /// Parameters are bound into the caller's value map and restored after, so
+    /// a call does not leak them. Nested calls inside an argument expression
+    /// are not evaluated.
+    fn call_user_function(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        values: &mut BTreeMap<String, i64>,
+    ) -> Option<i64> {
+        let f = self.model.functions.get(name)?.clone();
+        let mut saved: Vec<(String, Option<i64>)> = Vec::new();
+        for (i, p) in f.params.iter().enumerate() {
+            saved.push((p.clone(), values.get(p).copied()));
+            let v = args
+                .get(i)
+                .and_then(|a| eval_value(a, values, self.model, self.seed))
+                .unwrap_or(0);
+            values.insert(p.clone(), v);
+        }
+        self.ret_value = None;
+        let _ = self.exec_stmts(&f.body, values);
+        let ret = self.ret_value.take();
+        for (p, old) in saved {
+            match old {
+                Some(v) => {
+                    values.insert(p, v);
+                }
+                None => {
+                    values.remove(&p);
+                }
+            }
+        }
+        ret
+    }
+
     /// The declared width of an assignment target, following one level of
     /// struct field so `narrow.b` resolves through `narrow`'s type.
     fn exec_target_bits(&self, segments: &[String]) -> Option<i64> {
@@ -1013,6 +1054,15 @@ impl<'a> Engine<'a> {
                 let base = path.segments.join(".");
                 // A string assignment is carried in the string store rather than
                 // the numeric one (PSS 7.2).
+                // `y = f(...)` where `f` is a user function (PSS 22.1).
+                if let crate::ast::Expr::Call(fname, fargs) = rhs {
+                    if self.model.functions.contains_key(fname) {
+                        if let Some(v) = self.call_user_function(fname, fargs, values) {
+                            values.insert(base.clone(), v);
+                            return Flow::Normal;
+                        }
+                    }
+                }
                 // `tag = get_tag(handle)` — the tag of the region the claim came
                 // from, as a string (PSS 24.10.8).
                 if let crate::ast::Expr::Call(fname, fargs) = rhs {
@@ -1216,7 +1266,12 @@ impl<'a> Engine<'a> {
             }
             ExecStmt::Break => Flow::Break,
             ExecStmt::Continue => Flow::Continue,
-            ExecStmt::Return(_) => Flow::Return,
+            ExecStmt::Return(e) => {
+                self.ret_value = e
+                    .as_ref()
+                    .and_then(|x| eval_value(x, values, self.model, self.seed));
+                Flow::Return
+            }
             ExecStmt::Randomize(targets) => {
                 // Re-randomise the named attributes within their domains by
                 // re-solving the action they belong to.
@@ -1239,6 +1294,11 @@ impl<'a> Engine<'a> {
             }
             ExecStmt::Yield => Flow::Normal,
             ExecStmt::Call(name, args) => {
+                // A user `function` / `task` runs its body (PSS 22.1).
+                if self.model.functions.contains_key(name) {
+                    self.call_user_function(name, args, values);
+                    return Flow::Normal;
+                }
                 self.exec_call(name, args, values);
                 Flow::Normal
             }

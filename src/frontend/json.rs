@@ -45,6 +45,7 @@ pub fn model_from_json(src: &str) -> PssResult<Model> {
     let mut model = Model {
         covergroups: Vec::new(),
         monitors: Vec::new(),
+        functions: std::collections::HashMap::new(),
         constants: HashMap::new(),
         enums: HashMap::new(),
         types: HashMap::new(),

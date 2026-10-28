@@ -174,6 +174,18 @@ pub enum ExecStmt {
     Raw(String),
 }
 
+/// A `function` or `task` declaration (PSS 22.1). Its body is kept so a call
+/// from `exec` can run it; before this the declaration was skipped entirely.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Function {
+    pub name: String,
+    /// Parameter names, bound positionally from the call's arguments.
+    pub params: Vec<String>,
+    pub body: Vec<ExecStmt>,
+    /// A `task` has no return value.
+    pub is_task: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActionDecl {
     pub name: String,
@@ -272,6 +284,8 @@ pub struct SourceFile {
     pub covergroups: Vec<Covergroup>,
     /// Monitor declarations anywhere in the file (PSS 19.1).
     pub monitors: Vec<Monitor>,
+    /// `function` / `task` declarations anywhere in the file (PSS 22.1).
+    pub functions: Vec<Function>,
 }
 
 // ---------------------------------------------------------------------------
