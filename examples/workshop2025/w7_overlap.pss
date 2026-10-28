@@ -1,0 +1,25 @@
+// Example 7 — the `overlap` operator (slide 14).
+//
+// `overlap` meets `schedule`'s conditions plus one more: there is a time
+// instant at which all member scenarios are simultaneously active.
+package w7_pkg {
+
+    component w7_c {
+        action read_a  {};
+        action write_a {};
+
+        monitor m {
+            activity { overlap { do read_a; do write_a; } }
+        };
+
+        action top_a {
+            activity {
+                parallel {
+                    do read_a;
+                    do write_a;
+                }
+                cover m;
+            }
+        };
+    };
+};

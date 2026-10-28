@@ -2966,6 +2966,32 @@ impl Parser {
         })
     }
 
+    /// True when the tokens ahead hold a `guard :` — a `:` at bracket depth 0
+    /// before the statement's `;` or `{`.
+    fn guard_ahead(&self) -> bool {
+        let mut depth = 0i32;
+        let mut i = self.pos;
+        while i < self.toks.len() {
+            let t = &self.toks[i];
+            if let TokKind::Punct(p) = &t.kind {
+                match p.as_str() {
+                    "(" | "[" | "{" => depth += 1,
+                    ")" | "]" | "}" => {
+                        if depth == 0 {
+                            return false;
+                        }
+                        depth -= 1;
+                    }
+                    ";" if depth == 0 => return false,
+                    ":" if depth == 0 => return true,
+                    _ => {}
+                }
+            }
+            i += 1;
+        }
+        false
+    }
+
     fn parse_monitor_stmt(
         &mut self,
         handles: &mut std::collections::HashMap<String, String>,
@@ -3012,17 +3038,28 @@ impl Parser {
                 if self.eat_punct(";") {
                     continue;
                 }
-                let guard = if self.eat_ident("default") {
+                // A guard is optional: `select { do A; do B; }` has unguarded
+                // branches, which the guard-and-colon form rejected.
+                let default_arm = self.eat_ident("default");
+                let guard = if default_arm {
                     None
-                } else {
+                } else if self.guard_ahead() {
                     Some(self.parse_expr(0)?)
+                } else {
+                    None
                 };
-                self.expect_punct(":")?;
-                let body = self.parse_monitor_list(handles)?;
-                let body = match body {
-                    MonStmt::Sequence(v) => v,
-                    MonStmt::Empty => Vec::new(),
-                    other => vec![other],
+                if default_arm || guard.is_some() {
+                    self.expect_punct(":")?;
+                }
+                let body = if self.at_punct("{") {
+                    let b = self.parse_monitor_list(handles)?;
+                    match b {
+                        MonStmt::Sequence(v) => v,
+                        MonStmt::Empty => Vec::new(),
+                        other => vec![other],
+                    }
+                } else {
+                    vec![self.parse_monitor_stmt(handles)?]
                 };
                 arms.push((guard, body));
             }
@@ -3045,9 +3082,15 @@ impl Parser {
             if let Ok(ty) = self.parse_type_ref() {
                 let tname = ty.name();
                 let leaf = tname.rsplit("::").next().unwrap_or(&tname).to_string();
-                if self.at_punct(";") || self.at_punct("with") {
+                if self.at_punct(";") || self.at_ident("with") {
+                    // `with { ... }` or the shorthand `with expr` (the deck
+                    // writes `do write with core == 0`).
                     let cond = if self.eat_ident("with") {
-                        Some(self.parse_constraint_set()?)
+                        if self.at_punct("{") {
+                            Some(self.parse_constraint_set()?)
+                        } else {
+                            Some(self.parse_expr(0)?)
+                        }
                     } else {
                         None
                     };

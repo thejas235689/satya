@@ -1,0 +1,39 @@
+// Example 6 — the `schedule` operator (slide 12-13).
+//
+// m1: sub-scenarios {read,write} and {write,send}. The first has realizations
+// {read,write1} and {read,write2}; the second {write1,send} and {write2,send}.
+// Unioning a first-realization with a *second*-realization (and vice versa)
+// gives {read, write1, write2, send} — the other pairings share a write and
+// cannot be united.
+//
+// m2 has NO match: its two sub-scenarios both realize through the single
+// `send`, so the realizations intersect and the schedule cannot be formed.
+package w6_pkg {
+
+    component w6_c {
+        action read_a    {};
+        action write_a   {};
+        action send_a    {};
+        action receive_a {};
+
+        monitor m1 {
+            activity { schedule { sequence { do read_a; do write_a; }; sequence { do write_a; do send_a; } } }
+        };
+
+        monitor m2 {
+            activity { schedule { sequence { do write_a; do send_a; }; sequence { do send_a; do receive_a; } } }
+        };
+
+        action top_a {
+            activity {
+                do read_a;
+                do write_a;
+                do write_a;
+                do send_a;
+                do receive_a;
+                cover m1;
+                cover m2;
+            }
+        };
+    };
+};

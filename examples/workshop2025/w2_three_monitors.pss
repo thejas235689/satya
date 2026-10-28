@@ -1,0 +1,38 @@
+// Example 2 — three monitors over five actions (slide 7).
+//
+// m1 is a bare sequential pair; m2 adds a `select` in the middle; m3 selects
+// over both halves. c1 covers m1 and c2 covers m3.
+package w2_pkg {
+
+    component w2_c {
+        action read_a    {};
+        action write_a   {};
+        action idle_a    {};
+        action send_a    {};
+        action receive_a {};
+
+        monitor m1 {
+            write_a w;
+            read_a  r;
+            activity { w; r; }
+        };
+
+        monitor m2 {
+            activity { do write_a; select { do read_a; do send_a; }; do receive_a; }
+        };
+
+        monitor m3 {
+            activity { select { do write_a; do read_a; }; select { do send_a; do receive_a; }; }
+        };
+
+        action top_a {
+            activity {
+                do write_a;
+                select { do read_a; do send_a; };
+                do receive_a;
+                cover m1;
+                cover m3;
+            }
+        };
+    };
+};

@@ -1,0 +1,26 @@
+// Example 1 — a monitor and a cover statement (slides 5-6).
+//
+// The deck uses this to explain *realizations*: the first attempt, with
+// checkpoint t1, has two realizations matching at t7 and t12; a second attempt
+// with checkpoint t6 has one, matching at t12. Satya reports the first match.
+package w1_pkg {
+
+    component w1_c {
+        action read_a  { rand int addr; };
+        action write_a { rand int addr; };
+
+        monitor m1 {
+            write_a w;
+            read_a  r;
+            activity { w; r; }
+        };
+
+        action top_a {
+            activity {
+                do write_a;
+                do read_a;
+                cover m1;
+            }
+        };
+    };
+};

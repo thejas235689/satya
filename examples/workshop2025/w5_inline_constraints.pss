@@ -1,0 +1,31 @@
+// Example 5 — inline constraints on a monitor's handles (slide 11).
+//
+// `do write with core == 0` matches the first traversal of `write` that
+// satisfies the constraint. In the deck's figure 32 that is write2, starting
+// from the checkpoint of `start`.
+package w5_pkg {
+
+    component w5_c {
+        action start_a { rand int core; };
+        action write_a { rand int core; };
+        action read_a  {};
+
+        monitor m_concat {
+            activity { concat { do start_a; do write_a with core == 0; do read_a; } }
+        };
+
+        monitor m_sequence {
+            activity { sequence { do start_a; do write_a with core == 0; do read_a; } }
+        };
+
+        action top_a {
+            activity {
+                do start_a;
+                do write_a;
+                do read_a;
+                cover m_concat;
+                cover m_sequence;
+            }
+        };
+    };
+};

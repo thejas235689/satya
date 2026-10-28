@@ -1,0 +1,26 @@
+// Example 3 — the `sequence` activity operator (slide 9).
+//
+// The actions must be traversed in order and may not overlap in time; other
+// concurrent traversals do not invalidate the match — the deck's example is
+// that `idle` does not break `write, read`.
+package w3_pkg {
+
+    component w3_c {
+        action read_a  {};
+        action write_a {};
+        action idle_a  {};
+
+        monitor m1 {
+            activity { sequence { do write_a; do read_a; } }
+        };
+
+        action top_a {
+            activity {
+                do idle_a;
+                do write_a;
+                do read_a;
+                cover m1;
+            }
+        };
+    };
+};

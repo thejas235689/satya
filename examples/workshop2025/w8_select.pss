@@ -1,0 +1,33 @@
+// Example 8 — the `select` operator (slide 15).
+//
+// c1 has one successful attempt from t1 with two realizations,
+// {write,read,receive} and {write,send,receive}. c2 has two attempts: one from
+// t1 with {write,send} and {write,receive}, one from t3 with {read,receive}.
+package w8_pkg {
+
+    component w8_c {
+        action read_a    {};
+        action write_a   {};
+        action idle_a    {};
+        action send_a    {};
+        action receive_a {};
+
+        monitor c1_mon {
+            activity { do write_a; select { do read_a; do send_a; }; do receive_a; }
+        };
+
+        monitor c2_mon {
+            activity { select { do write_a; do read_a; }; select { do send_a; do receive_a; }; }
+        };
+
+        action top_a {
+            activity {
+                do write_a;
+                select { do read_a; do send_a; };
+                do receive_a;
+                cover c1_mon;
+                cover c2_mon;
+            }
+        };
+    };
+};

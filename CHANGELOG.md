@@ -13,6 +13,41 @@ approximated.
 
 ---
 
+## 0.33.0 — 2026-10-28
+
+The "PSS Comes of Age" workshop examples, and what they expose
+
+All eleven behavioral-coverage examples from the DVCon 2025 workshop (Miller /
+Gupta / Ballance) are now in `examples/workshop2025/`, one standalone model
+each, in deck order, with a README recording what Satya reports for every one.
+
+Writing them found three defects, two of which were fixed:
+
+- **A `cover <monitor>;` with no covergroup reported nothing.** There was no
+  covergroup to sample, so a successful match produced no output at all — the
+  deck's first example is exactly that form. Behavioral coverage is now
+  reported per monitor: `monitor m1   1 hit(s)`.
+- **`select` and `with` in a monitor did not parse.** The monitor `select`
+  required a `guard :` on every arm, and `do X with core == 0` was rejected
+  because the code tested `at_punct("with")` for a keyword. Both parse now.
+
+Three more are **known wrong and recorded as such** in the README, with
+reproductions, rather than left to be discovered:
+
+- `select` does not randomise — `select { do a1; do a2; }` takes `a2` on every
+  seed. The activity parser produces one branch, not two.
+- `sequence` requires adjacency, so an `idle` before the pair breaks the match.
+  19.3.2 says other concurrent traversals do not invalidate it.
+- `schedule` matches its sub-scenarios independently, so the pairwise-disjoint
+  rule of 19.3.8 is not applied.
+
+Each of those is a semantics change with tests pinning the current behaviour, so
+they are the next piece of work rather than a patch made blind.
+
+125 tests (1 new). Corpora unchanged: 97/97 curated, 7/7 pathological, 114/114
+compliance, workshop 17/17, all randomisation and coverage checks, all 5
+reproducers.
+
 ## 0.32.0 — 2026-10-28
 
 `typedef`, `function` and `task` bodies

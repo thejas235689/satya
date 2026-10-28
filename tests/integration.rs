@@ -2841,3 +2841,26 @@ component C {
     let y = s.steps[0].fields.iter().find(|(k, _)| k == "y").map(|(_, v)| *v).unwrap();
     assert_eq!(y, 7);
 }
+
+#[test]
+fn a_cover_statement_reports_a_hit_without_a_covergroup() {
+    // PSS 19.2: `cover <monitor>;` reports whether the monitor matched. With no
+    // covergroup in the monitor there was nothing to sample, so a successful
+    // match produced no output at all.
+    let src = r#"
+component c {
+  action read_a  {};
+  action write_a {};
+  monitor m1 { write_a w; read_a r; activity { w; r; } };
+  action top_a { activity { do write_a; do read_a; cover m1; } };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "top_a", 1);
+    assert_eq!(
+        s.monitor_hits.iter().find(|(n, _)| n == "m1").map(|(_, h)| *h),
+        Some(1),
+        "the monitor must report a hit: {:?}",
+        s.monitor_hits
+    );
+}

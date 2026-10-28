@@ -1,0 +1,36 @@
+// Example 11 — the runtime reactive example (slides 8, 18).
+//
+// The deck's flow is: PSS model -> generated test + generated coverage model ->
+// simulate -> coverage event trace -> coverage analysis -> report. The trace
+// names the actions: drive_a, sample_a, low_path_a, high_path_a, check_end_a,
+// with a high-path check reporting "High path succeeded".
+//
+// This model is that trace as PSS: a stimulus path, a state-machine branch, and
+// behavioral coverage confirming the high path was taken.
+package w11_pkg {
+
+    component w11_c {
+        action drive_a      { rand int addr; };
+        action sample_a     { rand int data; };
+        action low_path_a   {};
+        action high_path_a  {};
+        action check_end_a  {};
+
+        monitor high_path_mon {
+            activity { sequence { do drive_a; do sample_a; do high_path_a; do check_end_a; } }
+        };
+
+        action reactive_a {
+            activity {
+                do drive_a;
+                do sample_a;
+                select {
+                    do high_path_a;
+                    do low_path_a;
+                }
+                do check_end_a;
+                cover high_path_mon;
+            }
+        };
+    };
+};

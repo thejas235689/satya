@@ -109,6 +109,9 @@ pub struct Scenario {
     pub warnings: Vec<String>,
     /// Sampled coverpoints and crosses.
     pub coverage: Vec<CoveragePoint>,
+    /// Behavioral coverage: how many times each monitor matched (PSS 19.2).
+    /// A `cover <monitor>;` reports a hit even with no covergroup.
+    pub monitor_hits: Vec<(String, usize)>,
     /// Text emitted by the standard library's messaging functions.
     pub messages: Vec<String>,
     /// Pools after execution: name, element type, and allocated object count.
@@ -183,6 +186,8 @@ struct Engine<'a> {
     globals: BTreeMap<String, i64>,
     /// Coverpoint name -> observed value -> hit count.
     coverage: BTreeMap<String, BTreeMap<String, usize>>,
+    /// Monitor name -> number of successful matches.
+    monitor_hits: BTreeMap<String, usize>,
     /// Declared bins per coverpoint, for coverage against the declaration.
     coverage_bins: BTreeMap<String, Vec<Vec<i64>>>,
 }
@@ -269,6 +274,7 @@ pub fn run_scenario(model: &Model, root_action: &str, seed: u64) -> Scenario {
         ret_value: None,
         strings: BTreeMap::new(),
         coverage: BTreeMap::new(),
+        monitor_hits: BTreeMap::new(),
         coverage_bins: BTreeMap::new(),
     };
     if let Some(t) = &top {
@@ -336,6 +342,7 @@ pub fn run_scenario(model: &Model, root_action: &str, seed: u64) -> Scenario {
     Scenario {
         messages: eng.messages,
         coverage,
+        monitor_hits: eng.monitor_hits.into_iter().collect(),
         root_action: root_action.to_string(),
         top_component: top,
         steps: eng.steps,
@@ -431,6 +438,7 @@ impl<'a> Engine<'a> {
                             ));
                         }
                         if hit.is_some() && holds {
+                            *self.monitor_hits.entry(m.name.clone()).or_insert(0) += 1;
                             let cgs = m.covergroups.clone();
                             // Only the steps the pattern actually matched — a
                             // gap allowed by `concat` is not part of the

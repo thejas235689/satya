@@ -1,0 +1,30 @@
+// Example 4 — `concat` against `sequence` (slide 10).
+//
+// `concat` requires the checkpoint of the next sub-scenario to be the matching
+// point of the previous one; `sequence` allows other traversals in between.
+package w4_pkg {
+
+    component w4_c {
+        action read_a  {};
+        action write_a {};
+        action idle_a  {};
+
+        monitor m_concat {
+            activity { concat { do write_a; do read_a; } }
+        };
+
+        monitor m_sequence {
+            activity { sequence { do write_a; do read_a; } }
+        };
+
+        action top_a {
+            activity {
+                do write_a;
+                do idle_a;
+                do read_a;
+                cover m_concat;
+                cover m_sequence;
+            }
+        };
+    };
+};

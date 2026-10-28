@@ -1,0 +1,46 @@
+// Example 9 — hierarchical monitors (slide 16).
+//
+// irw, irw1 and irw2 are equivalent, and so are c1, c2 and c3: all realize
+// {idle, read, write}. irw1 traverses an *anonymous* monitor of type rw, irw2
+// traverses it through a handle.
+package w9_pkg {
+
+    component w9_c {
+        action idle_a  {};
+        action read_a  {};
+        action write_a {};
+
+        monitor rw {
+            activity { sequence { do read_a; do write_a; } }
+        };
+
+        monitor irw {
+            idle_a i;
+            read_a r;
+            write_a w;
+            activity { i; r; w; }
+        };
+
+        monitor irw1 {
+            idle_a i;
+            activity { i; do rw; }
+        };
+
+        monitor irw2 {
+            idle_a i;
+            rw m;
+            activity { i; m; }
+        };
+
+        action top_a {
+            activity {
+                do idle_a;
+                do read_a;
+                do write_a;
+                cover irw;
+                cover irw1;
+                cover irw2;
+            }
+        };
+    };
+};

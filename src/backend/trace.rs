@@ -132,6 +132,15 @@ impl Backend for TraceBackend {
             }
         }
 
+        // Behavioral coverage: a `cover <monitor>;` reports its hits even when
+        // the monitor carries no covergroup (PSS 19.2).
+        if !scenario.monitor_hits.is_empty() {
+            s.push_str("\nBehavioral coverage\n-------------------\n");
+            for (name, hits) in &scenario.monitor_hits {
+                s.push_str(&format!("  monitor {:<20} {} hit(s)\n", name, hits));
+            }
+        }
+
         if !scenario.coverage.is_empty() {
             s.push_str("\nCoverage\n--------\n");
             for cp in &scenario.coverage {
