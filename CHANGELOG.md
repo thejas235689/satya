@@ -13,6 +13,41 @@ approximated.
 
 ---
 
+## 0.34.0 — 2026-10-28
+
+The three behavioral-coverage defects, fixed
+
+All three were found by writing the workshop examples and left recorded as
+known-wrong in 0.33.0. They are now correct.
+
+**`select` did not randomise.** `select { do a1; do a2; }` took `a2` on every
+seed — the engine kept the last unguarded branch as a "fallback" and never
+considered the others. Every branch whose guard holds is now a candidate and the
+choice among them is random (12.3.5); an unguarded branch is the default only
+when some branch *is* guarded, which is what makes `select { do a1; do a2; }`
+two alternatives and `select { (m==1): A; : D }` a guarded choice with a
+fallback. The first attempt looked right but the hash left the choice constant
+across consecutive seeds; it now mixes the seed properly.
+
+**`sequence` and `concat` were the wrong way round.** `sequence` required
+adjacency, so an `idle` before the pair broke the match, while `concat`
+tolerated gaps. 19.3.2 gives `sequence` order-without-overlap and permits other
+concurrent traversals between; 19.3.3 makes `concat` adjacent. Both now follow
+the standard, and the test that pinned the old behaviour was corrected with the
+standard as its justification.
+
+**`schedule` did not apply disjointness.** Its sub-scenario realizations must be
+pairwise disjoint (19.3.8). Matching the branches independently let example 6's
+`m2` match when it must not. A branch whose greedy realization intersects an
+earlier one is now retried from later checkpoints — which is also what makes
+`m1` match, by pairing the first sub-scenario's `write1` with the second's
+`write2`.
+
+All eleven workshop examples now behave as the deck describes.
+
+125 tests. Corpora: 97/97 curated, 7/7 pathological, 114/114 compliance,
+workshop 17/17, all randomisation and coverage checks, all 5 reproducers.
+
 ## 0.33.0 — 2026-10-28
 
 The "PSS Comes of Age" workshop examples, and what they expose

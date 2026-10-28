@@ -615,20 +615,53 @@ impl<'a> Engine<'a> {
             ActivityStmt::Select(branches) => {
                 self.group_counter += 1;
                 let g = self.group_counter;
-                let mut chosen: Option<&Activity> = None;
-                let mut fallback: Option<&Activity> = None;
+                // Every branch whose guard holds is a candidate, and the choice
+                // among them is random (PSS 12.3.5). Taking the first — or, with
+                // unguarded branches, the last — made a `select` a fixed path:
+                // `select { do a1; do a2; }` took a2 on every seed.
+                // A `default` branch applies only when no guard holds, so it is
+                // kept apart from the guarded candidates.
+                // With no guards at all, every branch is an alternative and the
+                // choice is random: `select { do a1; do a2; }`. Once any branch
+                // is guarded, an unguarded one is the default, which applies
+                // only when no guard holds.
+                let any_guarded = branches.iter().any(|(g, _)| g.is_some());
+                let mut candidates: Vec<&Activity> = Vec::new();
+                let mut default_branch: Option<&Activity> = None;
                 for (guard, body) in branches {
                     match guard {
-                        None => fallback = Some(body),
+                        None => {
+                            if any_guarded {
+                                default_branch = Some(body);
+                            } else {
+                                candidates.push(body);
+                            }
+                        }
                         Some(e) => {
                             if eval_condition_opt(e, ctx, self.model, self.seed) == Some(true) {
-                                chosen = Some(body);
-                                break;
+                                candidates.push(body);
                             }
                         }
                     }
                 }
-                match chosen.or(fallback) {
+                if candidates.is_empty() {
+                    candidates.extend(default_branch);
+                }
+                let chosen = if candidates.is_empty() {
+                    None
+                } else {
+                    // Mix the seed properly: a plain multiply-and-rotate left
+                    // the choice constant across consecutive seeds.
+                    let mut h = self.seed
+                        ^ (g as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                    h ^= h >> 30;
+                    h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                    h ^= h >> 27;
+                    h = h.wrapping_mul(0x94D0_49BB_1331_11EB);
+                    h ^= h >> 31;
+                    Some(candidates[(h % candidates.len() as u64) as usize])
+                };
+                match chosen {
                     Some(body) => {
                         self.walk_activity(body, component.to_string(), depth, StepMode::Select, g, ctx)
                     }
@@ -1949,18 +1982,11 @@ impl<'a> Engine<'a> {
                 }
                 None
             }
+            // `sequence` (19.3.2): the sub-scenarios must be traversed in order
+            // and may not overlap, but other concurrent traversals between them
+            // do not invalidate the match — `idle` does not break
+            // `write, read`. Requiring adjacency rejected exactly that.
             MonStmt::Sequence(items) => {
-                let mut at = from;
-                for it in items {
-                    let (start, next) = self.match_monitor(it, at, depth + 1, bindings, matched)?;
-                    if start != at {
-                        return None; // a sequence must be contiguous
-                    }
-                    at = next;
-                }
-                Some((from, at))
-            }
-            MonStmt::Concat(items) | MonStmt::Eventually(items) => {
                 let mut at = from;
                 for it in items {
                     let (_, next) = self.match_monitor(it, at, depth + 1, bindings, matched)?;
@@ -1968,11 +1994,63 @@ impl<'a> Engine<'a> {
                 }
                 Some((from, at))
             }
+            // `concat` (19.3.3): the checkpoint of the next sub-scenario is the
+            // matching point of the previous one, so no gap is allowed.
+            MonStmt::Concat(items) => {
+                let mut at = from;
+                for it in items {
+                    let (start, next) = self.match_monitor(it, at, depth + 1, bindings, matched)?;
+                    if start != at {
+                        return None;
+                    }
+                    at = next;
+                }
+                Some((from, at))
+            }
+            MonStmt::Eventually(items) => {
+                let mut at = from;
+                for it in items {
+                    let (_, next) = self.match_monitor(it, at, depth + 1, bindings, matched)?;
+                    at = next;
+                }
+                Some((from, at))
+            }
+            // `schedule` / `overlap` (19.3.5, 19.3.8): each sub-scenario matches
+            // from the same checkpoint, and the realizations must be pairwise
+            // **disjoint** — an action execution cannot be part of two of them.
+            // Matching the branches independently let a match through that the
+            // standard forbids.
             MonStmt::Concurrent(items) => {
                 let mut last = from;
+                let mut sets: Vec<Vec<usize>> = Vec::new();
                 for it in items {
-                    let (_, next) = self.match_monitor(it, from, depth + 1, bindings, matched)?;
+                    // A sub-scenario may have several realizations; the greedy
+                    // first match can intersect an earlier branch, so retry from
+                    // later checkpoints until one is disjoint (19.3.8).
+                    let mut chosen: Option<(Vec<usize>, usize)> = None;
+                    for start in from..=self.steps.len() {
+                        let mut mine: Vec<usize> = Vec::new();
+                        let mut probe_bindings = bindings.clone();
+                        match self.match_monitor(it, start, depth + 1, &mut probe_bindings, &mut mine) {
+                            Some((_, next)) => {
+                                if !sets.iter().any(|prev| prev.iter().any(|s| mine.contains(s))) {
+                                    chosen = Some((mine, next));
+                                    *bindings = probe_bindings;
+                                    break;
+                                }
+                            }
+                            None => break,
+                        }
+                    }
+                    let (mine, next) = match chosen {
+                        Some(v) => v,
+                        None => return None, // no disjoint realization
+                    };
                     last = last.max(next);
+                    sets.push(mine);
+                }
+                for set in sets {
+                    matched.extend(set);
                 }
                 Some((from, last))
             }

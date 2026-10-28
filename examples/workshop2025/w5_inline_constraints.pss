@@ -7,7 +7,9 @@ package w5_pkg {
 
     component w5_c {
         action start_a { rand int core; };
-        action write_a { rand int core; };
+        // `core` must be able to be 0 for the inline constraint to have a
+        // traversal to match; the deck's model has two writes, core 0 and 1.
+        action write_a { rand int core; constraint core in [0..1]; };
         action read_a  {};
 
         monitor m_concat {

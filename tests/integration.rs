@@ -1370,14 +1370,17 @@ fn coverage_total(s: &engine::Scenario, name: &str) -> Option<usize> {
 }
 
 #[test]
-fn concat_matches_across_a_gap_but_sequence_does_not() {
+fn sequence_tolerates_a_gap_but_concat_does_not() {
     let m = compile_pss(MONITORS).unwrap();
     let s = engine::run_scenario(&m, "t", 1);
-    // `concat { start; write; read }` tolerates the `nop` between them, and the
-    // realization is the three matched steps - the gap is not part of it.
-    assert_eq!(coverage_total(&s, "cc.c"), Some(3), "{:?}", s.coverage);
-    // `sequence` requires contiguity, so the same pattern must not match.
-    assert_eq!(coverage_total(&s, "cs.c"), None, "sequence must not match across a gap");
+    // `sequence` (19.3.2) requires the sub-scenarios in order and non-overlapping,
+    // but other concurrent traversals between them do not invalidate the match:
+    // the deck's example is that `idle` does not break `write, read`. This test
+    // previously asserted the opposite, which was the engine's bug.
+    assert_eq!(coverage_total(&s, "cs.c"), Some(3), "{:?}", s.coverage);
+    // `concat` (19.3.3) requires the next sub-scenario's checkpoint to be the
+    // previous match point, so the `nop` in between breaks it.
+    assert_eq!(coverage_total(&s, "cc.c"), None, "concat must not match across a gap");
 }
 
 #[test]

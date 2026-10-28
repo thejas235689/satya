@@ -11,35 +11,43 @@ proceedings (`PSS-Behavioral-Coverage-DVCON-2025.pdf`, `SW_4B_1_PSS_Accellera_WG
 
 Run `satya solve <file> --seed 1`. "Hit" is the behavioral coverage line.
 
-| # | file | parses | monitor hit | note |
-|---|---|---|---|---|
-| 1 | `w1_basic_monitor.pss` | yes | `m1` | matches; the deck's realization discussion is not modelled |
-| 2 | `w2_three_monitors.pss` | yes | `m3` | `m1` correctly does not match (the `select` chose `send`) |
-| 3 | `w3_sequence.pss` | yes | — | **wrong**: `sequence` requires adjacency, so `idle` before the pair breaks it. The deck says other traversals do not invalidate |
-| 4 | `w4_concat_vs_sequence.pss` | yes | `m_concat` | `sequence` misses for the same reason as #3 |
-| 5 | `w5_inline_constraints.pss` | yes | — | the `with core == 0` condition is parsed but no traversal satisfies it; the model needs `core` constrained |
-| 6 | `w6_schedule.pss` | yes | — | **wrong**: `schedule` sub-scenarios are matched independently, so the disjointness rule is not applied. The deck's `m2` must not match, and Satya agrees only by accident |
-| 7 | `w7_overlap.pss` | yes | `m` | matches, but without the "simultaneously active" condition |
-| 8 | `w8_select.pss` | yes | `c1_mon`, `c2_mon` | |
-| 9 | `w9_hierarchical_monitors.pss` | yes | `irw` | nested monitors (`irw1`, `irw2`) are not traversed |
-| 10 | `w10_covergroups_in_monitors.pss` | yes | `m` | covergroup sampled through the monitor |
-| 11 | `w11_reactive_flow.pss` | yes | — | `select` always resolves to the last branch, so the high path is never taken |
+| # | file | monitor hit at seed 1 | note |
+|---|---|---|---|
+| 1 | `w1_basic_monitor.pss` | `m1` | matches |
+| 2 | `w2_three_monitors.pss` | `m1`, `m3` | `select` chose `read`, so both match |
+| 3 | `w3_sequence.pss` | `m1` | `idle` before the pair does not invalidate it (19.3.2) |
+| 4 | `w4_concat_vs_sequence.pss` | `m_sequence` | `concat` correctly misses: the `idle` is a gap (19.3.3) |
+| 5 | `w5_inline_constraints.pss` | — at seed 1 | matches only when the write's `core` is 0 (seeds 3, 4) |
+| 6 | `w6_schedule.pss` | `m1` | `m2` correctly misses: its realizations intersect (19.3.8) |
+| 7 | `w7_overlap.pss` | `m` | matches |
+| 8 | `w8_select.pss` | `c1_mon`, `c2_mon` | both match |
+| 9 | `w9_hierarchical_monitors.pss` | `irw` | nested monitors (`irw1`, `irw2`) are not traversed |
+| 10 | `w10_covergroups_in_monitors.pss` | `m` | covergroup sampled through the monitor |
+| 11 | `w11_reactive_flow.pss` | `high_path_mon` | the `select` is random, so some seeds take the low path and miss |
 
-## Known wrong, with the evidence
+## Fixed by writing these
 
-These three are behaviours Satya gets wrong, found by writing these examples.
-They are recorded rather than hidden, because each one silently reports a
-result that looks plausible:
+Three behaviours were wrong when these examples were first written. All three
+are fixed, and the tests that pinned the old behaviour were corrected with the
+standard as the justification:
 
-- **`select` does not randomise** (affects #11, and any model using it).
-  `select { do a1; do a2; }` takes `a2` on every seed:
-  ```
-  component c { action a1 {} action a2 {} action t { activity { select { do a1; do a2; } } }; };
-  seeds 1..6 -> a2, a2, a2, a2, a2, a2
-  ```
-- **`sequence` requires adjacency** (#3, #4). PSS 19.3.2 says the sub-scenarios
-  must be in order and must not overlap, but other concurrent traversals do not
-  invalidate the match.
-- **`schedule` does not apply disjointness** (#6). Its sub-scenario realizations
-  must be pairwise disjoint; matching them independently lets a match through
-  that the standard forbids.
+- **`select` did not randomise.** `select { do a1; do a2; }` took `a2` on every
+  seed: the engine kept only the last unguarded branch as a "fallback". Every
+  branch whose guard holds is now a candidate and the choice is random
+  (12.3.5); an unguarded branch is the default only when some branch is
+  guarded.
+- **`sequence` and `concat` were the wrong way round.** `sequence` required
+  adjacency, so `idle` broke `write, read`, while `concat` tolerated gaps.
+  19.3.2 gives `sequence` order-without-overlap and permits other concurrent
+  traversals between; 19.3.3 makes `concat` adjacent. Both now follow the
+  standard.
+- **`schedule` did not apply disjointness.** Its sub-scenario realizations must
+  be pairwise disjoint (19.3.8); matching branches independently let `m2` match
+  in example 6 when it must not. A branch whose greedy realization intersects
+  an earlier one is now retried from later checkpoints.
+
+## Still not modelled
+
+Nested monitor traversal (example 9's `irw1` and `irw2`), and `overlap`'s
+"simultaneously active" condition (example 7), which in a linear step list
+degenerates to schedule's disjointness.
