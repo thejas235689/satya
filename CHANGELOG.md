@@ -13,6 +13,35 @@ approximated.
 
 ---
 
+## 0.38.0 — 2026-10-29
+
+The punct/expr clusters: a diagnosis, and one rule
+
+I set out to close `syntax.punct` (21 cases) and `syntax.expr` (9). What I found
+is more useful than the cases: **they are not where I assumed.**
+
+- **A trailing comma in an argument list** is now rejected. That is the one rule
+  that landed, and it works wherever the expression parser handles the call.
+- The rest do not live in `exec` bodies at all. `constraint { x + ; }`,
+  `== y` and `x = ;` are **constraint expressions**, and the constraint
+  expression parser tolerates a dangling operator. `exec` bodies go through a
+  separate token-level parser that returns no errors at all.
+
+So the clusters sit behind two parsers that have no error path:
+`parse_exec_stmts` (token-level, returns `Vec<ExecStmt>`, no `Result`) and the
+constraint expression parser (returns `Expr`, tolerant of a missing operand).
+
+I built a validator over the `exec` token stream and **removed it**: it caught
+none of these cases, because the cases are not exec statements. Shipping dead
+machinery that could reject valid models is worse than shipping nothing.
+
+The real work is to make those two parsers error-aware. That is a signature
+change across seven call sites, not a rule, and it is the honest prerequisite
+for `punct` and `expr` rather than something to work around.
+
+Curated corpus **97/97 · 7/7 · 114/114**, error-suite syntax **77/165**,
+controls **113/113**. 129 tests (1 new).
+
 ## 0.37.0 — 2026-10-29
 
 Reserved words, done per the clause

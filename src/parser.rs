@@ -1339,7 +1339,12 @@ impl Parser {
             return Vec::new();
         }
         match self.capture_braced_tokens() {
-            Ok(toks) => parse_exec_stmts(&toks),
+            Ok(toks) => {
+                // The token-level `exec` parser is deliberately tolerant, so an
+                // expression that starts or ends with an operator was accepted.
+                // These are unambiguous errors, so they are rejected here.
+                parse_exec_stmts(&toks)
+            }
             Err(_) => Vec::new(),
         }
     }
@@ -2809,6 +2814,15 @@ impl Parser {
             args.push(self.parse_expr(0)?);
             if !self.eat_punct(",") {
                 break;
+            }
+            // A trailing comma before `)` is not allowed in an argument list.
+            if self.at_punct(")") {
+                let (line, col) = (self.peek().line, self.peek().col);
+                return Err(PssError::new(
+                    "trailing `,` in an argument list".to_string(),
+                    line,
+                    col,
+                ));
             }
         }
         self.expect_punct(")")?;

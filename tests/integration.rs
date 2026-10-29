@@ -2937,3 +2937,11 @@ fn a_reserved_word_cannot_name_a_field() {
         "extend action"
     );
 }
+
+#[test]
+fn a_trailing_comma_in_an_argument_list_is_rejected() {
+    // PSS has no trailing comma in an argument list. It was accepted wherever
+    // the expression parser handles the call (constraints, initialisers).
+    assert!(compile_pss("component C { action a { rand int x; constraint x == f(1, 2,); } }").is_err());
+    assert!(compile_pss("component C { action a { rand int x; constraint x == f(1, 2); } }").is_ok());
+}
