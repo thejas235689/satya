@@ -13,6 +13,38 @@ approximated.
 
 ---
 
+## 0.35.0 — 2026-10-29
+
+Starting on the leniency gap: enum base types
+
+The gap is that Satya accepts code it should refuse — pssparser's error-suite
+has 165 deliberately-broken syntax cases and Satya rejects 66 of them. Working
+the list turned up something more urgent first: **one *valid* file was being
+rejected**. `enum E : int { A, B }` (12.4) did not parse, because the base type
+after `:` was not handled at all.
+
+It is now parsed, and the base is validated: `enum E : struct` is an error
+rather than something skipped over. That is the corresponding error-suite case,
+which the naive fix would have started accepting.
+
+`error-suite` controls (repaired source, must parse) went **112/113 → 113/113**.
+
+Two things I tried and **reverted**, rather than carry half-working:
+
+- rejecting an `action` at file scope (12.3 says actions are declared inside a
+  component). It gained one case and broke three tests, because several of my
+  own fixtures declare file-scope actions — so the fixtures and the rule need
+  changing together, which is a bigger pass than this session had room for.
+- an earlier `select` change, already noted in 0.34.0.
+
+The remaining clusters, measured rather than guessed: `syntax.punct` 21,
+`semantic.resolve` 10, `syntax.reserved` 10, `syntax.expr` 9,
+`syntax.multifile` 9, `syntax.template` 9, `syntax.volume` 9,
+`syntax.scope` 8, `syntax.recover` 7, `syntax.keyword` 6, `syntax.names` 5.
+That is a dedicated piece of work, not a patch.
+
+126 tests (1 new). Corpora: 97/97 curated, 7/7 pathological, 114/114 compliance.
+
 ## 0.34.0 — 2026-10-28
 
 The three behavioral-coverage defects, fixed

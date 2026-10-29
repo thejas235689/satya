@@ -589,6 +589,25 @@ impl Parser {
     fn parse_enum(&mut self, is_extend: bool, base: Option<Path>) -> PssResult<EnumDecl> {
         self.expect_ident_named("enum")?;
         let name = self.parse_scoped_path()?;
+        // `enum E : int { ... }` — an explicit base type (PSS 12.4). The base
+        // must be a type, so a declaration keyword such as `struct` is an error
+        // rather than something to skip over.
+        if self.eat_punct(":") {
+            let base = self.parse_type_ref()?;
+            let leaf = base.name();
+            const NOT_A_TYPE: [&str; 12] = [
+                "struct", "component", "package", "enum", "action", "monitor",
+                "covergroup", "extend", "import", "typedef", "function", "task",
+            ];
+            if NOT_A_TYPE.contains(&leaf.as_str()) {
+                let (line, col) = (self.peek().line, self.peek().col);
+                return Err(PssError::new(
+                    format!("unexpected `{}` in enum `{}`", leaf, name.leaf()),
+                    line,
+                    col,
+                ));
+            }
+        }
         let mut variants = Vec::new();
         if self.eat_punct("{") {
             while !self.at_punct("}") && !self.at_eof() {

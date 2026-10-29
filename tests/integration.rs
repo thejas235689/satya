@@ -528,9 +528,9 @@ component C {{
 #[test]
 fn sized_literals_and_aggregate_literals_both_lex() {
     // `4'b1010` is a sized literal; `'{...}` is an aggregate literal.
-    let m = compile_pss("action a { rand bit[4] x = 4'b1010; exec body { x = 1; }; };").unwrap();
+    let m = compile_pss("component C { action a { rand bit[4] x = 4'b1010; exec body { x = 1; }; }; };").unwrap();
     assert!(m.actions.contains_key("a"));
-    let m = compile_pss("struct s { int a; }; action a { s v; exec body { v = '{1}; }; };").unwrap();
+    let m = compile_pss("struct s { int a; }; component C { action a { s v; exec body { v = '{1}; }; }; };").unwrap();
     assert!(m.actions.contains_key("a"));
 }
 
@@ -579,7 +579,7 @@ fn open_ended_ranges_are_solved() {
 
 #[test]
 fn triple_quoted_strings_lex() {
-    let src = "action a { exec body { x = \"\"\"line one\nline two\"\"\"; }; };";
+    let src = "component C { action a { exec body { x = \"\"\"line one\nline two\"\"\"; }; }; };";
     let m = compile_pss(src).unwrap();
     assert!(m.actions.contains_key("a"));
 }
@@ -2865,5 +2865,18 @@ component c {
         Some(1),
         "the monitor must report a hit: {:?}",
         s.monitor_hits
+    );
+}
+
+#[test]
+fn an_enum_may_name_its_base_type() {
+    // `enum E : int { ... }` (PSS 12.4). The base type was not parsed at all,
+    // so a valid file was rejected; a declaration keyword as the base
+    // (`enum E : struct`) must still be an error.
+    assert!(compile_pss("package p { enum E : int { A, B }; };").is_ok());
+    assert!(compile_pss("package p { enum E : bit[8] { A, B }; };").is_ok());
+    assert!(
+        compile_pss("package p { enum E : struct { A, B }; };").is_err(),
+        "a declaration keyword is not a base type"
     );
 }
