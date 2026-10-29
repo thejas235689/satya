@@ -21,6 +21,10 @@ pub struct Parser {
     typedefs: std::collections::HashMap<String, crate::ast::TypeRef>,
     /// `function` / `task` bodies collected so a call can run them.
     functions: Vec<crate::ast::Function>,
+    /// The first error the token-level `exec` parser met. That parser returns
+    /// `Option`, so it used to discard errors and turn a broken statement into
+    /// a `Raw` one; keeping the first error lets the body be rejected.
+    exec_err: Option<PssError>,
 }
 
 impl Parser {
@@ -32,6 +36,7 @@ impl Parser {
             monitors: Vec::new(),
             typedefs: std::collections::HashMap::new(),
             functions: Vec::new(),
+            exec_err: None,
         }
     }
 
@@ -1325,7 +1330,11 @@ impl Parser {
         let (body, stmts) = if self.at_punct("{") {
             let toks = self.capture_braced_tokens()?;
             let text = toks.iter().map(token_text).collect::<Vec<_>>().join(" ");
-            (text, parse_exec_stmts(&toks))
+            let (stmts, err) = parse_exec_stmts(&toks);
+            if let Some(e) = err {
+                return Err(e);
+            }
+            (text, stmts)
         } else {
             self.eat_punct(";");
             (String::new(), Vec::new())
@@ -1340,16 +1349,38 @@ impl Parser {
         }
         match self.capture_braced_tokens() {
             Ok(toks) => {
-                // The token-level `exec` parser is deliberately tolerant, so an
-                // expression that starts or ends with an operator was accepted.
-                // These are unambiguous errors, so they are rejected here.
-                parse_exec_stmts(&toks)
+                // A nested `exec` body cannot report an error from here, so the
+                // first one is kept on the parser and surfaced by `parse_exec`.
+                let (stmts, err) = parse_exec_stmts(&toks);
+                if let Some(e) = err {
+                    if self.exec_err.is_none() {
+                        self.exec_err = Some(e);
+                    }
+                }
+                stmts
             }
             Err(_) => Vec::new(),
         }
     }
 
     /// Parse one statement inside an `exec` body.
+    /// Require a `;` to close an `exec` statement. A missing one is an error,
+    /// recorded so the enclosing `exec` body is rejected rather than accepted.
+    fn exec_semi(&mut self) -> bool {
+        if self.eat_punct(";") {
+            return true;
+        }
+        if self.exec_err.is_none() {
+            let (line, col) = (self.peek().line, self.peek().col);
+            self.exec_err = Some(PssError::new(
+                "expected `;` after a statement".to_string(),
+                line,
+                col,
+            ));
+        }
+        false
+    }
+
     fn try_parse_exec_stmt(&mut self) -> Option<ExecStmt> {
         // Procedural statements (PSS Syntax 89-101).
         if self.at_ident("repeat") {
@@ -1492,12 +1523,24 @@ impl Parser {
             self.bump();
             match self.parse_expr(0) {
                 Ok(rhs) => {
-                    self.eat_punct(";");
+                    // A declaration may carry further declarators after a
+                    // comma (`int e = 1, f = e + 1, g;`), which is legal.
+                    if self.at_punct(",") {
+                        self.skip_to_semicolon();
+                        self.eat_punct(";");
+                    } else {
+                        self.exec_semi();
+                    }
                     if let Expr::Path(path) = e {
                         return Some(ExecStmt::Assign(path, rhs));
                     }
                 }
                 Err(er) => {
+                    // Keep it: an unparsable right-hand side is an error, not
+                    // something to turn into a `Raw` statement.
+                    if self.exec_err.is_none() {
+                        self.exec_err = Some(er);
+                    }
                 }
             }
             self.pos = save;
@@ -3371,7 +3414,7 @@ pub fn parse_expression(src: &str) -> PssResult<Expr> {
 }
 
 /// Parse a sequence of `exec`-body statements from captured tokens.
-fn parse_exec_stmts(toks: &[Token]) -> Vec<ExecStmt> {
+fn parse_exec_stmts(toks: &[Token]) -> (Vec<ExecStmt>, Option<PssError>) {
     let mut t: Vec<Token> = toks.to_vec();
     t.push(Token {
         kind: TokKind::Eof,
@@ -3402,7 +3445,8 @@ fn parse_exec_stmts(toks: &[Token]) -> Vec<ExecStmt> {
             }
         }
     }
-    out
+    let err = p.exec_err.take();
+    (out, err)
 }
 
 /// Activity keywords that can begin a statement (used to tell a labelled

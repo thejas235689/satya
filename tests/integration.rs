@@ -2945,3 +2945,24 @@ fn a_trailing_comma_in_an_argument_list_is_rejected() {
     assert!(compile_pss("component C { action a { rand int x; constraint x == f(1, 2,); } }").is_err());
     assert!(compile_pss("component C { action a { rand int x; constraint x == f(1, 2); } }").is_ok());
 }
+
+#[test]
+fn a_broken_exec_statement_is_rejected() {
+    // The token-level `exec` parser returns `Option`, so it used to discard its
+    // errors and turn a broken statement into a `Raw` one — accepted silently.
+    // The error is now kept and surfaced, so these are errors:
+    assert!(
+        compile_pss("component C { action a { int x; exec body { x = foo(1, 2,); } } }").is_err(),
+        "trailing comma in an exec call"
+    );
+    assert!(
+        compile_pss("component C { action a { int x; exec body { x = ; } } }").is_err(),
+        "missing right-hand side"
+    );
+    // Legal forms still parse.
+    assert!(compile_pss("component C { action a { int x; exec body { x = foo(1, 2); } } }").is_ok());
+    assert!(
+        compile_pss("component C { action a { int e; exec body { int e = 1, f = e + 1, g; } } }").is_ok(),
+        "a multi-declarator declaration"
+    );
+}

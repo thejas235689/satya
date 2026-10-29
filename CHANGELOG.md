@@ -13,6 +13,44 @@ approximated.
 
 ---
 
+## 0.39.0 — 2026-10-29
+
+The exec error path, traced rather than guessed
+
+Three releases of guesswork went into this cluster for a net gain of one rule.
+This time I traced one case instead of assuming, and the cause was visible in a
+single run.
+
+**What was actually wrong.** In the `exec` statement parser's assignment branch:
+
+```rust
+Err(er) => {
+    // empty
+}
+```
+
+An unparsable right-hand side was discarded, the statement became
+`ExecStmt::Raw`, and `Raw` is accepted. So `x = foo(1, 2,)` — and anything else
+with a broken RHS — parsed cleanly. `parse_exec_stmts` also returned
+`Vec<ExecStmt>` with no error channel at all.
+
+**What changed.** The parser keeps the first error it meets (`exec_err`) and
+`parse_exec_stmts` returns it alongside the statements; `parse_exec` turns it
+into a `PssError`. A missing `;` after an `exec` assignment is now an error too,
+with a multi-declarator declaration (`int e = 1, f = e + 1, g;`) recognised as
+legal rather than a missing semicolon.
+
+pssparser syntax cases Satya rejects: **77 → 86**. Curated corpus stays
+**97/97 · 7/7 · 114/114**, error-suite controls **113/113**.
+
+The rule that this new path closes, beyond the trailing comma:
+`missing_close_paren_call`, `missing_comma_call_args`,
+`missing_semicolon_import`, `dangling_dot`, and several `missing_semicolon`
+forms.
+
+130 tests (1 new). The lesson, finally applied: trace the case to the function
+that consumes it before writing the check.
+
 ## 0.38.0 — 2026-10-29
 
 The punct/expr clusters: a diagnosis, and one rule
