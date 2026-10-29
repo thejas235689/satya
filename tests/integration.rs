@@ -1910,9 +1910,10 @@ component C {
 fn an_unclosed_template_expression_in_target_code_is_rejected() {
     // The corpus marks this pathological. Balanced braces and real template
     // expressions must still be accepted.
-    assert!(compile_pss("action a { exec body C = \"\"\"printf(\"{{ x);\"\"\"; }").is_err());
-    assert!(compile_pss("action a { exec body C = \"\"\"{{ x + 1 }}\"\"\"; }").is_ok());
-    assert!(compile_pss("action a { exec body { int m[2][2] = {{1,2},{3,4}}; } }").is_ok());
+    // Actions live inside a component (12.3), so the fixtures are wrapped.
+    assert!(compile_pss("component W { action a { exec body T = \"\"\"printf(\"{{ x);\"\"\"; } };").is_err());
+    assert!(compile_pss("component W { action a { exec body T = \"\"\"{{ x + 1 }}\"\"\"; } };").is_ok());
+    assert!(compile_pss("component W { action a { exec body { int m[2][2] = {{1,2},{3,4}}; } } };").is_ok());
 }
 
 #[test]
@@ -2878,5 +2879,32 @@ fn an_enum_may_name_its_base_type() {
     assert!(
         compile_pss("package p { enum E : struct { A, B }; };").is_err(),
         "a declaration keyword is not a base type"
+    );
+}
+
+#[test]
+fn declarations_in_the_wrong_scope_are_rejected() {
+    // PSS 12.3 / 18.2: an action is declared in a component, and `bins` /
+    // `coverpoint` belong inside a covergroup. All four were silently skipped.
+    assert!(
+        compile_pss("action a { }").is_err(),
+        "an action at file scope"
+    );
+    assert!(
+        compile_pss("component C { action A { component D { } } }").is_err(),
+        "a component inside an action body"
+    );
+    assert!(
+        compile_pss("component C { bins b0 = { 0 }; }").is_err(),
+        "bins outside a covergroup"
+    );
+    assert!(
+        compile_pss("component C { coverpoint x; }").is_err(),
+        "a coverpoint outside a covergroup"
+    );
+    // The legal forms still parse.
+    assert!(compile_pss("component C { action a { rand int x; } }").is_ok());
+    assert!(
+        compile_pss("component C { covergroup cg (int x) { coverpoint x { bins b = [0..3]; } } }").is_ok()
     );
 }

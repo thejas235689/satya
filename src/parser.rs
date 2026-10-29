@@ -476,9 +476,8 @@ impl Parser {
         if self.at_ident("component") {
             return Ok(Item::Component(self.parse_component(false)?));
         }
-        if self.at_ident("action") || (self.at_ident("abstract") && self.peek_at(1).is_ident("action")) {
-            return Ok(Item::Action(self.parse_action(false)?));
-        }
+        // An action is declared inside a component (PSS 12.3); one at file
+        // scope falls through to the "unexpected at top level" error.
         if self.at_ident("static") || self.at_ident("const") {
             if let Some(sc) = self.try_parse_static_const()? {
                 return Ok(sc);
@@ -773,7 +772,6 @@ impl Parser {
             TokKind::Ident(_) => self.expect_ident()?,
             _ => return Ok(None),
         };
-
         // Also accept the range after the name (`rand int v in [1..64]`), which
         // some authors write even though the LRM places it before the name.
         // Require `[` or `{` to follow, so a field literally named `in`
@@ -1600,6 +1598,18 @@ impl Parser {
     }
 
     fn parse_comp_item(&mut self) -> PssResult<CompItem> {
+        // `bins` and `coverpoint` belong inside a covergroup (18.2), not in a
+        // component body.
+        for bad in ["coverpoint", "bins"] {
+            if self.at_ident(bad) {
+                let (line, col) = (self.peek().line, self.peek().col);
+                return Err(PssError::new(
+                    format!("`{}` is only valid inside a covergroup", bad),
+                    line,
+                    col,
+                ));
+            }
+        }
         if self.at_ident("import") {
             return Ok(CompItem::Import(self.parse_import()?));
         }
@@ -1798,6 +1808,18 @@ impl Parser {
             if self.at_ident("compile") {
                 self.skip_braced_or_semicolon();
                 continue;
+            }
+            // A declaration that cannot appear in an action body is an error,
+            // not something to skip (12.3).
+            for bad in ["component", "package", "coverpoint", "bins"] {
+                if self.at_ident(bad) {
+                    let (line, col) = (self.peek().line, self.peek().col);
+                    return Err(PssError::new(
+                        format!("unexpected `{}` in an action body", bad),
+                        line,
+                        col,
+                    ));
+                }
             }
             if let Some(m) = self.try_parse_member()? {
                 members.push(m);

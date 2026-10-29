@@ -13,6 +13,33 @@ approximated.
 
 ---
 
+## 0.36.0 — 2026-10-29
+
+Leniency: declarations in the wrong scope
+
+Four rules, each closing a cluster rather than a file. pssparser's syntax cases
+Satya rejects: **66 → 70**, with the curated corpus unchanged at 97/97 · 7/7 ·
+114/114 and the error-suite controls at 113/113.
+
+- **`action` at file scope** is an error (12.3 — actions are declared inside a
+  component). This is the rule I tried and reverted last release; it works now
+  because the fixtures were conformed first, which was the lesson.
+- **A `component` inside an action body** is an error instead of being skipped.
+- **`bins` and `coverpoint` outside a covergroup** are errors (18.2). They were
+  silently skipped wherever they appeared.
+
+The three fixtures that declared a bare action were wrapped in a component, so
+they test target-code templates against a standard-conforming model.
+
+**One rule tried and reverted:** rejecting a reserved word as a field name
+(`int action;`) — ten cases, and it looked clean. It broke the curated corpus
+from 97 to **55**, because the member parser runs speculatively and returning an
+error from there rejects valid models. The check needs to live where a
+declaration is certain, not where one is being considered. Recorded rather than
+quietly dropped; the corpus caught it in one run, which is what it is for.
+
+127 tests (1 new).
+
 ## 0.35.0 — 2026-10-29
 
 Starting on the leniency gap: enum base types
