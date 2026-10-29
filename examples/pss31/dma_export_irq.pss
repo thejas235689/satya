@@ -1,0 +1,57 @@
+// PSS 3.1 target runtime — `export function` (20.4.2).
+//
+// An exported function is static, so it has no action, no attributes and no
+// `comp`; it reaches required data through the global space. Here an interrupt
+// handler delivers a DMA completion into a channel the action is blocked on.
+package dma_pkg {
+
+    import sync_pkg::*;
+    import executor_pkg::*;
+
+    import platform_pkg::*;
+
+    component dma_c {
+        static const int NCHAN = 4;
+
+        // Environment APIs on the target platform.
+        import target function void    dma_program(bit[8] chan, bit[64] src,
+                                                   bit[64] dst, bit[32] len);
+        import target function void    dma_start(bit[8] chan);
+        import target function bit[32] dma_ack_irq(bit[8] chan);  // read and clear
+
+        // One rendezvous per hardware channel, so concurrent transfers do not
+        // race for each other's completions.
+        channel_c<bit[32]> completion[NCHAN];
+
+        action xfer_a {
+            rand bit[8]  chan;
+            rand bit[64] src;
+            rand bit[64] dst;
+            rand bit[32] len;
+
+            constraint chan < NCHAN;
+
+            exec body {
+                dma_program(chan, src, dst, len);
+                dma_start(chan);
+
+                // Blocks here. The handler delivers the status when the DMA
+                // finishes -- no polling loop, no status register read.
+                bit[32] status = comp.completion[chan].get();
+
+                if (status != 0) {
+                    error("DMA channel %d completed with status %d", chan, status);
+                }
+            }
+        }
+    };
+
+    component pss_top {
+        dma_c dma;
+
+        // Give the environment the context handle before any test code runs.
+        exec run_start {
+            irq_register(executor().get_context());
+        }
+    };
+};

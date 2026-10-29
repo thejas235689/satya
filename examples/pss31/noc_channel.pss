@@ -1,0 +1,67 @@
+// PSS 3.1 target runtime — `sync_pkg` channels (21.9).
+//
+// From the PSS 3.1 public-review write-up on the target runtime. The case that
+// needs a runtime handshake: inject a parity error into a NoC stream, but only
+// once that stream is genuinely congested. Congestion is reached whenever the
+// DUT gets around to it, so nothing at solve time knows when it arrives.
+//
+// Two actions run in `parallel`. One drives load and watches occupancy; the
+// other waits, injects, and reports back.
+package noc_pkg {
+
+    import sync_pkg::*;
+
+    component noc_c {
+        // Environment APIs available on the target platform.
+        import target function void   send_burst(bit[8] strm, bit[16] len);
+        import target function bit[8] occupancy(bit[8] strm);
+        import target function void   inject_parity_err(bit[8] strm);
+        import target function bit[8] err_status(bit[8] strm);
+        import target function void   expect_parity_err(bit[8] status);
+
+        channel_c<bit[8]> congested;   // load -> injector: "backed up on this stream"
+        channel_c<bit[8]> injected;    // injector -> load: "done; here is the status"
+
+        action load_a {
+            rand bit[8]             strm;
+            rand bit[8] in [60..90] threshold;
+
+            exec body {
+                bit[8] status;
+                bool   signaled = false;
+
+                // Keep the traffic up until the injector reports back.
+                while (!comp.injected.try_get(status)) {
+                    send_burst(strm, 256);
+
+                    if (!signaled && occupancy(strm) >= threshold) {
+                        comp.congested.put(strm);
+                        signaled = true;
+                    }
+                }
+
+                expect_parity_err(status);
+            }
+        }
+
+        action inject_a {
+            exec body {
+                // Blocks until the load action reports congestion, and learns
+                // which stream got there from the data the channel carries.
+                bit[8] strm = comp.congested.get();
+
+                inject_parity_err(strm);
+                comp.injected.put(err_status(strm));
+            }
+        }
+
+        action inject_under_load_a {
+            activity {
+                parallel {
+                    do load_a;
+                    do inject_a;
+                }
+            }
+        }
+    };
+};

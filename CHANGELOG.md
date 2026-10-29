@@ -13,6 +13,40 @@ approximated.
 
 ---
 
+## 0.40.0 — 2026-10-29
+
+PSS 3.1 target runtime: what Satya does and does not do
+
+Two models from the PSS 3.1 public-review write-up on the target runtime —
+`sync_pkg` channels (21.9) and `export function` (20.4.2) — are now in
+`examples/pss31/`, reproduced as published, with a README recording the result.
+
+**Both parse. Neither feature is implemented.**
+
+- `noc_channel.pss` parses and schedules correctly: two steps in `parallel`,
+  `strm=69 threshold=79`, constraint satisfied. But `channel_c` appears nowhere
+  in the engine, IR or solver — `put`/`get`/`try_put`/`try_get` are parsed as
+  ordinary calls and ignored, so the handshake does nothing.
+- `dma_export_irq.pss` parses. `export function` has no implementation, because
+  it needs something for the environment to call *into*, and Satya has no
+  target runtime.
+
+`import target function` declarations are parsed and recorded; the backends emit
+the calls rather than executing them.
+
+**Why not fixed here.** A channel FIFO alone would make the example look like it
+works while the semantics it depends on are absent: Satya runs `exec` bodies to
+completion in one pass, so there is no place for `get()` to block and no other
+exec block to keep running while it does — which is precisely the obligation
+20.8 puts on the tool. An attempt at the FIFO was made and removed: it compiled,
+did not fire, and a version that does not fire is worse than none.
+
+This is the largest remaining gap and the one that matters most for 3.1:
+everything else Satya does is settled before the test starts.
+
+130 tests, corpora unchanged: 97/97 curated, 7/7 pathological, 114/114
+compliance, error-suite syntax 86/165, controls 113/113.
+
 ## 0.39.0 — 2026-10-29
 
 The exec error path, traced rather than guessed
