@@ -13,6 +13,42 @@ approximated.
 
 ---
 
+## 0.41.0 — 2026-10-29
+
+`soft` constraints are a preference now
+
+Found by the conformance examples: `constraint soft lo == 0;` was dropped
+entirely. `soft` appeared nowhere in the parser, IR or solver, so the constraint
+never reached the atom list — and was not counted in `constraints: n/n` either,
+which is what made it hard to notice:
+
+```
+seed 1 -> hi=74 lo=73   constraints: 2/2      (three constraints written)
+```
+
+The fix is a preference, not a check (16.1.4):
+
+- the parser marks the constraint `is_soft`, and the IR carries the flag;
+- the solver collects soft constraints separately and appends their atoms
+  *after* the hard ones, recording where they start;
+- after the solve, any soft atom left unsatisfied causes one retry with the
+  soft set excluded. So a soft constraint is honoured when it can be, and
+  dropped when it conflicts with a hard one.
+
+Both directions verified:
+
+```
+soft lo == 0, hard lo == 5   ->  lo=5   constraints: 2/2   (hard wins)
+soft lo == 0, nothing else   ->  lo=0   constraints: 2/2   (preference honoured)
+```
+
+`examples/conformance` is now **all checks passing**, and `cn5_soft_inline.pss`
+went from 0/20 to 20/20 seeds.
+
+131 tests (1 new, covering both directions). Corpora unchanged: 97/97 curated,
+7/7 pathological, 114/114 compliance, error-suite syntax 86/165, controls
+113/113.
+
 ## 0.40.0 — 2026-10-29
 
 PSS 3.1 target runtime: what Satya does and does not do

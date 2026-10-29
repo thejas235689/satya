@@ -1,0 +1,23 @@
+// Coverage 1 — value, range and set bins, and a labelled coverpoint.
+package co1_pkg {
+    enum op_e { A, B, C };
+
+    component co1_c {
+        covergroup g (bit[8] len, op_e op) {
+            coverpoint len {
+                bins tiny   = [0..3];
+                bins small  = [4..15];
+                bins mid    = [16..63];
+                bins big    = [64..255];
+                bins exact  = 42;
+            }
+            cp_op: coverpoint op {
+                bins one  = { A };
+                bins rest = { B, C };
+            }
+        }
+
+        action item_a { rand bit[8] len; rand op_e op; };
+        action top_a  { activity { cover { do item_a; } } };
+    };
+};

@@ -1,0 +1,12 @@
+// Constraints 2 — weighted distribution and implication.
+package cn2_pkg {
+    component cn2_c {
+        action a {
+            rand int kind;
+            rand int size;
+            constraint kind dist { 0 := 1, 1 := 3, 2 := 2 };
+            constraint kind == 2 -> size in [64..127];
+            constraint kind != 2 -> size in [0..15];
+        };
+    };
+};

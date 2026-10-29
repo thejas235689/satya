@@ -1,0 +1,14 @@
+// Coverage 2 — a cross of two coverpoints, including a partial cross.
+package co2_pkg {
+    enum dir_e { FWD, REV };
+
+    component co2_c {
+        covergroup g (bit[2] size, dir_e dir) {
+            cp_size: coverpoint size { bins s0 = {0}; bins s1 = {1}; bins s23 = {2, 3}; }
+            cp_dir:  coverpoint dir  { bins f = { FWD }; bins r = { REV }; }
+            size_x_dir: cross cp_size, cp_dir;
+        }
+        action item_a { rand bit[2] size; rand dir_e dir; };
+        action top_a  { activity { cover { do item_a; } } };
+    };
+};

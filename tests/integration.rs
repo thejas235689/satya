@@ -2966,3 +2966,45 @@ fn a_broken_exec_statement_is_rejected() {
         "a multi-declarator declaration"
     );
 }
+
+#[test]
+fn a_soft_constraint_is_a_preference() {
+    // PSS 16.1.4: a soft constraint is honoured when it can be, and dropped
+    // when it conflicts with a hard one. It used to be parsed and discarded —
+    // `soft` appeared nowhere in the parser, IR or solver.
+    let honoured = r#"
+component C {
+  action a {
+    rand int lo;
+    rand int hi;
+    constraint soft lo == 0;
+    constraint hi in [0..100];
+  };
+};
+"#;
+    let m = compile_pss(honoured).unwrap();
+    for seed in [1u64, 2, 3] {
+        let s = engine::run_scenario(&m, "a", seed);
+        let lo = s.steps[0].fields.iter().find(|(k, _)| k == "lo").map(|(_, v)| *v);
+        assert_eq!(lo, Some(0), "the preference must be honoured (seed {})", seed);
+    }
+
+    // A hard constraint that conflicts wins, and the soft one is dropped.
+    let conflicting = r#"
+component C {
+  action a {
+    rand int lo;
+    rand int hi;
+    constraint soft lo == 0;
+    constraint lo == 5;
+    constraint hi in [0..100];
+  };
+};
+"#;
+    let m = compile_pss(conflicting).unwrap();
+    for seed in [1u64, 2, 3] {
+        let s = engine::run_scenario(&m, "a", seed);
+        let lo = s.steps[0].fields.iter().find(|(k, _)| k == "lo").map(|(_, v)| *v);
+        assert_eq!(lo, Some(5), "the hard constraint wins (seed {})", seed);
+    }
+}

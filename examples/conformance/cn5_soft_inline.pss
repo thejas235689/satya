@@ -1,0 +1,12 @@
+// Constraints 5 — a soft constraint that a hard one may override.
+package cn5_pkg {
+    component cn5_c {
+        action a {
+            rand int lo;
+            rand int hi;
+            constraint soft lo == 0;
+            constraint hi in [0..100];
+            constraint lo < hi;
+        };
+    };
+};

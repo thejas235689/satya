@@ -122,6 +122,10 @@ pub struct ConstraintBlock {
     pub is_default: bool,
     /// `constraint default disable <attribute>;` (PSS 16.1.10.1b).
     pub is_disable: bool,
+    /// `constraint soft <expr>;` (PSS 16.1.4) — a preference, not a
+    /// requirement: it is honoured when it can be, and dropped when it
+    /// conflicts with a hard constraint.
+    pub is_soft: bool,
     pub is_forall: bool,
     pub forall_binding: Option<(String, TypeRef)>,
     pub expr: Expr,

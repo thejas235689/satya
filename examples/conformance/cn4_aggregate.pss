@@ -1,0 +1,11 @@
+// Constraints 4 — an aggregate over the whole array, plus if/else.
+package cn4_pkg {
+    component cn4_c {
+        action a {
+            rand bit[8] parts[4];
+            rand int    mode;
+            constraint parts.sum() <= 200;
+            constraint if (mode == 0) { parts[0] == 0; } else { parts[0] > 0; }
+        };
+    };
+};

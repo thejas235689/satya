@@ -737,6 +737,19 @@ pub fn solve_with(
     extra: &[Expr],
     bindings: &BTreeMap<String, i64>,
 ) -> SolveReport {
+    solve_impl(model, action, seed, extra, bindings, true)
+}
+
+/// `allow_soft` false means the soft constraints are left out — used by the
+/// retry when a preference conflicts with a hard constraint (16.1.4).
+fn solve_impl(
+    model: &Model,
+    action: &Action,
+    seed: u64,
+    extra: &[Expr],
+    bindings: &BTreeMap<String, i64>,
+    allow_soft: bool,
+) -> SolveReport {
     let mut env = Env::new(model);
     env.seed = seed;
     let mut vars = collect_variables(model, action);
@@ -748,9 +761,17 @@ pub fn solve_with(
             d.hi = *v;
         }
     }
-    let mut constraints = collect_constraints(model, action, &vars, extra);
+    let (mut constraints, mut soft_constraints) =
+        collect_constraints(model, action, &vars, extra, allow_soft);
     let directives = take_directives(&mut constraints, &env);
-    let atoms = extract_atoms(&constraints, &vars, &env);
+    // Soft atoms come after the hard ones, so `soft_from` marks where they
+    // begin and a failure past it is a dropped preference, not an error.
+    let mut atoms = extract_atoms(&constraints, &vars, &env);
+    let soft_from = atoms.len();
+    if !soft_constraints.is_empty() {
+        atoms.extend(extract_atoms(&soft_constraints, &vars, &env));
+    }
+    let _ = &mut soft_constraints;
 
     // Union-find over variables to merge equality classes.
     let mut uf = UnionFind::new(vars.keys().cloned().collect());
@@ -1166,6 +1187,19 @@ pub fn solve_with(
             "{} constraint(s) use constructs outside the solved subset",
             unsupported.len()
         ));
+    }
+
+    // A soft constraint that did not survive the solve is a dropped
+    // preference (16.1.4), so the caller retries without it rather than
+    // reporting the model unsatisfiable.
+    let mut soft_failed = 0usize;
+    for atom in atoms.iter().skip(soft_from) {
+        if !check_atom(atom, &check_values, &env, &class_domain) {
+            soft_failed += 1;
+        }
+    }
+    if allow_soft && soft_failed > 0 {
+        return solve_impl(model, action, seed, extra, bindings, false);
     }
 
     SolveReport {
@@ -2188,8 +2222,10 @@ fn collect_constraints(
     action: &Action,
     vars: &BTreeMap<String, Domain>,
     extra: &[Expr],
-) -> Vec<Expr> {
+    include_soft: bool,
+) -> (Vec<Expr>, Vec<Expr>) {
     let mut regular: Vec<Expr> = Vec::new();
+    let mut soft: Vec<Expr> = Vec::new();
     // (expr, level): level 0 = the action's own context, 1 = a data type's.
     let mut defaults: Vec<(Expr, u8)> = Vec::new();
     let mut disabled: Vec<String> = Vec::new();
@@ -2201,7 +2237,13 @@ fn collect_constraints(
             }
             continue;
         }
-        if c.is_default {
+        if c.is_soft {
+            // A soft constraint is a preference: it is included while it can be
+            // satisfied, and dropped when it conflicts with a hard one.
+            if include_soft {
+                soft.push(c.expr.clone());
+            }
+        } else if c.is_default {
             defaults.push((c.expr.clone(), 0));
         } else {
             regular.push(c.expr.clone());
@@ -2245,7 +2287,7 @@ fn collect_constraints(
     for (_, (_, e)) in chosen {
         regular.push(e);
     }
-    regular
+    (regular, soft)
 }
 
 /// The attribute a default constraint targets: the left-hand side of an

@@ -78,6 +78,9 @@ pub struct Constraint {
     pub expr: Expr,
     pub is_default: bool,
     pub is_disable: bool,
+    /// `constraint soft ...` (PSS 16.1.4): honoured when it can be, dropped
+    /// when it conflicts with a hard constraint.
+    pub is_soft: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -782,6 +785,7 @@ impl Lowerer {
                     expr: e,
                     is_default: c.is_default,
                     is_disable: c.is_disable,
+                    is_soft: c.is_soft,
                 });
             }
             out.extend(inner);
@@ -810,6 +814,7 @@ impl Lowerer {
                         expr: t.clone(),
                         is_default: true,
                         is_disable: f == "default_disable",
+                        is_soft: false,
                     });
                 }
                 None
@@ -914,6 +919,7 @@ impl Lowerer {
                         expr: inline.clone(),
                         is_default: false,
                         is_disable: false,
+                is_soft: false,
                     });
                 }
                 fields.push(f);
@@ -949,6 +955,7 @@ impl Lowerer {
                                 expr: inline.clone(),
                                 is_default: false,
                                 is_disable: false,
+                is_soft: false,
                             });
                         }
                         fields.push(f);
@@ -964,6 +971,7 @@ impl Lowerer {
                         expr: inline.clone(),
                         is_default: false,
                         is_disable: false,
+                is_soft: false,
                     });
                 }
                 if let Some(existing) = fields.iter_mut().find(|x| x.name == f.name) {
@@ -1133,6 +1141,7 @@ impl Lowerer {
                     expr: inline.clone(),
                     is_default: false,
                     is_disable: false,
+                is_soft: false,
                 });
             }
             fields.push(f);

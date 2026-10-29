@@ -1,0 +1,17 @@
+// Data types 1 — scalar widths, signedness and bases.
+package dt1_pkg {
+    component dt1_c {
+        action a {
+            rand bit[8]   u8;
+            rand bit[16]  u16;
+            rand bit[32]  u32;
+            rand bit[64]  u64;
+            rand int      i32;
+            rand bit      b1;
+            rand bool     flag;
+            constraint u8  in [0..255];
+            constraint u16 in [0..65535];
+            constraint b1  in [0..1];
+        };
+    };
+};

@@ -1,0 +1,10 @@
+// Constraints 3 — foreach over an array and a unique constraint.
+package cn3_pkg {
+    component cn3_c {
+        action a {
+            rand bit[8] ids[4];
+            constraint foreach (ids[i]) { ids[i] in [1..4]; }
+            constraint unique { ids };
+        };
+    };
+};

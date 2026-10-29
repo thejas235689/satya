@@ -1,0 +1,21 @@
+// Data types 3 — strings and a templated type.
+package dt3_pkg {
+    struct pair_s<type T, int W = 8> {
+        T      value;
+        bit[W] raw;
+    };
+
+    component dt3_c {
+        action a {
+            string      name;
+            pair_s<bit[16], 4> narrow;
+            pair_s<bit[8], 16> wide;
+            exec pre_solve {
+                name = "frame";
+                narrow.raw = 200;
+                wide.raw = 200;
+            }
+            rand int v;
+        };
+    };
+};

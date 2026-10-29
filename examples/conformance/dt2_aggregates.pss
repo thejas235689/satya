@@ -1,0 +1,26 @@
+// Data types 2 — enums with a base type, packed structs, arrays, typedefs.
+package dt2_pkg {
+    typedef bit[12] addr_t;
+    enum kind_e : bit[4] { RD = 0, WR = 1, IDLE = 2 };
+
+    struct packed_s {
+        bit[4]  op;
+        bit[12] addr;
+        bit[16] data;
+    };
+
+    struct frame_s {
+        kind_e  kind;
+        addr_t  addr;
+        bit[32] payload[4];
+        int     n;
+    };
+
+    component dt2_c {
+        action a {
+            rand frame_s f;
+            constraint f.n in [0..4];
+            constraint f.kind in { RD, WR };
+        };
+    };
+};

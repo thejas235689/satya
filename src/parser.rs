@@ -1075,6 +1075,8 @@ impl Parser {
         self.expect_ident_named("constraint")?;
         let mut is_default = false;
         let mut is_disable = false;
+        // `constraint soft <expr>;` (PSS 16.1.4).
+        let is_soft = self.eat_ident("soft");
         if self.eat_ident("default") {
             is_default = true;
             // `constraint default disable <hierarchical_id>;`
@@ -1118,6 +1120,7 @@ impl Parser {
             name,
             is_default,
             is_disable,
+            is_soft,
             is_forall,
             forall_binding,
             expr,

@@ -1,0 +1,19 @@
+// Coverage 3 — a monitor sampling its own covergroup over a matched sequence.
+package co3_pkg {
+    component co3_c {
+        action setup_a { rand int cfg; };
+        action run_a   { rand int data; };
+
+        monitor seq_m {
+            setup_a s;
+            run_a   r;
+            activity { sequence { do s; do r; } }
+            covergroup g (int cfg, int data) {
+                cp_cfg:  coverpoint cfg  { bins lo = [0..63]; bins hi = [64..127]; }
+                cp_data: coverpoint data { bins even = { 0 }; bins odd = { 1 }; }
+            }
+        }
+
+        action top_a { activity { do setup_a; do run_a; cover seq_m; } };
+    };
+};

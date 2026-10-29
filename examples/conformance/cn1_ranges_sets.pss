@@ -1,0 +1,13 @@
+// Constraints 1 — ranges, open ranges, sets and mixed open_range_list.
+package cn1_pkg {
+    component cn1_c {
+        action a {
+            rand int x;
+            rand int y;
+            rand int z;
+            constraint x in [10..20];
+            constraint y in { 3, 5, 7, 11 };
+            constraint z in [1, 4, 9..12, 20..];     // values and ranges mixed
+        };
+    };
+};
