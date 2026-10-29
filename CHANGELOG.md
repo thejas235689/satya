@@ -13,6 +13,36 @@ approximated.
 
 ---
 
+## 0.37.0 — 2026-10-29
+
+Reserved words, done per the clause
+
+Last release I reverted the rule that a reserved word cannot name a field
+(12.2), because it broke the curated corpus from 97 to 55. That was the wrong
+call: the clause is right and the parser was wrong. Implementing it properly is
+what this release does.
+
+The rule never actually conflicted with legal PSS. Five constructs put a keyword
+where a field name could be, and each is now parsed as its own declaration:
+
+- **`target function`** (22.5) — a target-template implementation
+- **`solve function`**, **`pure function`** — function qualifiers
+- **`abstract monitor`** (19.1)
+- **`extend action`** (20.5)
+
+With those recognised, the reserved-word rule sees only genuine misuse, and:
+
+- curated corpus **stays 97/97 · 7/7 · 114/114**
+- pssparser syntax cases Satya rejects: **70 → 77**
+- semantic warnings: 0 → 1
+- error-suite controls **113/113**
+
+The lesson from 0.36.0 stands but points the other way from how I applied it:
+when a rule breaks the corpus, the question is *which legal construct the parser
+is misreading*, not whether the rule is wrong.
+
+128 tests (1 new, covering both directions).
+
 ## 0.36.0 — 2026-10-29
 
 Leniency: declarations in the wrong scope

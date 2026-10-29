@@ -772,6 +772,19 @@ impl Parser {
             TokKind::Ident(_) => self.expect_ident()?,
             _ => return Ok(None),
         };
+        const RESERVED: [&str; 16] = [
+            "action", "component", "package", "struct", "enum", "exec", "activity",
+            "constraint", "monitor", "covergroup", "extend", "typedef", "function",
+            "task", "import", "symbol",
+        ];
+        if RESERVED.contains(&name.as_str()) {
+            let (line, col) = (self.peek().line, self.peek().col);
+            return Err(PssError::new(
+                format!("`{}` is a reserved word and cannot name a field", name),
+                line,
+                col,
+            ));
+        }
         // Also accept the range after the name (`rand int v in [1..64]`), which
         // some authors write even though the LRM places it before the name.
         // Require `[` or `{` to follow, so a field literally named `in`
@@ -1598,6 +1611,48 @@ impl Parser {
     }
 
     fn parse_comp_item(&mut self) -> PssResult<CompItem> {
+        // `extend action X { ... }` inside a body (20.5).
+        if self.at_ident("extend") {
+            let save = self.pos;
+            self.bump();
+            if self.at_ident("action") {
+                return Ok(CompItem::Action(self.parse_action(true)?));
+            }
+            self.pos = save;
+        }
+        // `abstract monitor M { ... }` (19.1) — `monitor` here is a keyword, not
+        // a field name.
+        if self.at_ident("abstract") && self.peek_at(1).is_ident("monitor") {
+            self.bump();
+            let m = self.parse_monitor()?;
+            self.monitors.push(m);
+            return Ok(CompItem::Raw("monitor".into()));
+        }
+        // A function or task may carry qualifiers — `target function` (22.5),
+        // `solve function`, `pure function`. They must be recognised here, or
+        // `function` reads as a field name and trips the reserved-word rule.
+        if matches!(
+            self.peek().ident(),
+            Some("target") | Some("solve") | Some("pure")
+        ) {
+            let save = self.pos;
+            while matches!(
+                self.peek().ident(),
+                Some("target") | Some("solve") | Some("pure")
+            ) {
+                self.bump();
+            }
+            if self.at_ident("function") || self.at_ident("task") {
+                self.parse_function()?;
+                return Ok(CompItem::Raw("function".into()));
+            }
+            self.pos = save;
+            if self.at_ident("target") {
+                self.bump();
+                self.skip_braced_or_semicolon();
+                return Ok(CompItem::Raw("target".into()));
+            }
+        }
         // `bins` and `coverpoint` belong inside a covergroup (18.2), not in a
         // component body.
         for bad in ["coverpoint", "bins"] {

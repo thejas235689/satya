@@ -2908,3 +2908,32 @@ fn declarations_in_the_wrong_scope_are_rejected() {
         compile_pss("component C { covergroup cg (int x) { coverpoint x { bins b = [0..3]; } } }").is_ok()
     );
 }
+
+#[test]
+fn a_reserved_word_cannot_name_a_field() {
+    // PSS 12.2. This rule broke the curated corpus when first tried, because
+    // several legal constructs put a keyword where a field name could be:
+    // `target function` (22.5), `solve function`, `pure function`,
+    // `abstract monitor` (19.1) and `extend action` (20.5). Each is parsed as
+    // its own declaration now, so the rule only sees genuine misuse.
+    assert!(compile_pss("component C { action a { int action; } }").is_err());
+    assert!(compile_pss("component C { action a { int struct; } }").is_err());
+    // The legal constructs must still parse.
+    assert!(compile_pss("component C { action a { rand int x; } }").is_ok());
+    assert!(
+        compile_pss("component C { target function void chk(bit[32] a) { } }").is_ok(),
+        "target function"
+    );
+    assert!(
+        compile_pss("component C { pure function bit[32] f(int i) { return i; } }").is_ok(),
+        "pure function"
+    );
+    assert!(
+        compile_pss("component C { abstract monitor m { activity { } } }").is_ok(),
+        "abstract monitor"
+    );
+    assert!(
+        compile_pss("component C { action a { rand int x; } extend action a { } }").is_ok(),
+        "extend action"
+    );
+}
