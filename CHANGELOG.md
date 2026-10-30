@@ -13,6 +13,31 @@ approximated.
 
 ---
 
+## 0.42.0 — 2026-10-30
+
+The JSON frontend fails loudly now
+
+Checking the JSON path turned up a real trap and two silent drops. All three are
+fixed, and the useful finding stands: **a JSON model solves identically to the
+equivalent PSS**, seed for seed, so the JSON path is a viable way to feed Satya
+a model produced by another tool.
+
+- **A generated scenario is rejected as a model.** `satya gen --backend json`
+  emits a scenario description; feeding it back used to load as an *empty model*
+  that parsed cleanly (`components: 0, actions: 0`) and then failed at `solve`
+  with `available: `. It now says what it is: "this is a generated scenario
+  description, not a model".
+- **Unsupported keys are errors, not silent drops.** `covergroups`, `monitors`
+  and `symbols` — at top level or inside a component — are not modelled by the
+  JSON frontend, and were discarded without a word. A JSON model carrying
+  coverage would have run with none.
+- **A model with no components and no actions is an error.** An empty model is
+  never what someone meant.
+
+132 tests (1 new, covering all four cases). Corpora unchanged: 97/97 curated,
+7/7 pathological, 114/114 compliance; conformance checks, randomisation and
+coverage checks, and all 5 reproducers still pass.
+
 ## 0.41.0 — 2026-10-29
 
 `soft` constraints are a preference now

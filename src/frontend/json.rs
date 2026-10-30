@@ -42,6 +42,17 @@ pub fn model_from_json(src: &str) -> PssResult<Model> {
     let v = Json::parse(src)?;
     let obj = v.as_obj().ok_or_else(|| PssError::plain("top-level JSON must be an object"))?;
 
+    // A generated *scenario* is not a model. It carries the keys below and has
+    // no components, so feeding one back used to yield an empty model that
+    // parsed cleanly and then failed at `solve` with no explanation.
+    if obj_get(obj, "generator").and_then(|g| g.as_str()) == Some("satya")
+        || (obj_get(obj, "root_action").is_some() && obj_get(obj, "steps").is_some())
+    {
+        return Err(PssError::plain(
+            "this is a generated scenario description, not a model: use the `.pss` source              or a model JSON with `components` and `top`",
+        ));
+    }
+
     let mut model = Model {
         covergroups: Vec::new(),
         monitors: Vec::new(),
@@ -135,6 +146,16 @@ pub fn model_from_json(src: &str) -> PssResult<Model> {
                     }
                 }
             }
+            // Keys a component may carry that this frontend does not model.
+            for key in ["covergroups", "monitors", "symbols"] {
+                if obj_get(co, key).is_some() {
+                    return Err(PssError::plain(format!(
+                        "`{}` in component `{}` is not supported in a JSON model yet; \
+                         it would be ignored",
+                        key, name
+                    )));
+                }
+            }
             let fields = build_fields(co, &model.enums, &model.types, &component_names)?;
             let mut action_names = Vec::new();
             if let Some(acts) = obj_get(co, "actions").and_then(|v| v.as_obj()) {
@@ -222,6 +243,31 @@ pub fn model_from_json(src: &str) -> PssResult<Model> {
         }
     }
     model.actions = actions;
+    // Keys the model schema does not model yet are reported rather than
+    // dropped: a JSON model that carries coverage would otherwise run with
+    // none and say nothing.
+    for key in ["covergroups", "monitors", "functions", "pools", "binds"] {
+        if obj_get(obj, key).is_some() {
+            let handled = match key {
+                "pools" | "binds" => true,
+                _ => false,
+            };
+            if !handled {
+                return Err(PssError::plain(format!(
+                    "`{}` is not supported in a JSON model yet; it would be ignored",
+                    key
+                )));
+            }
+        }
+    }
+
+    // An empty model is never what someone meant.
+    if model.components.is_empty() && model.actions.is_empty() {
+        return Err(PssError::plain(
+            "the JSON model declares no components and no actions;              nothing could be solved from it",
+        ));
+    }
+
     model.top = obj_get(obj, "top")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())

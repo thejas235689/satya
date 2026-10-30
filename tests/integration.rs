@@ -3008,3 +3008,42 @@ component C {
         assert_eq!(lo, Some(5), "the hard constraint wins (seed {})", seed);
     }
 }
+
+#[test]
+fn a_scenario_json_is_not_accepted_as_a_model() {
+    // A generated scenario carries `generator`/`root_action`/`steps` and no
+    // components. It used to load as an empty model that parsed cleanly and
+    // then failed at `solve` with no explanation.
+    let scenario = r#"{"generator":"satya","root_action":"a","steps":[],"top_component":"c"}"#;
+    let e = model_from_json(scenario).unwrap_err().to_string();
+    assert!(e.contains("scenario"), "got: {}", e);
+
+    // An empty model is never what someone meant.
+    let empty = r#"{"constants":{"X":1}}"#;
+    let e = model_from_json(empty).unwrap_err().to_string();
+    assert!(e.contains("no components"), "got: {}", e);
+
+    // Coverage is not modelled in JSON, so a model that carries it is reported
+    // rather than run with none.
+    let with_cg = r#"{
+      "components": { "pss_top": {
+        "actions": { "a": { "fields": [{"name":"x","kind":"rand","type":"int"}] } },
+        "covergroups": { "g": {} }
+      } },
+      "top": "pss_top"
+    }"#;
+    let e = model_from_json(with_cg).unwrap_err().to_string();
+    assert!(e.contains("covergroups"), "got: {}", e);
+
+    // A valid model still loads.
+    let good = r#"{
+      "components": { "pss_top": {
+        "actions": {
+          "a": { "fields": [{"name":"x","kind":"rand","type":"int","in":[1,9]}] },
+          "t": { "activity": [ {"do":"a"} ] }
+        }
+      } },
+      "top": "pss_top"
+    }"#;
+    assert!(model_from_json(good).is_ok());
+}
