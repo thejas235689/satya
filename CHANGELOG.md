@@ -13,6 +13,46 @@ approximated.
 
 ---
 
+## 0.46.0 — 2026-11-02
+
+The last five were a category error, not a shortfall
+
+0.45.0 reported "130 / 135 (96.3%)" and named five examples as still silent. They
+were not silent drops — they were the **fragments**, still sitting in the
+denominator:
+
+```
+Ex2    Map literals              a map literal, not a declaration
+Ex68   join_branch               an activity statement
+Ex69   join_branch with scheduling dependency
+Ex73   Scope of join inside sequence block
+Ex119  Declaring a static constraint
+```
+
+A constraint line or an activity statement declares nothing, so scoring it for
+not declaring anything is a category error. The metric now counts three buckets
+separately and stops blending them:
+
+```
+scorable examples:  130 of 153 models
+  contributed content:      130
+  silent (should not be 0): 0
+  fragments, not scorable:  5
+  damaged input, excluded:  18
+```
+
+**Every scorable example is now accounted for, and the silent count is zero.**
+
+This is the third correction to the same measurement — first the stale tree, then
+damaged inputs counted as failures, now fragments counted as shortfalls. Each
+time the number looked plausible and each time it was measuring the wrong thing.
+The lesson is not "be careful with percentages"; it is that a figure nobody can
+drill into will keep being wrong in new ways, which is why the harness now names
+every example in every bucket.
+
+134 tests. Corpora unchanged: 97/97 curated, 7/7 pathological, 114/114
+compliance.
+
 ## 0.45.0 — 2026-11-02
 
 The strict figure now means something, and `forall` in a constraint block works

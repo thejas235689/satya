@@ -26,7 +26,12 @@ excluded (damaged by extraction, not parser failures): 9
 
 LRM examples extracted: 188  (models: 153, expression snippets: 35)
 models parsed (no error):        153 / 153  (100.0%)
-models parsed (strict content):  128 / 153  (83.7%)
+
+scorable examples:  130 of 153 models
+  contributed content:      130
+  silent (should not be 0): 0
+  fragments, not scorable:  5   (a constraint line or activity statement declares nothing)
+  damaged input, excluded:  18  (documentation text or elisions)
 ```
 
 Two bugs in the extractor made the earlier figures untrustworthy, and both are

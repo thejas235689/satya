@@ -169,13 +169,20 @@ def main():
         for r in broken:
             print("  Ex%-4d %-10s %s   [CHECK]" % (r["num"], r["kind"], r["title"][:44]))
         print()
-    scorable = [r for r in models if r not in broken]
+    # Three buckets, counted separately. A fragment is not scorable at all, so
+    # putting it in the denominator (as this did) made the figure look like a
+    # shortfall when it was a category error.
+    scorable = [r for r in models if r not in broken and r not in frag]
     scored = [r for r in scorable if r["strict"]]
-    print("strict, excluding fragments and damaged input:  %d / %d  (%.1f%%)"
-          % (len(scored), len(scorable), 100.0 * len(scored) / max(1, len(scorable))))
+    print("scorable examples:  %d of %d models" % (len(scorable), len(models)))
+    print("  contributed content:      %d" % len(scored))
+    print("  silent (should not be 0): %d" % (len(scorable) - len(scored)))
+    print("  fragments, not scorable:  %d  (a constraint line or activity "
+          "statement declares nothing)" % len(frag))
+    print("  damaged input, excluded:  %d  (documentation text or elisions)" % len(broken))
     print("models parsed (no error):        %d / %d  (%.1f%%)"
           % (len(ok), len(models), 100.0 * len(ok) / max(1, len(models))))
-    print("models parsed (strict content):  %d / %d  (%.1f%%)"
+    print("of ALL models, incl. fragments and damaged input: %d / %d  (%.1f%%)"
           % (len(strict), len(models), 100.0 * len(strict) / max(1, len(models))))
     print("  ^ Satya's parser is deliberately lenient (it skips unknown constructs")
     print("    rather than erroring), so the first figure is an upper bound and the")
