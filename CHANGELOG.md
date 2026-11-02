@@ -13,6 +13,50 @@ approximated.
 
 ---
 
+## 0.48.0 — 2026-11-02
+
+The feature proof is now executable, and it corrected the audit
+
+v0.47.0 recorded verdicts but lost its assertion scripts in transfer. Six
+self-contained scripts now exist, one per slice, and they are the proof rather
+than a description of it:
+
+```sh
+tests/feature_proof/run_all.sh /path/to/satya
+```
+
+Each embeds its models, takes the binary as `$1`, fails closed if it is not
+Satya, and prints one `PASS`/`FAIL` line per item with the observed value on
+failure. **104 pass, 58 fail across 162 checks** (146 constructs + 16 CLI and
+backend items) on v0.46.0.
+
+**Writing real assertions found errors in the audit itself**, which is the point:
+
+- **Row 62 was wrong.** The audit claimed `sequence` "holds by construction";
+  `constraint sequence { a1, a2 };` over an activity listing `do a2; do a1;`
+  runs `a2, a1` on every seed. The declared order is not honoured.
+- **Row 121 was stale.** Traits *are* matched; the row fails only on claim `size`.
+- **Row 14 was half wrong.** Nested struct members do bind; only inherited ones
+  do not.
+- **Row 34 was wrong.** All four join forms are indistinguishable and nothing is
+  gated.
+- **Row 80's evidence was broken** — the model omitted a `;`, dropping its
+  activity. The verdict stands; the demonstration did not.
+
+New defects the scripts found that the audit missed: `+=` and `|=` and
+array-element assignment are silently dropped; single-statement bodies are
+mis-parsed (`repeat (4) b = b + 3;` iterates once); `match` range arms never
+match; resource pools never create instances; `addr_value` returns 0 for a
+handle from a trait-parameterised transparent claim; an extension's `exec` block
+never runs. Constructs 20–25, 38–50 and 145–146 had no models at all and now do.
+
+The scripts use a two-way vocabulary, so `PARTIAL-OK` counts as PASS in some
+slices and FAIL in others. That inconsistency is stated in the audit rather than
+smoothed over; the four-way table remains the more informative view.
+
+134 tests unchanged; corpora unchanged. This release ships the proof and the
+corrections, not fixes for the defects it documents.
+
 ## 0.47.0 — 2026-11-02
 
 Full feature audit: 146 constructs, 74 behave as specified

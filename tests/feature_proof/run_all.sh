@@ -1,15 +1,11 @@
 #!/bin/sh
-# Re-run every feature-proof model and print what the tool actually does.
+# Run the complete feature proof: six slices, 146 constructs, 16 CLI/backend items.
 #
-#   ./run_all.sh /path/to/satya [corpus-root]
+#   ./run_all.sh /path/to/satya
 #
-# Each model exercises one construct. The runner prints, per model: whether it
-# parses, and — for models whose top action is named in the file header — the
-# solved values, so a reader can compare against docs/FEATURE-AUDIT.md.
-#
-# It does not assert verdicts: the verdicts in the audit are what these runs
-# showed on v0.46.0. A different build will print different values, and that is
-# the point — the evidence is re-derivable, not baked in.
+# Each slice script is self-contained (its models are embedded), asserts on
+# observed behaviour, and prints one PASS/FAIL line per item. This runner
+# aggregates them.
 set -u
 BIN=${1:-}
 if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
@@ -17,20 +13,23 @@ if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
     echo "error: no executable binary given" >&2
     exit 2
 fi
+case "$BIN" in /*) ;; *) BIN=$(pwd)/$BIN ;; esac
 cd "$(dirname "$0")" || exit 2
 
-pass=0; fail=0
-for f in slice-*/*.pss; do
-    [ -e "$f" ] || continue
-    if out=$("$BIN" parse "$f" 2>&1); then
-        act=$(printf '%s\n' "$out" | sed -n 's/^ *top *: *//p' | head -1)
-        echo "PARSE-OK   $f"
-        pass=$((pass+1))
-    else
-        echo "PARSE-FAIL $f"
-        printf '           %s\n' "$(printf '%s\n' "$out" | head -1)"
-        fail=$((fail+1))
-    fi
+pass=0; fail=0; slices_failed=0
+for i in 1 2 3 4 5 6; do
+    out=$(mktemp)
+    ./proof-slice-$i.sh "$BIN" >"$out" 2>&1
+    rc=$?
+    p=$(grep -cE '^PASS ' "$out")
+    f=$(grep -cE '^FAIL ' "$out")
+    pass=$((pass+p)); fail=$((fail+f))
+    [ "$rc" -ne 0 ] && slices_failed=$((slices_failed+1))
+    printf 'slice %s: %2d pass  %2d fail\n' "$i" "$p" "$f"
+    grep -E '^FAIL ' "$out" | sed 's/^/    /'
+    rm -f "$out"
 done
+
 echo
-echo "parsed: $pass   failed: $fail   total: $((pass+fail))"
+echo "TOTAL: $pass pass, $fail fail, $((pass+fail)) checks"
+[ "$slices_failed" -eq 0 ] && exit 0 || exit 1

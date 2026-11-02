@@ -114,6 +114,62 @@ primitives.
 - Slice 6's `addr_value_abs` verdict is against the project's own documentation;
   the LRM text for §24.10.7 was not available to settle which side is right.
 
+## The assertion scripts
+
+The first audit produced verdicts but lost its per-slice assertion scripts in
+transfer. They now exist and are part of the repo:
+
+```sh
+tests/feature_proof/run_all.sh /path/to/satya
+```
+
+Six self-contained scripts, one per slice. Each embeds its models, takes the
+binary as `$1`, fails closed with exit 2 if it is missing or is not Satya, and
+prints one `PASS`/`FAIL` line per item with the observed value on failure.
+
+Result on v0.46.0:
+
+| slice | pass | fail |
+|---|---|---|
+| 1 (1–25) | 12 | 13 |
+| 2 (26–50) | 16 | 9 |
+| 3 (51–75) | 18 | 7 |
+| 4 (76–100) | 8 | 17 |
+| 5 (101–125) | 18 | 7 |
+| 6 (126–146) | 16 | 5 |
+| CLI / backends | 16 | 0 |
+| **total** | **104** | **58** |
+
+The scripts use a two-way vocabulary, so `PARTIAL-OK` counts as PASS in some
+slices and FAIL in others depending on whether the assertion pins the documented
+limitation or the standard. That inconsistency is real and is why the four-way
+table above remains the more informative view; the scripts are the reproducible
+evidence, not a single score.
+
+## Where the assertion scripts corrected this audit
+
+Writing real assertions found errors in the audit itself, which is the point of
+doing it:
+
+| row | this audit said | the assertion showed |
+|---|---|---|
+| 62 scheduling constraint | "the engine walks the activity in one deterministic order, so `sequence` holds by construction" | **Wrong.** `constraint sequence { a1, a2 };` with the activity listing `do a2; do a1;` runs `a2, a1` on every seed. The declared order is not honoured. |
+| 121 address space | "traits are not matched" | **Stale.** Traits *are* matched — a claim on `trait.core == 1` lands in the `core == 1` region. The row fails only on claim `size`. |
+| 14 struct declaration | "nested and inherited struct members bind nothing" | **Half wrong.** Nested members *do* bind (proved with a cross-field constraint); only inherited members are unbound. |
+| 34 join specification | counted as PASS/PARTIAL | **Wrong.** All four join forms are indistinguishable and nothing is gated. |
+| 80 override | "ignored in the action-scope placement" | The audit's model omitted a `;`, so its activity was dropped entirely. With the `;` the activity runs and the override is still ignored — the verdict stands, the evidence did not. |
+| 104 `compile has` | "documented as not evaluated" | **Worse.** `compile has(NO_SUCH_TYPE)` still takes the then-branch. |
+
+New defects the scripts found that the audit missed:
+
+- **`+=`, `|=` and array-element assignment are silently dropped** — only plain `=` takes effect (row 91).
+- **Single-statement bodies are mis-parsed**: `repeat (4) b = b + 3;` iterates once, `if (5 > 3) r = 1; else r = 2;` takes the wrong branch. The braced forms are correct (rows 94, 97).
+- **`match` range arms never match**, and unbraced arms are dropped (row 98).
+- **Resource pools never create instances**, so parallel lockers all get instance 0 and always contend (rows 49, 50).
+- **`addr_value` returns 0** for a handle from a trait-parameterised transparent claim, while `claim.addr` is 0x9000 (row 139).
+- **An extension's `exec` block never runs**, so an attribute it adds stays unusable (row 79).
+- Constructs **20–25, 38–50 and 145–146 had no models at all** in the first audit; they do now.
+
 ## Reproducing
 
 Each slice directory holds one minimal model per construct. `run_all.sh` parses
