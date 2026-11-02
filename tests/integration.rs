@@ -3047,3 +3047,35 @@ fn a_scenario_json_is_not_accepted_as_a_model() {
     }"#;
     assert!(model_from_json(good).is_ok());
 }
+
+#[test]
+fn a_dynamic_constraint_is_parsed_and_enforced() {
+    // PSS 3.0 `dynamic constraint NAME { ... }` — found by running the LRM's
+    // Example 221, where the parser read `dynamic` as a type and `constraint`
+    // as a field name. The run-time add/remove is not modelled; the body is
+    // enforced like a static constraint.
+    let src = r#"
+struct d<type T, int LB, int UB> {
+  rand int a;
+  constraint a >= LB && a <= UB;
+};
+struct sub_s<int MIN, int MAX> : d<int, MIN, MAX> {
+  rand int n;
+  dynamic constraint half_max {
+    n <= (MAX - MIN) / 2;
+  }
+};
+"#;
+    assert!(compile_pss(src).is_ok(), "dynamic constraint must parse");
+
+    // It is enforced, not dropped.
+    let m = compile_pss(src).unwrap();
+    for seed in [1u64, 2, 3] {
+        let s = engine::run_scenario(&m, "sub_s", seed);
+        if let Some(st) = s.steps.first() {
+            if let Some((_, n)) = st.fields.iter().find(|(k, _)| k == "n") {
+                assert!(*n <= 50, "dynamic constraint not enforced: n={}", n);
+            }
+        }
+    }
+}

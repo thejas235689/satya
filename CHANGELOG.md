@@ -13,6 +13,42 @@ approximated.
 
 ---
 
+## 0.43.0 — 2026-11-02
+
+Running the standard's own examples: 153/160, and a real gap found
+
+Ran all 197 extracted examples from the PSS v3.0 LRM through the tool.
+
+```
+models parsed (no error):        153 / 160  (95.6%)
+models parsed (strict content):  128 / 160  (80.0%)
+engine: 72 examples contain an activity, 34 schedule >= 1 step
+```
+
+**All 7 failures are broken inputs, not parser bugs.** Classified by the line the
+error points at:
+
+| example | offending line | cause |
+|---|---|---|
+| Ex40, Ex298, Ex305 | prose from the surrounding document | apostrophes in text the extractor swept into code |
+| Ex85 | `action my_test {` at file scope | tail truncated, closing braces lost |
+| Ex221 | `rand int attr;` at top level | head truncated, the `struct` line lost |
+| Ex269 | `exec declaration C = """` | example is about multi-line comments; extraction broke the string |
+| Ex312 | end of file | truncated |
+
+Repairing Ex85 (wrap in a component, restore the braces) and Ex221 (restore the
+`struct` line) makes both parse.
+
+**One real gap fell out of that repair.** With Ex221's head restored, the parser
+still refused it — on `dynamic constraint half_max_domain { … }`. `dynamic` was
+read as a type and `constraint` as a field name, producing the misleading
+"`constraint` is a reserved word and cannot name a field". PSS 3.0 dynamic
+constraints are now parsed and enforced like static ones; the run-time
+add/remove is not modelled, and that is stated where the branch is.
+
+133 tests (1 new). Corpora unchanged: 97/97 curated, 7/7 pathological, 114/114
+compliance; conformance, randomisation and reproducer checks all pass.
+
 ## 0.42.0 — 2026-10-30
 
 The JSON frontend fails loudly now

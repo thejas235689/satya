@@ -671,6 +671,18 @@ impl Parser {
             if self.eat_punct(";") {
                 continue;
             }
+            // `dynamic constraint NAME { ... }` — a constraint that may be
+            // added and removed at run time. It is parsed and enforced like a
+            // static one; the run-time add/remove is not modelled.
+            if self.at_ident("dynamic") && self.peek_at(1).is_ident("constraint") {
+                self.bump();
+                let mut c = self.parse_constraint()?;
+                if c.name.is_none() {
+                    c.name = Some("<dynamic>".to_string());
+                }
+                constraints.push(c);
+                continue;
+            }
             if self.at_ident("constraint") {
                 constraints.push(self.parse_constraint()?);
                 continue;
