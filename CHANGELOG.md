@@ -13,6 +13,42 @@ approximated.
 
 ---
 
+## 0.44.0 — 2026-11-02
+
+The LRM harness now measures what it claims to
+
+The 153/160 figure from 0.43.0 was not trustworthy, for two reasons that both
+produced plausible numbers:
+
+- **The extractor wrote to `/scratch/work/examples/lrm` while the harness read
+  the repo's `examples/lrm`.** The harness was scoring a stale tree, so the
+  `dynamic constraint` repair never moved the number. `OUT` is derived from the
+  script's location now.
+- **Damaged snippets were counted as parser failures.** Four of the seven were
+  prose swept into the code, three were truncated. The extractor now classifies
+  each snippet before the harness sees it: `truncated` when braces or quotes do
+  not balance, `prose` when an apostrophe appears inside a word. Only `ok`
+  snippets are scored, and the excluded ones are listed **with their own
+  result**, so exclusion cannot hide a failure.
+
+```
+by status: {'ok': 188, 'truncated': 9}
+excluded (damaged by extraction, not parser failures): 9
+  of these, 0 still parse anyway (the parser is lenient)
+
+models parsed (no error):        153 / 153  (100.0%)
+models parsed (strict content):  128 / 153  (83.7%)
+```
+
+The first classifier written for this flagged **thirty** examples that parse
+perfectly well, because PSS based literals (`4'b1010`) were read as unterminated
+character literals. Over-flagging inflates the figure just as surely as
+under-flagging deflates it, so the check is now two strong signals rather than a
+loose heuristic.
+
+133 tests. Corpora unchanged: 97/97 curated, 7/7 pathological, 114/114
+compliance.
+
 ## 0.43.1 — 2026-11-02
 
 `dynamic constraint` in an action body

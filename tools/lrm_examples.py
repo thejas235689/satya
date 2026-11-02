@@ -71,6 +71,10 @@ def steps_of(out):
 def main():
     manifest = json.load(open(os.path.join(DIR, "manifest.json")))
     results = []
+    # A snippet the extractor damaged is not a parser failure. It is excluded
+    # and reported separately, so the parse figure means something.
+    damaged = [m for m in manifest if m.get("status", "ok") != "ok"]
+    manifest = [m for m in manifest if m.get("status", "ok") == "ok"]
     for m in manifest:
         body = open(os.path.join(DIR, m["file"])).read().split("\n", 1)[1]
         first_err = None
@@ -102,6 +106,21 @@ def main():
     models = [r for r in results if r["kind"] != "expression"]
     exprs = [r for r in results if r["kind"] == "expression"]
     ok = [r for r in models if r["ok"]]
+    if damaged:
+        # Report what the excluded ones do anyway, so excluding them is not a
+        # way of hiding a failure.
+        still = 0
+        for m in damaged:
+            body = open(os.path.join(DIR, m["file"])).read().split("\n", 1)[1]
+            for _, tpl, _ in WRAPS:
+                if invoke(["parse"], tpl % body)[0] == 0:
+                    still += 1
+                    break
+        print("excluded (damaged by extraction, not parser failures): %d" % len(damaged))
+        for m in damaged:
+            print("  Ex%-4d %-10s %s" % (m["num"], m.get("status", "?"), m["title"][:44]))
+        print("  of these, %d still parse anyway (the parser is lenient)" % still)
+        print()
     print("LRM examples extracted: %d  (models: %d, expression snippets: %d)"
           % (len(results), len(models), len(exprs)))
     strict = [r for r in models if r["strict"]]

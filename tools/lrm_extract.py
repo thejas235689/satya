@@ -14,7 +14,7 @@ import os
 import re
 
 SRC = "/scratch/work/lrm/lrm.txt"
-OUT = "/scratch/work/examples/lrm"
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "examples", "lrm")
 
 NOISE = (
     "Copyright ©",
@@ -76,6 +76,91 @@ def looks_like_code(line):
         return True
     # Short line with code punctuation, e.g. `int data[4];`
     return any(c in st for c in ";{}") and len(words) <= 8
+
+
+def strip_code(text):
+    """Drop strings and comments so brace and quote counting is not fooled."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        two = text[i:i+2]
+        if two == "//":
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        if two == "/*":
+            i += 2
+            while i < n and text[i:i+2] != "*/":
+                i += 1
+            i += 2
+            continue
+        ch = text[i]
+        if ch == '"':
+            i += 1
+            closed = False
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == '"':
+                    closed = True
+                    i += 1
+                    break
+                # A target-code string may span lines, so do not stop at one.
+                i += 1
+            if not closed:
+                out.append('"')     # an unterminated string survives as a quote
+            continue
+        if ch == "'" and i + 1 < n and text[i+1] in "bhdBHdD":
+            # A based literal (`4'b1010`, `8'hFF`) is not a char literal.
+            i += 2
+            while i < n and (text[i].isalnum() or text[i] in "_xXzZ?"):
+                i += 1
+            continue
+        if ch == "'":
+            i += 1
+            closed = False
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == "'":
+                    closed = True
+                    i += 1
+                    break
+                if text[i] == "\n":
+                    break
+                i += 1
+            if not closed:
+                out.append("'")
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def classify(text):
+    """ok | prose | truncated.
+
+    Only two signals, both strong: an apostrophe inside a word (documentation
+    text, never PSS), and a snippet that does not balance. A looser heuristic
+    flagged thirty examples that parse perfectly well, which would have
+    inflated the parse figure in the dishonest direction.
+    """
+    if re.search(r"\w'\w", strip_code(text)):
+        return "prose"
+    depth = 0
+    for ch in strip_code(text):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth < 0:
+                return "truncated"
+    if depth != 0:
+        return "truncated"
+    if '"' in strip_code(text) or "'" in strip_code(text):
+        return "truncated"      # an unterminated string or literal
+    return "ok"
 
 
 def slug(title):
@@ -174,6 +259,7 @@ def main():
             "kind": kind,
             "file": name,
             "lines": len(code),
+            "status": classify(text),
         })
 
     manifest.sort(key=lambda m: m["num"])
@@ -185,6 +271,12 @@ def main():
     print("code extracted:", len(manifest))
     print("dropped (prose / grammar / elided):", len(starts) - len(manifest))
     print("by kind:", dict(Counter(m["kind"] for m in manifest)))
+    print("by status:", dict(Counter(m["status"] for m in manifest)))
+    bad = [m for m in manifest if m["status"] != "ok"]
+    if bad:
+        print("damaged by extraction (excluded from the parse figure):")
+        for m in bad:
+            print("  Ex%-4d %-10s %s" % (m["num"], m["status"], m["title"][:46]))
 
 
 if __name__ == "__main__":

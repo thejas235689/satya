@@ -9,6 +9,40 @@ Source: *Portable Test and Stimulus Standard 3.0*, Accellera, August 2024
 
 ---
 
+## Extractor integrity
+
+The extractor now **classifies what it produced** before the harness runs it, so
+a snippet it damaged is never counted as a parser failure.
+
+A snippet is marked `truncated` when it does not balance — brace depth non-zero,
+depth going negative, or a string that never closes. A `prose` mark (an
+apostrophe inside a word) is kept for documentation text swept in with the code.
+Only `ok` snippets are scored; the rest are listed with their own result.
+
+```
+by status: {'ok': 188, 'truncated': 9}
+excluded (damaged by extraction, not parser failures): 9
+  of these, 0 still parse anyway (the parser is lenient)
+
+LRM examples extracted: 188  (models: 153, expression snippets: 35)
+models parsed (no error):        153 / 153  (100.0%)
+models parsed (strict content):  128 / 153  (83.7%)
+```
+
+Two bugs in the extractor made the earlier figures untrustworthy, and both are
+worth recording because they produced *plausible* numbers:
+
+- **The extractor wrote to `/scratch/work/examples/lrm` while the harness read
+  the repo's `examples/lrm`.** The harness was scoring a stale tree, so repairs
+  to the extractor never moved the number. `OUT` is now derived from the
+  script's own location.
+- **The first classifier was too aggressive.** It flagged thirty examples that
+  parse perfectly well — including PSS based literals like `4'b1010`, read as
+  unterminated character literals. Over-flagging inflates the score in the
+  dishonest direction just as surely as under-flagging deflates it.
+
+---
+
 ## 1. Method
 
 1. **Extract.** `tools/lrm_extract.py` walks the LRM text, finds every
