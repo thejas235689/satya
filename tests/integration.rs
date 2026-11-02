@@ -3068,6 +3068,28 @@ struct sub_s<int MIN, int MAX> : d<int, MIN, MAX> {
 "#;
     assert!(compile_pss(src).is_ok(), "dynamic constraint must parse");
 
+    // It must also work in an action body, not only in a struct. The first
+    // fix covered only the struct path, and the published binary rejected the
+    // action form.
+    let in_action = r#"
+component c {
+  action a {
+    rand int n;
+    dynamic constraint half { n <= 50; }
+  };
+};
+"#;
+    assert!(compile_pss(in_action).is_ok(), "dynamic constraint in an action body");
+    let ma = compile_pss(in_action).unwrap();
+    for seed in [1u64, 2, 3] {
+        let s = engine::run_scenario(&ma, "a", seed);
+        if let Some(st) = s.steps.first() {
+            if let Some((_, n)) = st.fields.iter().find(|(k, _)| k == "n") {
+                assert!(*n <= 50, "dynamic constraint not enforced in an action: n={}", n);
+            }
+        }
+    }
+
     // It is enforced, not dropped.
     let m = compile_pss(src).unwrap();
     for seed in [1u64, 2, 3] {

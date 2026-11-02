@@ -1897,6 +1897,17 @@ impl Parser {
             if self.eat_punct(";") {
                 continue;
             }
+            // `dynamic constraint NAME { ... }` in an action body (see the
+            // struct-body branch for the semantics).
+            if self.at_ident("dynamic") && self.peek_at(1).is_ident("constraint") {
+                self.bump();
+                let mut c = self.parse_constraint()?;
+                if c.name.is_none() {
+                    c.name = Some("<dynamic>".to_string());
+                }
+                constraints.push(c);
+                continue;
+            }
             if self.at_ident("constraint") {
                 constraints.push(self.parse_constraint()?);
                 continue;

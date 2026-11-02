@@ -13,6 +13,27 @@ approximated.
 
 ---
 
+## 0.43.1 — 2026-11-02
+
+`dynamic constraint` in an action body
+
+0.43.0 added `dynamic constraint` to the **struct** body loop and I published it
+without checking the action form. The published binary rejected:
+
+```pss
+component c { action a { rand int n; dynamic constraint half { n <= 50; } } };
+```
+
+with the same misleading "`constraint` is a reserved word and cannot name a
+field". The action body has its own loop; the branch is now in both, and the
+regression test covers both rather than only the struct case that the LRM
+example happened to use.
+
+Verified enforced in both contexts (`n <= 50` on every seed).
+
+133 tests. Corpora unchanged: 97/97 curated, 7/7 pathological, 114/114
+compliance, LRM 153/160.
+
 ## 0.43.0 — 2026-11-02
 
 Running the standard's own examples: 153/160, and a real gap found
