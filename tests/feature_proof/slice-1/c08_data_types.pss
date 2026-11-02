@@ -1,0 +1,34 @@
+// Construct 8 — Data types and data declarations (PSS 6)
+// Every kind of data type the standard lists is declared in one action and
+// given a value, so the trace shows whether each carries one.
+package c08_pkg {
+    enum e_t { A, B, C };
+    struct s_t { bit[8] f; };
+
+    component c08_c {
+        action decl_a {
+            bit          b1;
+            int          i32;
+            bool         flag;
+            e_t          ev;
+            s_t          sv;
+            string       str;
+            bit[16]      arr[2];
+            list<int>    li;
+            set<int>     st;
+            map<int,int> mp;
+            chandle      ch;
+
+            exec pre_solve {
+                b1 = 1; i32 = -5; ev = B; str = "x";
+                arr = {11, 22}; sv.f = 9;
+                li = {1}; st.push_back(2);
+            }
+        };
+
+        // bool must hold one of two values; sampled over seeds by proof.sh.
+        action bool_a {
+            rand bool flag;
+        };
+    };
+};

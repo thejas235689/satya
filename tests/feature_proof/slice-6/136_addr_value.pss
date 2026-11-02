@@ -1,0 +1,9 @@
+// Syntax 136 — addr_value function (PSS 24.10.5).
+component C {
+  exec init_up { mem.addr = 0x400; mem.size = 0x1000; }
+  action a {
+    addr_handle_t h; int av;
+    exec pre_solve { h = make_handle_from_claim(mem, 0x24); av = addr_value(h); }
+    rand int x;
+  };
+}

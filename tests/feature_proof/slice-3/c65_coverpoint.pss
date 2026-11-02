@@ -1,0 +1,16 @@
+// Construct 65 — coverpoint declaration (PSS 18.3, Syntax 65).
+package p65 {
+    component c65 {
+        covergroup cg (int x, int y) {
+            cp_x: coverpoint x { bins lo = [0..3]; bins hi = [4..7]; }
+            coverpoint y iff (x > 3) { bins any = [0..7]; }
+        }
+        action top_a { activity { cover { do item_a; } }; };
+        action item_a {
+            rand int x;
+            rand int y;
+            constraint x in [0..7];
+            constraint y in [0..7];
+        };
+    };
+};

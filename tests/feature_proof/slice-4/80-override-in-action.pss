@@ -1,0 +1,11 @@
+// Syntax 80 probe — the LRM's own placement (Example 226): the override block sits
+// inside the action body, before the activity.
+component c {
+  action base_a { rand int x; constraint x in [0..100]; exec post_solve { message(LOW, "MARK base", 0); } };
+  action der_a : base_a { constraint x == 91; exec post_solve { message(LOW, "MARK derived", 0); } };
+  action t_action_scope {
+    base_a fa;
+    override { type base_a with der_a; }
+    activity { fa; }
+  };
+};

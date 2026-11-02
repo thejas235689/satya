@@ -1,0 +1,34 @@
+// Construct 15 — Collection data types (PSS 7.9)
+// array, list, set and map declared together, then exercised: element access,
+// foreach binding, size, and set uniqueness.
+package c15_pkg {
+    component c15_c {
+        action a {
+            int       arr[3];
+            list<int> li;
+            set<int>  st;
+            map<int,int> mp;
+            int sz_arr; int sz_li; int sz_st; int sz_mp;
+            int a1; int l1;
+
+            exec pre_solve {
+                arr = {4, 5, 6};
+                sz_arr = arr.size();
+                a1 = arr[1];
+                li.push_back(10); li.push_back(20);
+                sz_li = li.size();
+                l1 = li[1];
+                st.push_back(7); st.push_back(7); st.push_back(8);  // 7 twice
+                sz_st = st.size();
+                sz_mp = mp.size();
+            }
+        };
+
+        // foreach over an array must bind the elements.
+        action foreach_a {
+            rand bit[8] sizes[4];
+            constraint foreach (sizes[i]) { sizes[i] in [0..10]; }
+            constraint sizes.sum() <= 25;
+        };
+    };
+};

@@ -1,0 +1,12 @@
+// 113 float_mantissa (doc: yes). 6.0 -> 0x8000000000000, 1.0 -> 0.
+component c {
+    action test {
+        int m6; int m1;
+        exec pre_solve {
+            m6 = float_mantissa(6.0);
+            m1 = float_mantissa(1.0);
+        }
+        rand int v;
+        constraint v == 1;
+    };
+};

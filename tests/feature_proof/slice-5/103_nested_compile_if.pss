@@ -1,0 +1,12 @@
+// 103 nested compile if: a plain declaration in the enabled branch survives
+// (plain_a), so the outer branch is kept; the nested compile if must select
+// its then-branch and keep inner_a.
+component c {
+    compile if (1) {
+        action plain_a { rand int v; constraint v == 1; };
+        compile if (1) {
+            action inner_a { rand int v; constraint v == 2; };
+        }
+    }
+    action after_a { rand int v; constraint v == 3; };
+};

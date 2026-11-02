@@ -1,0 +1,22 @@
+// Construct 59 — unique constraint (PSS 16.1.9, Syntax 59).
+package p59 {
+    component c59 {
+        action arr_a {
+            rand int ids[4];
+            constraint foreach (ids[i]) { ids[i] in [1..4]; }
+            constraint unique { ids };
+        };
+        action scalars_a {
+            rand int x; rand int y; rand int z;
+            constraint x in [1..3];
+            constraint y in [1..3];
+            constraint z in [1..3];
+            constraint unique { x, y, z };
+        };
+        action impossible_a {
+            rand int five[5];
+            constraint foreach (five[i]) { five[i] in [1..4]; }
+            constraint unique { five };
+        };
+    };
+};

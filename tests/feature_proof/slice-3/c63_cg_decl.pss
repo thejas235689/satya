@@ -1,0 +1,13 @@
+// Construct 63 — covergroup declaration (PSS 18.1, Syntax 63).
+package p63 {
+    component c63 {
+        covergroup len_cg (int len) {
+            coverpoint len {
+                bins short_len = [0..3];
+                bins long_len  = [4..7];
+            }
+        }
+        action top_a { activity { cover { do item_a; } }; };
+        action item_a { rand int len; constraint len in [0..7]; };
+    };
+};

@@ -1,0 +1,10 @@
+// Syntax 132 — sizeof_s with an inline bit-vector type argument.
+// The documented behaviour says sizeof_s works for bit vectors; this file is
+// used to record whether `sizeof_s<bit[24]>` is even accepted.
+component C {
+  action a {
+    int w;
+    exec pre_solve { w = sizeof_s<bit[24]>::nbits; }
+    rand int x;
+  };
+}

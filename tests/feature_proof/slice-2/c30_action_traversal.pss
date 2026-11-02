@@ -1,0 +1,18 @@
+// Construct 30 — Action traversal statement (row 30, "yes")
+// Three traversal forms that must all resolve to a real action:
+//   bare (`do A`), type-qualified (`do leaf_c::leaf_a`) and constrained
+//   (`do A with { .. }`).
+component leaf_c {
+   action leaf_a { rand int f; }
+};
+component pss_top {
+   leaf_c sub;
+   action A { rand int a; }
+   action test {
+      activity {
+         do A;
+         do leaf_c::leaf_a;
+         do A with { a == 3; };
+      };
+   };
+};

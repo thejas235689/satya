@@ -1,0 +1,18 @@
+// 112 Floating-point storage types (doc: yes).
+// 6.0 as float64 is 0x4018000000000000 = 4618441417868443648;
+// 6.0 as float32 must be 0x40C00000 = 1086324736;
+// -6.0 must be 0xC018000000000000 = -4604930618986332160.
+component c {
+    action test {
+        float32 f32;
+        float64 f64;
+        float64 neg;
+        exec pre_solve {
+            f32 = 6.0;
+            f64 = 6.0;
+            neg = -6.0;
+        }
+        rand int v;
+        constraint v == 1;
+    };
+};

@@ -1,0 +1,10 @@
+// Construct 37 probe — the condition is constant false. The body should not
+// repeat; the step count is compared with c37_repeat_while.pss.
+component pss_top {
+   action A { rand int a; }
+   action test {
+      activity {
+         repeat { do A; } while (0);
+      };
+   };
+};

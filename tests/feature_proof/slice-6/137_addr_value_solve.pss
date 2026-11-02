@@ -1,0 +1,9 @@
+// Syntax 137 — addr_value_solve function (PSS 24.10.6).
+component C {
+  exec init_up { mem.addr = 0x400; mem.size = 0x1000; }
+  action a {
+    addr_handle_t h; int av; int avs;
+    exec pre_solve { h = make_handle_from_claim(mem, 0x24); av = addr_value(h); avs = addr_value_solve(h); }
+    rand int x;
+  };
+}

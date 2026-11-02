@@ -4,6 +4,13 @@ The standard defines **146 syntax excerpts** — one per language construct. Thi
 document maps every one of them to its status in Satya, so the project's
 coverage can be read honestly rather than inferred from the test count.
 
+> **Read [`FEATURE-AUDIT.md`](FEATURE-AUDIT.md) before trusting this table.**
+> All 146 rows were re-tested against v0.46.0 by six parallel audits that judged
+> observed behaviour rather than parsing. Result: **74 PASS, 24 PARTIAL-OK,
+> 35 PARTIAL-WORSE, 13 FAIL**. The 114 "yes" below is a count of what *parses
+> and is partly implemented*; 74 behave as the standard specifies. The per-row
+> verdicts and the 120 reproducing models are in `tests/feature_proof/`.
+
 Legend: **yes** — parsed *and* implemented with its defined semantics;
 **partial** — parsed, and some semantics implemented, but not all;
 **no** — not implemented.

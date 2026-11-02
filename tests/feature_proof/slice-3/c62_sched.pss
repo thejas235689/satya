@@ -1,0 +1,15 @@
+// Construct 62 — scheduling constraint statement (PSS 16.2, Syntax 62).
+// `constraint sequence { a1, a2 };` asks for a1 before a2, while the activity
+// itself lists a2 first; if the constraint is honoured the order flips.
+package p62 {
+    component c62 {
+        action a1 { rand int v; constraint v in [0..9]; };
+        action a2 { rand int v; constraint v in [0..9]; };
+        action seq_a {
+            activity { constraint sequence { a1, a2 }; do a2; do a1; };
+        };
+        action par_a {
+            activity { parallel { do a1; do a2; }; constraint parallel { a1, a2 }; };
+        };
+    };
+};

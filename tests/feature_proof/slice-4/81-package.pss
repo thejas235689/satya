@@ -1,0 +1,17 @@
+// Syntax 81 — package declaration: nested packages, package constants used in a
+// constraint, package-scope components instantiated and traversed.
+package outer_p {
+  static const int K = 5;
+  package inner_p {
+    static const int M = 7;
+    component inner_c { action ia { rand int v; constraint v == 111; }; };
+  }
+  component pkg_c { action pa { rand int w; constraint w == K + 1; }; };
+};
+component top_c {
+  outer_p::pkg_c pc;
+  outer_p::inner_p::inner_c ic;
+  action t {
+    activity { do outer_p::pkg_c::pa; do outer_p::inner_p::inner_c::ia; }
+  };
+};

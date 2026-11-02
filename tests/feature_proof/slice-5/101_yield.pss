@@ -1,0 +1,14 @@
+// 101 Procedural yield statement (doc: yes - accepted, no coroutine).
+// Observable: the statement after yield() still executes.
+component c {
+    action test {
+        int a; int b;
+        exec pre_solve {
+            a = 1;
+            yield();
+            b = 2;
+        }
+        rand int v;
+        constraint v == 5;
+    };
+};

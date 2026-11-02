@@ -1,0 +1,19 @@
+// Syntax 85 — function definition: parameters bound positionally into a scope restored
+// after the call; a `task` body runs for its side effects.
+component c {
+  int cnt;
+  function int twice(int x) { x = x + 100; return (x * 2); }
+  task side_effect() { cnt = cnt + 3; }
+  action f {
+    int r;
+    int arg;
+    exec post_solve {
+      arg = 5;
+      r = twice(arg);
+      cnt = 0;
+      side_effect();
+      side_effect();
+      message(LOW, "MARK def", 0);
+    }
+  };
+};

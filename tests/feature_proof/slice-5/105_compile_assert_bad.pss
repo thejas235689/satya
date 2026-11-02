@@ -1,0 +1,6 @@
+// 105 compile assert statement (doc: yes - a false condition is an error
+// naming the expression).
+component c {
+    compile assert (1 + 1 == 3);
+    action test { rand int v; constraint v == 1; };
+};

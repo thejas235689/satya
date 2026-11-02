@@ -1,0 +1,18 @@
+// Syntax 129 — Transparent contiguous address space claim type (PSS 24.8.3).
+// Evidence: the claim is allocated and, because the region is transparent, the
+// absolute address is known at solve time. The handle is made in post_solve:
+// claims are allocated after the solve, so pre_solve cannot see claim.addr.
+component C {
+  exec init_up { mem.addr = 0x1000; mem.size = 0x100; }
+  action a {
+    transparent_addr_claim_s<> t;
+    constraint t.size == 32;
+    addr_handle_t h; int av; int aa; int early;
+    exec pre_solve {
+      // Before the solve the claim has no address yet.
+      early = addr_value(make_handle_from_claim(t, 0));
+    }
+    exec post_solve { h = make_handle_from_claim(t, 0); av = addr_value(h); aa = addr_value_abs(h); }
+    rand int x;
+  };
+}

@@ -1,0 +1,18 @@
+// Construct 33 — Schedule statement (row 33, "yes")
+// Same shape as c32_parallel.pss: the two traces are compared. A schedule block
+// must not be modelled as a concurrent group (its branches are pairwise
+// disjoint in time, PSS 12.3.5.2 / 19.3.8).
+component pss_top {
+   action A { rand int a; }
+   action B { rand int b; }
+   action C { rand int c; }
+   action test {
+      activity {
+         sch1: schedule {
+            do A;
+            do B;
+         };
+         do C;
+      };
+   };
+};

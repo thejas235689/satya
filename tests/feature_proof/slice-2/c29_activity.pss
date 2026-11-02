@@ -1,0 +1,14 @@
+// Construct 29 — activity statement (row 29, "yes")
+// An activity block is a sequence of activity statements executed in order.
+component pss_top {
+   action A { rand int a; }
+   action B { rand int b; }
+   action C { rand int c; }
+   action test {
+      activity {
+         do A;
+         do B;
+         do C;
+      };
+   };
+};

@@ -1,0 +1,17 @@
+// Construct 27 — Template type parameter declaration (row 27, "yes")
+// `type T` substitutes the field's type: the same literal 200 written into a
+// bit[4] field must be truncated to 8, while a bit[16] field keeps 200.
+struct pair_s <type T> {
+   T value;
+};
+component t27_c {
+   action test {
+      pair_s<bit[4]>  narrow;
+      pair_s<bit[16]> wide;
+      exec pre_solve {
+         narrow.value = 200;
+         wide.value   = 200;
+      }
+      rand int v;
+   };
+};

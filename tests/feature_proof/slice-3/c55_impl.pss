@@ -1,0 +1,15 @@
+// Construct 55 — Implication constraint (PSS 16.1.5, Syntax 55).
+package p55 {
+    enum kind_e { READ, WRITE, IDLE };
+    component c55 {
+        action impl_a {
+            rand int len;
+            rand kind_e kind;
+            rand int burst;
+            constraint len in [1..64];
+            constraint kind == WRITE -> burst in [2..8];
+            constraint kind == READ  -> burst == 0;
+            constraint len > 32 -> burst <= 4;
+        };
+    };
+};

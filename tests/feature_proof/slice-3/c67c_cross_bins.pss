@@ -1,0 +1,16 @@
+// Construct 67 / trap 5 — bins attached to a cross (PSS 18.4.3).
+package p67c {
+    enum e_t { A, B };
+    component c67c {
+        covergroup cg (int len, e_t k) {
+            coverpoint len { label lb; bins small = [0..3]; bins large = [4..7]; }
+            coverpoint k   { label kb; }
+            cross lb, kb {
+                label lxk;
+                bins half = lb with (len < 4);
+            }
+        }
+        action top_a { activity { cover { do item_a; } }; };
+        action item_a { rand int len; rand e_t k; constraint len in [0..7]; };
+    };
+};

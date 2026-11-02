@@ -1,0 +1,13 @@
+// Construct 57 — foreach constraint (PSS 16.1.7, Syntax 57).
+package p57 {
+    component c57 {
+        action fe_a {
+            rand int payload[8];
+            constraint foreach (payload[i]) { payload[i] in [0..15]; }
+        };
+        action fe_bound_a {
+            rand int ids[6];
+            constraint foreach (v : ids) { v in [100..110]; }
+        };
+    };
+};

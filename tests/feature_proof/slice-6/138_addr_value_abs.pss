@@ -1,0 +1,19 @@
+// Syntax 138 — addr_value_abs function (PSS 24.10.7).
+// SEMANTICS.md documents this family as returning "the handle's address".
+// Two handles at different addresses are used to show what it actually returns.
+component C {
+  exec init_up { mem.addr = 0x400; mem.size = 0x1000; }
+  action a {
+    addr_handle_t h0; addr_handle_t h1;
+    int abs0; int abs1; int av0; int av1;
+    exec pre_solve {
+      h0 = make_handle_from_claim(mem, 0x10);
+      h1 = make_handle_from_claim(mem, 0x800);
+      av0  = addr_value(h0);
+      av1  = addr_value(h1);
+      abs0 = addr_value_abs(h0);
+      abs1 = addr_value_abs(h1);
+    }
+    rand int x;
+  };
+}

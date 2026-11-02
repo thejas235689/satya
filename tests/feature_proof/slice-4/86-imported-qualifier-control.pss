@@ -1,0 +1,8 @@
+// Syntax 86 control — the identical model with the qualifier removed. If both give the
+// same answer the qualifier has no effect.
+package fp {
+  function int twice(int x) { return (x * 2); }
+}
+component c {
+  action a { int r; exec post_solve { r = twice(21); message(LOW, "MARK qual", 0); } };
+};

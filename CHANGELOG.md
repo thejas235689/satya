@@ -13,6 +13,46 @@ approximated.
 
 ---
 
+## 0.47.0 — 2026-11-02
+
+Full feature audit: 146 constructs, 74 behave as specified
+
+Every row of the feature matrix was re-tested against the published v0.46.0
+binary by **six parallel audits**, one per slice, each judging observed
+behaviour — solved values, trace structure, coverage bins, monitor matches —
+rather than "it parses". 120 minimal reproducing models are now in
+`tests/feature_proof/` with a runner, and the verdicts are in
+[`docs/FEATURE-AUDIT.md`](docs/FEATURE-AUDIT.md).
+
+```
+PASS            74
+PARTIAL-OK      24   (documented limitation reproduces)
+PARTIAL-WORSE   35   (worse than documented)
+FAIL            13
+```
+
+**`FEATURES.md` claims 114 implemented. 74 behave as the standard specifies.**
+The matrix was counting "parsed" as "implemented" — the same confusion this
+project has been chasing since v0.24.0, now measured rather than suspected. The
+table carries a warning pointing at the audit.
+
+The dominant failure mode, across the 35 PARTIAL-WORSE rows, is **reporting
+success while doing nothing**:
+
+- `bit[8]` constrained to `[256..300]` yields **256** and prints `constraints: 1/1 satisfied`
+- `forall (e : elem_s) { e.size < 5; }` is dropped and still counted `2/2 satisfied`
+- a claim's `size` constraint is ignored (always 64 bytes) and still reports satisfied
+- `rand bool b` yields 69; `rand bit[64]` yields a negative number
+
+Thirteen constructs do not work at all, including `bind`, `import` (no effect on
+name resolution), `import class` (parse error), procedural blocks (dropped),
+`bins all[N]` (one bin instead of N), `sizeof_s` (0 for most types) and
+`addr_value_abs` (constant 1).
+
+134 tests unchanged; corpora unchanged. This release adds the audit, the models
+and the runner — it does not fix the findings. The next release should start
+with the four defects that produce a confident wrong answer.
+
 ## 0.46.0 — 2026-11-02
 
 The last five were a category error, not a shortfall

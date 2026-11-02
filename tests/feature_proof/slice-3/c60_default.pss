@@ -1,0 +1,19 @@
+// Construct 60 — Default constraints (PSS 16.1.10, Syntax 60). LRM Example 133.
+package p60 {
+    struct my_struct {
+        rand int in [0..3] attr1;
+        constraint default attr1 == 0;
+        rand int in [0..3] attr2;
+        constraint attr1 < attr2;
+    };
+    component c60 {
+        action my_action {
+            rand my_struct s1;
+            rand my_struct s2;
+            constraint default s2.attr1 == 2;
+            rand my_struct s3;
+            constraint default disable s3.attr1;
+            constraint s3.attr1 > 0;
+        };
+    };
+};

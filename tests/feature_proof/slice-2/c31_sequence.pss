@@ -1,0 +1,17 @@
+// Construct 31 — Activity sequence block (row 31, "yes")
+// Statements in a sequence block run in the order written, before the statement
+// that follows the block.
+component pss_top {
+   action A { rand int a; }
+   action B { rand int b; }
+   action C { rand int c; }
+   action test {
+      activity {
+         seq1: sequence {
+            do A;
+            do B;
+         };
+         do C;
+      };
+   };
+};

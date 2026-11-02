@@ -1,0 +1,16 @@
+// Construct 18 — cast operation (PSS 8.4)
+// The documented values are: (bit[8])300 = 44, (bit)5 = 1, (int)x = no-op.
+package c18_pkg {
+    component c18_c {
+        action a {
+            int wide; int narrow; int single; int noop; int neg;
+            exec pre_solve {
+                wide   = (bit[16])70000;   // 70000 & 0xFFFF = 4464
+                narrow = (bit[8])300;      // 300 & 0xFF      = 44
+                single = (bit)5;           // 5 & 1           = 1
+                noop   = (int)7;           // no-op           = 7
+                neg    = (bit[8])(-1);     // 0xFF            = 255
+            }
+        };
+    };
+};

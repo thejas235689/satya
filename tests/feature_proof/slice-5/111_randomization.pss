@@ -1,0 +1,13 @@
+// 111 Randomization functions (doc: yes - urandom / urandom_range).
+component c {
+    action test {
+        int u1; int u2; int r;
+        exec pre_solve {
+            u1 = urandom();
+            u2 = urandom();
+            r = urandom_range(1, 6);
+        }
+        rand int v;
+        constraint v == 1;
+    };
+};

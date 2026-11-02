@@ -1,0 +1,12 @@
+// Syntax 127 — Base address space claim type (PSS 24.8.1).
+// Evidence: a base claim is allocated first-fit from a region, so claim.addr
+// becomes visible to the action. Also shows that the claim's own `size`
+// constraint is not what drives the allocation.
+component C {
+  exec init_up { mem.addr = 0x1000; mem.size = 0x100; }
+  action a {
+    addr_claim_base_s b;
+    constraint b.size == 8;
+    rand int x;
+  };
+}

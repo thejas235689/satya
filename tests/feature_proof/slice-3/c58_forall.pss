@@ -1,0 +1,19 @@
+// Construct 58 — forall constraint (PSS 16.1.8, Syntax 58), documented partial.
+// body_a: the body mentions no forall variable, so nothing needs expanding.
+// bound_a: the body constrains the forall-bound variable itself, which needs
+// per-instance expansion to mean anything.
+package p58 {
+    struct elem_s { rand int size; };
+    component c58 {
+        action body_a {
+            rand int x;
+            constraint x in [0..100];
+            constraint forall (it : int) { x < 10; };
+        };
+        action bound_a {
+            rand int y;
+            constraint y in [0..100];
+            constraint forall (e : elem_s) { e.size < 5; };
+        };
+    };
+};

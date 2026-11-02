@@ -1,0 +1,10 @@
+// Syntax 82 — single-name import: `import fpa::value;` must select fpa's value (11).
+package fpa { function int value() { return (11); } }
+package fpb { function int value() { return (22); } }
+component c {
+  import fpa::value;
+  action a {
+    int r;
+    exec post_solve { r = value(); message(LOW, "MARK value", 0); }
+  };
+};

@@ -1,0 +1,18 @@
+// Construct 3 — Aggregate literals (PSS 8.5.1)
+// `{a, b, c}` gives a collection its elements; read back element by element.
+package c03_pkg {
+    component c03_c {
+        action a {
+            int       arr[3];
+            list<int> li;
+            int r0; int r1; int r2; int l0; int l1;
+
+            exec pre_solve {
+                arr = {10, 20, 30};
+                r0 = arr[0]; r1 = arr[1]; r2 = arr[2];
+                li = {7, 8};
+                l0 = li[0]; l1 = li[1];
+            }
+        };
+    };
+};

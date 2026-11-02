@@ -1,0 +1,18 @@
+// Syntax 135 — make_handle_from_handle function (PSS 24.10.4.2).
+// The returned handle's address is the argument handle's address plus the offset.
+component C {
+  exec init_up { mem.addr = 0x400; mem.size = 0x1000; }
+  action a {
+    addr_handle_t h0; addr_handle_t h1; addr_handle_t h2;
+    int a0; int a1; int a2;
+    exec pre_solve {
+      h0 = make_handle_from_claim(mem, 0x10);
+      h1 = make_handle_from_handle(h0, 4);
+      h2 = make_handle_from_handle(h1, 0x100);
+      a0 = addr_value(h0);
+      a1 = addr_value(h1);
+      a2 = addr_value(h2);
+    }
+    rand int x;
+  };
+}

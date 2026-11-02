@@ -1,0 +1,10 @@
+// 104 compile has expression (doc: partial - parsed, not evaluated).
+// NO_SUCH_TYPE is declared nowhere in this model, so a correct evaluator
+// takes the else branch. Observed: the then branch is taken.
+component c {
+    compile if (compile has (NO_SUCH_TYPE)) {
+        action has_true_a { rand int v; constraint v == 4; };
+    } else {
+        action has_false_a { rand int v; };
+    }
+};

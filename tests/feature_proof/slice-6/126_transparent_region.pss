@@ -1,0 +1,26 @@
+// Syntax 126 — Transparent region type (PSS 24.7.1.4).
+// A transparent region has a known absolute address. Evidence: the region's
+// address/size are visible, and a handle made from it resolves to that address
+// with addr_value_abs() == 1 (absolute address known).
+component C {
+  transparent_addr_space_c<> sys_mem;
+  exec init_up { sys_mem.addr = 0xA0000000; sys_mem.size = 0x1000; }
+  action a {
+    transparent_addr_region_s<> r;
+    addr_handle_t h;
+    addr_handle_t h2;
+    int va; int vb; int va2;
+    exec pre_solve {
+      r.addr = 0xA0001000;
+      r.size = 1024;
+      h  = make_handle_from_claim(r, 0);
+      va = addr_value(h);
+      vb = addr_value_abs(h);
+      // LRM 24.7.1.2.1 / Example 316: adding the region to the space yields a
+      // handle. Observed: this form yields no handle at all.
+      h2  = sys_mem.add_nonallocatable_region(r);
+      va2 = addr_value(h2);
+    }
+    rand int x;
+  };
+}

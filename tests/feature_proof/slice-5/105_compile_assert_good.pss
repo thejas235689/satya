@@ -1,0 +1,6 @@
+// 105 compile assert, true condition: must not be an error, and the
+// declaration after it must survive.
+component c {
+    compile assert (1 + 1 == 2);
+    action test { rand int v; constraint v == 1; };
+};

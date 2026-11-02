@@ -1,0 +1,17 @@
+// Construct 26 — Template value parameter declaration (FEATURES.md row 26, "yes")
+// The value parameter W substitutes into a `bit[W]` width. The template's default
+// is W = 8; the instantiation asks for 12, so a solved value above 255 shows the
+// argument reached the width.
+component c26 <int W = 8> {
+   action A {
+      rand bit[W] x;
+   };
+};
+component pss_top {
+   c26<12> wide;
+   action test {
+      activity {
+         do c26::A;
+      };
+   };
+};

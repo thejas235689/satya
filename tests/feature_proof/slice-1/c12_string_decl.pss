@@ -1,0 +1,11 @@
+// Construct 12 — string declaration (PSS 7.2)
+// A string field holds a value in the string store; trace and JSON report it.
+package c12_pkg {
+    component c12_c {
+        action a {
+            string name;
+            string empty_s;
+            exec pre_solve { name = "frame"; }
+        };
+    };
+};

@@ -1,0 +1,28 @@
+// Syntax 131 — packed_s base struct (PSS 24.10.1).
+// Fields pack from the least-significant bit in declaration order and the bytes
+// are stored little-endian. A packed_s<BIG_ENDIAN> struct is also accepted.
+component C {
+  exec init_up { mem.addr = 0x400; mem.size = 0x1000; }
+  action a {
+    le_s sl; be_s sb;
+    addr_handle_t h; addr_handle_t h1; addr_handle_t h2; addr_handle_t h3;
+    int b0; int b1; int b2; int b3; int be0;
+    exec pre_solve {
+      sl.A = 1; sl.B = 2; sl.C = 0x1FF; sl.D = 0x7F; sl.E = 0x3F;
+      h  = make_handle_from_claim(mem, 0);
+      h1 = make_handle_from_handle(h, 1);
+      h2 = make_handle_from_handle(h, 2);
+      h3 = make_handle_from_handle(h, 3);
+      write_struct(h, sl);
+      b0 = read8(h); b1 = read8(h1); b2 = read8(h2); b3 = read8(h3);
+      sb.A = 1; sb.B = 2; sb.C = 0x1FF; sb.D = 0x7F; sb.E = 0x3F;
+      write_struct(h, sb);
+      be0 = read8(h);
+    }
+    rand int x;
+  };
+}
+package p {
+  struct le_s : packed_s<LITTLE_ENDIAN> { bit[6] A; bit[2] B; bit[9] C; bit[7] D; bit[6] E; };
+  struct be_s : packed_s<BIG_ENDIAN>    { bit[6] A; bit[2] B; bit[9] C; bit[7] D; bit[6] E; };
+}

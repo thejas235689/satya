@@ -1,0 +1,17 @@
+// Construct 32 — Parallel statement (row 32, "yes")
+// The two branches must be marked as one concurrent group, and the statement
+// after the block must be outside that group.
+component pss_top {
+   action A { rand int a; }
+   action B { rand int b; }
+   action C { rand int c; }
+   action test {
+      activity {
+         par1: parallel {
+            do A;
+            do B;
+         };
+         do C;
+      };
+   };
+};

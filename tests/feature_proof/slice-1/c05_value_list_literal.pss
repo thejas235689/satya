@@ -1,0 +1,12 @@
+// Construct 5 — Value list literal (PSS 8.5.9)
+// `[1, 2, 3]` used as a constraint's value set. Sampled over many seeds.
+package c05_pkg {
+    component c05_c {
+        action a {
+            rand int x;
+            rand int y;
+            constraint x in [1, 2, 3];
+            constraint y in [7, 11];
+        };
+    };
+};

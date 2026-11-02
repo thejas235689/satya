@@ -1,0 +1,17 @@
+// Construct 17 — User-defined type declaration (typedef, PSS 6.1)
+package c17_pkg {
+    typedef bit[12] addr_t;
+    typedef int     count_t;
+    struct base_s { bit[8] a; };
+    typedef base_s alias_s;
+
+    component c17_c {
+        action a {
+            rand addr_t  addr;
+            rand count_t cnt;
+            rand alias_s al;
+            constraint addr in [0..100];
+            constraint cnt  in [0..5];
+        };
+    };
+};

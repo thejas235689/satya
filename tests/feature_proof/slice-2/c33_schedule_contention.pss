@@ -1,0 +1,19 @@
+// Construct 33 probe — two branches of a `schedule` block both locking the only
+// instance of a resource. Pairwise-disjoint branches are legal in a schedule
+// block; if the engine treats the block as parallel it will report resource
+// contention and serialise.
+resource core_r { rand int id; };
+component pss_top {
+   pool [1] core_r core_pool;
+   bind core_pool *;
+   action A { lock core_r c; }
+   action B { lock core_r c; }
+   action test {
+      activity {
+         sch: schedule {
+            do A;
+            do B;
+         };
+      };
+   };
+};

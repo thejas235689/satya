@@ -1,0 +1,23 @@
+// Syntax 144 — Primitive operation implementation functions (PSS 24.10.9.5).
+// A user-supplied read32/write32 shadow the engine's primitives; the executor
+// method form `ex.read32(h)` and the executor() builtin do not work.
+package p {
+  component my_exec_c : executor_c<> {
+    function bit[32] read32(addr_handle_t hndl) { return 0xBEEF; }
+  }
+}
+component C {
+  my_exec_c ex;
+  exec init_up { mem.addr = 0x400; mem.size = 0x100; }
+  action a {
+    addr_handle_t h; int via_prim; int via_method; int via_executor;
+    exec pre_solve {
+      h = make_handle_from_claim(mem, 0);
+      write32(h, 0x1234);
+      via_prim     = read32(h);
+      via_method   = ex.read32(h);
+      via_executor = executor();
+    }
+    rand int x;
+  };
+}

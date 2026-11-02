@@ -1,0 +1,16 @@
+// Construct 9 — Integer type declaration (PSS 6.2)
+// Declared widths are the point of the construct, so each field is probed at
+// the edge of its declared range.
+package c09_pkg {
+    component c09_c {
+        action a {
+            rand bit[8]  u8;
+            rand bit[64] u64;
+            rand bit[4]  u4;
+            rand bit     b1;
+
+            constraint u8  == 256;                    // one past an 8-bit max
+            constraint u64 == 18446744073709551615;   // 2^64-1
+        };
+    };
+};

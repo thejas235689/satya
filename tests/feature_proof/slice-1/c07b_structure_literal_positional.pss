@@ -1,0 +1,11 @@
+// Construct 7 — Structure literal, positional form '{ 3, 4 }
+// Same struct as c07; shows where the two values actually land.
+package c07b_pkg {
+    struct pt_s { int x; int y; };
+    component c07b_c {
+        action a {
+            pt_s p;
+            exec pre_solve { p = '{3, 4}; }
+        };
+    };
+};

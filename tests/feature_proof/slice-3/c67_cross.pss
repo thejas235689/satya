@@ -1,0 +1,17 @@
+// Construct 67 — cross declaration (PSS 18.4, Syntax 67).
+package p67 {
+    enum e_t { A, B };
+    component c67 {
+        covergroup cg (int len, e_t k) {
+            coverpoint len { label lb; bins small = [0..3]; bins large = [4..7]; }
+            coverpoint k   { label kb; }
+            cross lb, kb   { label lxk; }
+        }
+        action top_a { activity { cover { do item_a; } }; };
+        action item_a {
+            rand int len;
+            rand e_t k;
+            constraint len in [0..7];
+        };
+    };
+};

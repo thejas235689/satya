@@ -1,0 +1,10 @@
+// Construct 61 — Distribution directive (PSS 16.1.11, Syntax 61).
+// `:=` weights each value, `:/` divides the weight across a range.
+package p61 {
+    component c61 {
+        action dist_a {
+            rand int pick;
+            constraint dist pick in [0 := 1, 1 := 3, 10..12 :/ 6];
+        };
+    };
+};

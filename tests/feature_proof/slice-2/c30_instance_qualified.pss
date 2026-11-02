@@ -1,0 +1,13 @@
+// Construct 30 trap — instance-qualified path (`do sub.s;`).
+// Previous audits found such paths truncated to their first segment.
+component sub_c {
+   action s { rand int g; }
+};
+component pss_top {
+   sub_c sub;
+   action test {
+      activity {
+         do sub.s;
+      };
+   };
+};

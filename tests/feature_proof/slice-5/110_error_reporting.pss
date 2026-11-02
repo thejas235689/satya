@@ -1,0 +1,15 @@
+// 110 Error reporting functions (doc: yes).
+// b = 2 shows execution continues after fatal().
+component c {
+    action test {
+        int a; int b;
+        exec pre_solve {
+            a = 1;
+            error("boom");
+            fatal("dead");
+            b = 2;
+        }
+        rand int v;
+        constraint v == 1;
+    };
+};

@@ -1,0 +1,15 @@
+// Construct 10 — Floating-point type declaration (PSS 6.2, float_pkg)
+// The stored value is the IEEE-754 bit pattern; float32 and float64 must
+// differ in width. proof.sh compares both against Python's struct module.
+package c10_pkg {
+    component c10_c {
+        action a {
+            float32 f32;
+            float64 f64;
+            exec pre_solve {
+                f32 = 20.14;
+                f64 = 2e6;
+            }
+        };
+    };
+};

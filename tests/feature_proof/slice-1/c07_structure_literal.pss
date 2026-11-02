@@ -1,0 +1,13 @@
+// Construct 7 — Structure literal (PSS 8.5.3), standard keyed form.
+// The standard's spelling names each field:  '{ x : 3, y : 4 }
+// This model exists to test whether that form is accepted and binds the
+// named fields.
+package c07_pkg {
+    struct pt_s { int x; int y; };
+    component c07_c {
+        action a {
+            pt_s p;
+            exec pre_solve { p = '{x : 3, y : 4}; }
+        };
+    };
+};

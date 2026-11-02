@@ -1,0 +1,14 @@
+// Syntax 78 — monitor constraints filter the match (PSS 19.4). A realization whose
+// bound values violate `it.len > 50` is discarded and its covergroups are not sampled.
+component c {
+  action item { rand int len; constraint len in [0..100]; };
+  monitor mon {
+    item it;
+    activity { do it; }
+    constraint { it.len > 50; }
+    covergroup cg (int len) {
+      coverpoint len { bins low = [0..50]; bins high = [51..100]; }
+    }
+  }
+  action t { activity { do item; cover mon; } };
+};

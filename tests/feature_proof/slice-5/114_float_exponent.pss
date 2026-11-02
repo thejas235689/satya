@@ -1,0 +1,12 @@
+// 114 float_exponent (doc: yes). 6.0 -> 1025 (0x401), 1.0 -> 1023 (0x3FF).
+component c {
+    action test {
+        int e6; int e1;
+        exec pre_solve {
+            e6 = float_exponent(6.0);
+            e1 = float_exponent(1.0);
+        }
+        rand int v;
+        constraint v == 1;
+    };
+};

@@ -1,0 +1,9 @@
+// Syntax 86 — an imported function with no PSS body: per PSS 22.4 the call must invoke
+// the foreign API; with no binding the tool should say so rather than invent a value.
+package fp {
+  function int twice(int x);
+}
+component c {
+  import solve function fp::twice;
+  action a { int r; exec post_solve { r = twice(21); message(LOW, "MARK proto", 0); } };
+};

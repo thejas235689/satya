@@ -1,0 +1,23 @@
+// Syntax 139 — get_tag function (PSS 24.10.8).
+// Two tagged regions; the claim is constrained by trait to the second one, so
+// get_tag() must report that region's tag string.
+package p { struct core_trait_s : addr_trait_s { rand int core; }; }
+component C {
+  contiguous_addr_space_c<core_trait_s> low_mem;
+  contiguous_addr_space_c<core_trait_s> high_mem;
+  exec init_up {
+    low_mem.addr = 0x1000;  low_mem.size = 0x100;  low_mem.tag = "low";  low_mem.trait.core = 0;
+    high_mem.addr = 0x9000; high_mem.size = 0x100; high_mem.tag = "high"; high_mem.trait.core = 1;
+  }
+  action a {
+    transparent_addr_claim_s<core_trait_s> claim;
+    string where; int addr;
+    constraint claim.size == 64;
+    constraint claim.trait.core == 1;
+    exec post_solve {
+      where = get_tag(make_handle_from_claim(claim, 0));
+      addr  = addr_value(make_handle_from_claim(claim, 0));
+    }
+    rand int x;
+  };
+}

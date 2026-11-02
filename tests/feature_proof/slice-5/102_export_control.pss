@@ -1,0 +1,7 @@
+// 102 control: identical model with no export statement.
+package pkg {
+}
+component c {
+    action A1 { rand bit mode; rand bit[31:0] val; };
+    action test { rand int v; constraint v == 3; };
+};

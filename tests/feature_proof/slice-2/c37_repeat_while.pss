@@ -1,0 +1,12 @@
+// Construct 37 — repeat-while statement (row 37, "yes")
+// The body must be repeated while the condition holds. `n` is left free, so a
+// correct engine cannot produce a fixed step count for every seed.
+component pss_top {
+   action A { rand int a; }
+   action test {
+      rand int n;
+      activity {
+         repeat { do A; } while (n < 3);
+      };
+   };
+};

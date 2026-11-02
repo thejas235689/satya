@@ -1,0 +1,12 @@
+// 107 Runtime messaging function (doc: yes).
+component c {
+    action test {
+        exec pre_solve {
+            print("hello");
+            message("note");
+            error("boom");
+        }
+        rand int v;
+        constraint v == 1;
+    };
+};

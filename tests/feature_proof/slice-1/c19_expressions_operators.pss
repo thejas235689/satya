@@ -1,0 +1,36 @@
+// Construct 19 — Expressions and operators (PSS 8)
+// Arithmetic, bitwise, shift, comparison, logical, power, and precedence.
+package c19_pkg {
+    component c19_c {
+        action a {
+            int add; int sub; int mul; int div; int mod; int pow;
+            int band; int bor; int bxor; int bnot; int shl; int shr;
+            int cmp_lt; int cmp_eq; int cmp_ge;
+            int logi_and; int logi_or; int logi_not;
+            int precedence; int paren;
+
+            exec pre_solve {
+                add = 7 + 3;              // 10
+                sub = 7 - 3;              // 4
+                mul = 7 * 3;              // 21
+                div = 7 / 2;              // 3
+                mod = 7 % 3;              // 1
+                pow = 3 ** 3;             // 27
+                band = 12 & 10;           // 8
+                bor  = 12 | 10;           // 14
+                bxor = 12 ^ 10;           // 6
+                bnot = ~0;                // -1
+                shl = 1 << 4;             // 16
+                shr = 32 >> 3;            // 4
+                cmp_lt = (3 < 5);         // 1
+                cmp_eq = (3 == 4);        // 0
+                cmp_ge = (5 >= 5);        // 1
+                logi_and = (1 && 0);      // 0
+                logi_or  = (1 || 0);      // 1
+                logi_not = !0;            // 1
+                precedence = 2 + 3 * 4;   // 14
+                paren      = (2 + 3) * 4; // 20
+            }
+        };
+    };
+};

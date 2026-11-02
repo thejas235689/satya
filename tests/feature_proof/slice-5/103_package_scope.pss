@@ -1,0 +1,17 @@
+// 103 compile if at package scope: condition 0, so the else branch's
+// constant B must exist and be 22, and A must not exist.
+package p {
+    compile if (0) {
+        static const A = 11;
+    } else {
+        static const B = 22;
+    }
+}
+component c {
+    action test {
+        int a; int b;
+        exec pre_solve { a = p::A; b = p::B; }
+        rand int v;
+        constraint v == 1;
+    };
+};

@@ -1,0 +1,13 @@
+// 103 compile if inside an action body: condition 0, so kept must exist and
+// gone must not.
+component c {
+    action test {
+        compile if (0) {
+            rand int gone;
+        } else {
+            rand int kept;
+        }
+        rand int v;
+        constraint v == 1;
+    };
+};

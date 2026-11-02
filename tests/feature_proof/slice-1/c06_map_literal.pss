@@ -1,0 +1,19 @@
+// Construct 6 — Map literal (PSS 8.5.4) — documented "partial: maps are not solved".
+// Declares a map, writes it with the map-literal spelling, then with insert(),
+// and reports its size and a keyed read.
+package c06_pkg {
+    component c06_c {
+        action a {
+            map<int,int> m;
+            int sz_lit; int sz_ins; int got;
+
+            exec pre_solve {
+                m = {1:10, 2:20};      // map literal
+                sz_lit = m.size();
+                m.insert(3, 30);       // map insert
+                sz_ins = m.size();
+                got = m[1];            // keyed read
+            }
+        };
+    };
+};

@@ -1,0 +1,20 @@
+// Syntax 130 — Address space group (PSS 24.9, add_addr_space 24.9.1).
+// The group is declared and both spaces are added to it. Evidence: the model
+// parses and the claim is allocated from the same region as it would be with no
+// group at all, i.e. the group contributes no observable allocation behaviour.
+component C {
+  addr_space_group_c<> grp;
+  contiguous_addr_space_c<> mem0;
+  contiguous_addr_space_c<> mem1;
+  exec init_up {
+    mem0.addr = 0x1000; mem0.size = 0x100;
+    mem1.addr = 0x2000; mem1.size = 0x100;
+    grp.add_addr_space(mem0);
+    grp.add_addr_space(mem1);
+  }
+  action a {
+    contiguous_addr_claim_s<> c;
+    constraint c.size == 64;
+    rand int x;
+  };
+}

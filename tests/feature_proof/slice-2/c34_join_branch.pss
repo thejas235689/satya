@@ -1,0 +1,19 @@
+// Construct 34 — Activity join specification, join_branch (row 34, "yes")
+// The statement after the block waits only for the named branch L2 (A); L3 (B)
+// does not gate it, and D follows the whole block.
+component pss_top {
+   action A { rand int a; }
+   action B { rand int b; }
+   action C { rand int c; }
+   action D { rand int d; }
+   action test {
+      activity {
+         L1: parallel join_branch(L2) {
+            L2: do A;
+            L3: do B;
+         };
+         L4: do C;
+         L5: do D;
+      };
+   };
+};

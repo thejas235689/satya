@@ -1,0 +1,20 @@
+// Syntax 100 — procedural randomize. `randomize(x)` on an action attribute, and the
+// LRM's Example 262 form (`randomize res with { res > a; }`) on a local variable.
+component c {
+  action attr {
+    rand int x;
+    int y;
+    exec post_solve { x = 5; randomize(x); y = x; message(LOW, "MARK attr", 0); }
+  };
+  action local {
+    int z;
+    exec post_solve { z = func3(5); message(LOW, "MARK local", 0); }
+  };
+};
+function int func3(int a) {
+  int res;
+  randomize res with {
+    res > a;
+  };
+  return res;
+}

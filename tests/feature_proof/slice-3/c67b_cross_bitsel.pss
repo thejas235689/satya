@@ -1,0 +1,13 @@
+// Construct 67 / trap 2 — cross over an unlabelled bit-select (PSS 18.4).
+// `cross data[1:0], full;` — the operand is a bit-select expression.
+package p67b {
+    component c67b {
+        covergroup cg (int data) {
+            coverpoint data[1:0] { label lo; bins b0 = 0; bins b1 = 1; }
+            coverpoint data      { label full; bins s = 0; bins l = 1; }
+            cross data[1:0], full;
+        }
+        action top_a { activity { cover { do item_a; } }; };
+        action item_a { rand int data; constraint data in [0..3]; };
+    };
+};

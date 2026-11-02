@@ -1,0 +1,8 @@
+// Syntax 80 — instance override at component scope: field fb becomes der_b
+// (x must be 55 and der_b's exec block must run).
+component c {
+  action base_a { rand int x; constraint x in [0..100]; exec post_solve { message(LOW, "MARK base", 0); } };
+  action der_b : base_a { constraint x == 55; exec post_solve { message(LOW, "MARK derived_b", 0); } };
+  override { instance fb with der_b; }
+  action t_inst { base_a fb; activity { fb; } };
+};

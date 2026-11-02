@@ -1,0 +1,29 @@
+// Construct 66 — bins declaration (PSS 18.3.3, Syntax 66).
+// `v` declares three bins: a single value, a range and a value list.
+// `k` uses the array form `bins all[4] = { A, B, C, D };`  (trap 1)
+// `k2` uses the square-bracket form `bins four[] = [A, B, C, D];`
+package p66 {
+    enum e_t { A, B, C, D };
+    component c66 {
+        covergroup cg (int v, e_t k, e_t k2) {
+            coverpoint v {
+                bins zero  = 0;
+                bins low   = [1..3];
+                bins evens = [4, 6, 8];
+            }
+            coverpoint k {
+                bins all[4] = { A, B, C, D };
+            }
+            coverpoint k2 {
+                bins four[] = [A, B, C, D];
+            }
+        }
+        action top_a { activity { cover { do item_a; } }; };
+        action item_a {
+            rand int v;
+            rand e_t k;
+            rand e_t k2;
+            constraint v in [0..9];
+        };
+    };
+};

@@ -1,0 +1,14 @@
+// Syntax 76 — schedule whose branch realizations intersect (LRM Example 201, m2):
+// the top-level scenario has NO match, so the monitor must not be hit.
+component c {
+  action write   { rand int wv; };
+  action send    { rand int sv; };
+  action receive { rand int cv; };
+  monitor m2 {
+    activity { schedule {
+        sequence { do write; do send; };
+        sequence { do send; do receive; };
+    } }
+  }
+  action t { activity { do write; do send; do receive; cover m2; } };
+};

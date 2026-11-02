@@ -1,0 +1,10 @@
+// Syntax 84 — function declaration: a prototype in a package with a separate
+// definition in the same package. Both call forms are exercised.
+package fn_p {
+  function int sum10(int a, int b);
+  function int sum10(int a, int b) { return (a * 10 + b); }
+}
+component c {
+  action plain { int r; exec post_solve { r = sum10(4, 2); message(LOW, "MARK plain", 0); } };
+  action scoped { int r; exec post_solve { r = fn_p::sum10(4, 2); message(LOW, "MARK scoped", 0); } };
+};

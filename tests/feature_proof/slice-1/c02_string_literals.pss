@@ -1,0 +1,19 @@
+// Construct 2 — String literals (PSS 7.2, 8.6.3)
+// Literal, assignment from another string, concatenation with `+`, length().
+package c02_pkg {
+    component c02_c {
+        action a {
+            string lit; string copy; string joined; string empty_s;
+            int len; int len_empty;
+
+            exec pre_solve {
+                lit       = "hello";
+                copy      = lit;
+                joined    = lit + "!";
+                empty_s   = "";
+                len       = lit.length();
+                len_empty = empty_s.length();
+            }
+        };
+    };
+};

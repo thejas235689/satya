@@ -1,0 +1,9 @@
+// Syntax 82 control — the same ambiguity with NO import at all.
+package fpa { function int value() { return (11); } }
+package fpb { function int value() { return (22); } }
+component c {
+  action a {
+    int r;
+    exec post_solve { r = value(); message(LOW, "MARK value", 0); }
+  };
+};

@@ -1,0 +1,11 @@
+// Construct 36 — repeat-count statement (row 36, "yes")
+component pss_top {
+   action A { rand int a; }
+   action test {
+      activity {
+         repeat (3) {
+            do A;
+         };
+      };
+   };
+};

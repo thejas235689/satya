@@ -1,0 +1,15 @@
+// 108 Text file operations using file handles (doc: partial - accepted and
+// have no effect on the scenario).
+component c {
+    action test {
+        file fh;
+        int rc;
+        exec pre_solve {
+            fh = fopen("proof_slice5_should_not_exist.txt", "w");
+            rc = fwrite(fh, "hello");
+            rc = fclose(fh);
+        }
+        rand int v;
+        constraint v == 2;
+    };
+};

@@ -1,0 +1,19 @@
+// Syntax 143 — Read and write packed structs (PSS 24.10.9.4).
+package p { struct ctl_s : packed_s<> { bit[1] en; bit[3] mode; bit[4] rsvd; }; }
+component C {
+  exec init_up { mem.addr = 0x400; mem.size = 0x1000; }
+  action a {
+    ctl_s s; ctl_s t;
+    addr_handle_t h; int mode_back; int en_back; int byte0;
+    exec pre_solve {
+      h = make_handle_from_claim(mem, 0);
+      s.en = 1; s.mode = 5; s.rsvd = 10;
+      write_struct(h, s);
+      read_struct(h, t);
+      mode_back = t.mode;
+      en_back   = t.en;
+      byte0     = read8(h);
+    }
+    rand int x;
+  };
+}

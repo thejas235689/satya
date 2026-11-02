@@ -1,0 +1,23 @@
+// Construct 53 — Member constraint declaration (PSS 16.1.1, Syntax 53).
+// A constraint declared in a data type applies to every instance of it; an
+// action-level constraint on the same field intersects with it.
+package p53 {
+    struct pkt_s {
+        rand int size;
+        constraint size in [4..6];          // member constraint of the type
+    };
+    component c53 {
+        action item_a {
+            rand pkt_s p;
+            rand int n;
+            constraint n in [0..15];
+            constraint p.size in [0..15];   // looser than the type's constraint
+        };
+        action named_a {
+            rand int a;
+            constraint a in [0..20];
+            constraint narrow { a in [3..5]; };   // named member constraint
+        };
+        action top_a { activity { do item_a; }; };
+    };
+};

@@ -1,0 +1,25 @@
+// Syntax 132 — sizeof_s struct (PSS 24.10.2).
+// nbits/nbytes for a packed struct, and for the other types the documented
+// behaviour names (bit vectors, enums, scalars).
+package p {
+  enum color_e { RED = 0, GREEN = 1, BLUE = 2 };
+  typedef bit[24] word24_t;
+  struct ctrl_s { bit[1] en; bit[3] mode; bit[4] rsvd; };
+  struct nested_s { ctrl_s inner; bit[8] tag; };
+}
+component C {
+  action a {
+    int struct_bits; int struct_bytes; int nested_bits; int typedef_bits;
+    int enum_bits; int int_bits; int bit_bits;
+    exec pre_solve {
+      struct_bits  = sizeof_s<ctrl_s>::nbits;
+      struct_bytes = sizeof_s<ctrl_s>::nbytes;
+      nested_bits  = sizeof_s<nested_s>::nbits;
+      typedef_bits = sizeof_s<word24_t>::nbits;
+      enum_bits    = sizeof_s<color_e>::nbits;
+      int_bits     = sizeof_s<int>::nbits;
+      bit_bits     = sizeof_s<bit>::nbits;
+    }
+    rand int x;
+  };
+}

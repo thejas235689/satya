@@ -1,0 +1,11 @@
+// Syntax 76 — schedule monitor activity statement (positive: two branches, disjoint steps)
+component c {
+  action A { rand int av; };
+  action B { rand int bv; };
+  monitor sched_m {
+    A a;
+    B b;
+    activity { schedule { do a; do b; } }
+  }
+  action t { activity { do A; do B; cover sched_m; } };
+};

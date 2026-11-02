@@ -1,0 +1,19 @@
+// Syntax 83 — exec block declaration: init_down/init_up at component scope, pre_solve
+// feeding the solve, post_solve on a leaf action, and post_solve on a composite action.
+component c {
+  int cfg;
+  exec init_down { cfg = 1; }
+  exec init_up   { cfg = 21; }
+
+  action leaf {
+    rand int x;
+    int seedv;
+    exec pre_solve  { seedv = 40; }
+    constraint x == seedv + 2;
+    exec post_solve { message(LOW, "MARK leaf_post", 0); }
+  };
+  action comp {
+    exec post_solve { message(LOW, "MARK composite_post", 0); }
+    activity { do leaf; }
+  };
+};

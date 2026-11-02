@@ -1,0 +1,13 @@
+// Syntax 76 probe — `overlap` over a strictly sequential trace. PSS 19.3.5 requires the
+// branches to overlap in time, so a linear trace should not match. A hit here shows the
+// engine lowers `overlap` and `schedule` onto the same node and models no interleaving.
+component c {
+  action A { rand int av; };
+  action B { rand int bv; };
+  monitor ov_m {
+    A a;
+    B b;
+    activity { overlap { do a; do b; } }
+  }
+  action t { activity { do A; do B; cover ov_m; } };
+};

@@ -1,0 +1,18 @@
+// Syntax 79 — type extension of an action (LRM Example 217/251 placement: at package
+// scope). The extension adds a field, a constraint and an exec block.
+component c {
+  action A {
+    rand int x;
+    int base_exec;
+    constraint x in [0..100];
+    exec post_solve { base_exec = 1; }
+  };
+  action t { activity { do A; } };
+};
+package ext_p {
+  extend action c::A {
+    int ext_field;
+    constraint x == 77;
+    exec post_solve { ext_field = 99; }
+  }
+}

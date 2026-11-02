@@ -1,0 +1,35 @@
+// Syntax 77 — monitor traversal. `irw` is the flat control (no traversal); `irw1`
+// traverses monitor `rw` by type (`do rw;`), `irw2` through a monitor handle (`m;`).
+component c {
+  action idle  { rand int iv; };
+  action read  { rand int rv; };
+  action write { rand int wv; };
+
+  monitor rw {
+    read r;
+    write w;
+    activity { sequence { do r; do w; } }
+  }
+  monitor irw {
+    idle i;
+    read r;
+    write w;
+    activity { do i; do r; do w; }
+    covergroup g_flat (int iv) { coverpoint iv { bins any = [0..1000]; } }
+  }
+  monitor irw1 {
+    idle i;
+    activity { do i; do rw; }
+    covergroup g_type (int iv) { coverpoint iv { bins any = [0..1000]; } }
+  }
+  monitor irw2 {
+    idle i;
+    rw m;
+    activity { do i; m; }
+    covergroup g_handle (int iv) { coverpoint iv { bins any = [0..1000]; } }
+  }
+
+  action t_flat   { activity { do idle; do read; do write; cover irw;  } };
+  action t_type   { activity { do idle; do read; do write; cover irw1; } };
+  action t_handle { activity { do idle; do read; do write; cover irw2; } };
+};

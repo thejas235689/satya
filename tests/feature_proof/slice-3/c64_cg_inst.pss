@@ -1,0 +1,18 @@
+// Construct 64 — covergroup instantiation (PSS 18.2, Syntax 64).
+// `named_cg` is an explicit covergroup type whose coverpoint names its formal
+// parameter; `inst1 (x)` is supposed to bind `v := x`. `inline_cg` is an in-line
+// instance over the action's own field.
+package p64 {
+    component c64 {
+        covergroup named_cg (int v) {
+            coverpoint v { bins lo = [0..3]; bins hi = [4..7]; }
+        }
+        action item_a {
+            rand int x;
+            constraint x in [0..7];
+            named_cg inst1 (x);
+            covergroup { coverpoint x { bins lo = [0..3]; bins hi = [4..7]; } } inline_cg;
+        };
+        action top_a { activity { cover { do item_a; } }; };
+    };
+};

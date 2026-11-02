@@ -1,0 +1,16 @@
+// Construct 34 — join_select(1): exactly one randomly selected branch gates the
+// following statement, and which one must vary with the seed.
+component pss_top {
+   action A { rand int a; }
+   action B { rand int b; }
+   action C { rand int c; }
+   action test {
+      activity {
+         L1: parallel join_select(1) {
+            L2: do A;
+            L3: do B;
+         };
+         L4: do C;
+      };
+   };
+};

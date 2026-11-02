@@ -1,0 +1,10 @@
+// Construct 54 / trap 3 — mixed `open_range_list` (PSS 8.5.9).
+// `[1, 4, 9..12, 20..]` must make 1, 4, 9..12 and everything >= 20 reachable.
+package p54b {
+    component c54b {
+        action top_a {
+            rand int z;
+            constraint z in [1, 4, 9..12, 20..];
+        };
+    };
+};

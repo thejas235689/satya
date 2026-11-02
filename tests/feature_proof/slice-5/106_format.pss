@@ -1,0 +1,13 @@
+// 106 String formatting and output functions (doc: yes - %d %x %s %%).
+component c {
+    action test {
+        string msg;
+        int n;
+        exec pre_solve {
+            n = 42;
+            msg = format("v=%d h=%x s=%s p=%%", n, 255, "hi");
+        }
+        rand int v;
+        constraint v == 1;
+    };
+};

@@ -1,0 +1,18 @@
+// Construct 16 — ref declaration (PSS 6.7) — documented "partial".
+// If reference semantics were modelled, writing through alias_r would be
+// visible in real_obj.
+package c16_pkg {
+    struct data_s { int v; };
+    component c16_c {
+        action a {
+            data_s  real_obj;
+            ref data_s alias_r;
+            int after;
+            exec pre_solve {
+                real_obj.v = 42;
+                alias_r.v  = 99;        // write through the reference
+                after = real_obj.v;     // 42 means the write did not propagate
+            }
+        };
+    };
+};

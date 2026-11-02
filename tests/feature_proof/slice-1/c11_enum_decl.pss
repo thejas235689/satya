@@ -1,0 +1,15 @@
+// Construct 11 — enum declaration (PSS 6.3)
+// Plain enum and an enum with a base type, both used in constraints.
+package c11_pkg {
+    enum color_e { RED, GREEN, BLUE };
+    enum kind_e : bit[4] { RD = 0, WR = 1, IDLE = 2 };
+
+    component c11_c {
+        action a {
+            rand color_e col;
+            rand kind_e  kind;
+            constraint col  in { RED, GREEN };
+            constraint kind in { RD, WR };
+        };
+    };
+};

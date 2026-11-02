@@ -1,0 +1,11 @@
+// Construct 13 — chandle declaration (PSS 6.4) — documented "partial".
+// A chandle is opaque: it should carry no numeric value.
+package c13_pkg {
+    component c13_c {
+        action a {
+            chandle h;
+            int self_eq;
+            exec pre_solve { self_eq = (h == h); }
+        };
+    };
+};

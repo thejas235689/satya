@@ -1,0 +1,8 @@
+// Syntax 80 — type override at component scope: every base_a becomes der_a
+// (x must be 91 and der_a's exec block must run).
+component c {
+  action base_a { rand int x; constraint x in [0..100]; exec post_solve { message(LOW, "MARK base", 0); } };
+  action der_a : base_a { constraint x == 91; exec post_solve { message(LOW, "MARK derived", 0); } };
+  override { type base_a with der_a; }
+  action t_type { activity { do base_a; } };
+};

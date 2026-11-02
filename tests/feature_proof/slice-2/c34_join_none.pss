@@ -1,0 +1,16 @@
+// Construct 34 — join_none: no scheduling dependency, so the following statement
+// is emitted before the branches.
+component pss_top {
+   action A { rand int a; }
+   action B { rand int b; }
+   action C { rand int c; }
+   action test {
+      activity {
+         L1: parallel join_none {
+            L2: do A;
+            L3: do B;
+         };
+         L4: do C;
+      };
+   };
+};

@@ -1,0 +1,14 @@
+// Construct 56 — Conditional constraint (PSS 16.1.6, Syntax 56).
+package p56 {
+    component c56 {
+        action cond_a {
+            rand int len;
+            rand int burst;
+            constraint len in [0..64];
+            constraint {
+                if (len > 32) { burst in [0..4]; }
+                else { burst in [10..20]; }
+            }
+        };
+    };
+};

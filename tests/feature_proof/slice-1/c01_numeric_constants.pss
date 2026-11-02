@@ -1,0 +1,23 @@
+// Construct 1 — Numeric constants (PSS 1)
+// Decimal, based literals (b/o/d/h), underscore separators, power operator,
+// and the signed based forms. Every value is read back from the trace.
+package c01_pkg {
+    component c01_c {
+        action a {
+            int dec; int b4; int h8; int o8; int d64;
+            int sd;  int sh; int us; int p;
+
+            exec pre_solve {
+                dec = 42;          // plain decimal
+                b4  = 4'b1010;     // binary based  -> 10
+                h8  = 8'hFF;       // hex based     -> 255
+                o8  = 8'o17;       // octal based   -> 15
+                d64 = 64'd2;       // decimal based -> 2
+                us  = 1_000_000;   // underscore separator
+                p   = 2 ** 10;     // power operator -> 1024
+                sd  = 4'sd12;      // signed 4-bit: 12 is out of range -> -4
+                sh  = 16'sH_FF;    // signed 16-bit, sign-extended     -> -1
+            }
+        };
+    };
+};

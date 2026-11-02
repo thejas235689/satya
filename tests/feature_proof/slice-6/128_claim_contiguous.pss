@@ -1,0 +1,10 @@
+// Syntax 128 — Contiguous address space claim type (PSS 24.8.2).
+component C {
+  exec init_up { mem.addr = 0x1000; mem.size = 0x100; }
+  action a {
+    contiguous_addr_claim_s<> c;
+    constraint c.size == 16;
+    constraint c.alignment == 4;
+    rand int x;
+  };
+}

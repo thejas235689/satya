@@ -1,0 +1,13 @@
+// Construct 30 trap — action-handle traversal (`h1;`).
+// PSS 12.3.3 traverses the action instance named by the handle. Previous audits
+// found the handle parsed and discarded, so `h1;` becomes a traversal of an
+// action *named* h1 and is UNRESOLVED.
+component pss_top {
+   action A { rand int a; }
+   action test {
+      A h1;
+      activity {
+         h1;
+      };
+   };
+};

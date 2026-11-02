@@ -1,0 +1,18 @@
+// Construct 51 — Pool instantiation (PSS 14.2, Syntax 51).
+// `pool [3] pkt_s pkts;` declares a pool of 3 objects. Every `output pkt_s`
+// must be allocated from it, and a fourth allocation must be refused.
+package p51 {
+    struct pkt_s {
+        rand int size;
+        constraint size in [1..16];
+    };
+    component c51 {
+        pool [3] pkt_s pkts;
+        action item_a {
+            output pkt_s p;
+            constraint p.size in [1..8];
+        };
+        action top_a { activity { do item_a; do item_a; do item_a; }; };
+        action over_a { activity { repeat (4) { do item_a; }; }; };
+    };
+};

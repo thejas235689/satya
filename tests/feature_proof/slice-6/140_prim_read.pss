@@ -1,0 +1,19 @@
+// Syntax 140 — Primitive read operations for byte addressable spaces
+// (PSS 24.10.9.1). Values are written first so the reads have something to see.
+component C {
+  exec init_up { mem.addr = 0x400; mem.size = 0x1000; }
+  action a {
+    addr_handle_t h; int r8; int r16; int r32; int r64;
+    exec pre_solve {
+      h = make_handle_from_claim(mem, 0x10);
+      write32(h, 0xDEADBEEF);
+      r32 = read32(h);
+      r8  = read8(h);
+      write64(h, 0x0102030405060708);
+      r64 = read64(h);
+      write16(h, 0x1234);
+      r16 = read16(h);
+    }
+    rand int x;
+  };
+}

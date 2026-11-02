@@ -1,0 +1,9 @@
+// Syntax 79 — type extension of a struct: the added field must be usable.
+component c {
+  struct s_t { int a; };
+  action t {
+    s_t v;
+    exec post_solve { v.a = 1; v.b = 2; message(LOW, "MARK structext", 0); }
+  };
+};
+extend struct c::s_t { int b; };

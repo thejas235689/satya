@@ -1,0 +1,11 @@
+// Syntax 82 — import statement. Two packages define `value()`; the component imports
+// only fpa. If the import is honoured, value() must be 11.
+package fpa { function int value() { return (11); } }
+package fpb { function int value() { return (22); } }
+component c {
+  import fpa::*;
+  action a {
+    int r;
+    exec post_solve { r = value(); message(LOW, "MARK value", 0); }
+  };
+};

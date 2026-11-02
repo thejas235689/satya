@@ -1,0 +1,20 @@
+// Construct 52 — Static bind directives (PSS 14.3, Syntax 52).
+// Two pools of the same element type; `bind pa *;` says allocations go to `pa`.
+// If the directive is honoured every output comes from `pa`; if it is ignored
+// the allocator takes the first pool of the type, which is `pb`.
+package p52 {
+    struct pkt_s {
+        rand int size;
+        constraint size in [1..16];
+    };
+    component c52 {
+        pool [2] pkt_s pb;
+        pool [2] pkt_s pa;
+        bind pa *;
+        action item_a {
+            output pkt_s p;
+            constraint p.size in [1..8];
+        };
+        action top_a { activity { do item_a; do item_a; }; };
+    };
+};

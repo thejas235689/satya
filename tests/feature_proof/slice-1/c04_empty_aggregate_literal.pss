@@ -1,0 +1,18 @@
+// Construct 4 — Empty aggregate literal (PSS 8.5.1)
+// The documented behaviour is: `L = {};` gives an empty collection.
+// A non-empty collection is built first so the effect of `{}` is observable.
+package c04_pkg {
+    component c04_c {
+        action a {
+            int arr[3];
+            int sz_before; int sz_after;
+
+            exec pre_solve {
+                arr = {1, 2, 3};
+                sz_before = arr.size();   // 3
+                arr = {};                 // documented: empty collection
+                sz_after  = arr.size();   // must be 0 if the construct works
+            }
+        };
+    };
+};

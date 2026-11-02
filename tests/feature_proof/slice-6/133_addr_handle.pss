@@ -1,0 +1,17 @@
+// Syntax 133 — Address space handle (PSS 24.10.3).
+// A handle is a value that carries an address; two handles from the same region
+// at different offsets differ by exactly that offset.
+component C {
+  exec init_up { mem.addr = 0x400; mem.size = 0x1000; }
+  action a {
+    addr_handle_t h0; addr_handle_t h1;
+    int a0; int a1;
+    exec pre_solve {
+      h0 = make_handle_from_claim(mem, 0x10);
+      h1 = make_handle_from_claim(mem, 0x20);
+      a0 = addr_value(h0);
+      a1 = addr_value(h1);
+    }
+    rand int x;
+  };
+}

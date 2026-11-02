@@ -1,0 +1,16 @@
+// 103 compile if declaration (doc: yes - the constant condition selects a
+// branch; the other branch is never instantiated).
+// Top-level in a component: before_a / after_a are the surrounding
+// declarations that must survive, live_a is the selected branch and dead_a
+// is the one that must not exist.
+component c {
+    action before_a { rand int v; constraint v == 1; };
+
+    compile if (0) {
+        action dead_a { rand int v; };
+    } else {
+        action live_a { rand int v; constraint v == 2; };
+    }
+
+    action after_a { rand int v; constraint v == 3; };
+};

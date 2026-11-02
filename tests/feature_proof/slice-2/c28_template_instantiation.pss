@@ -1,0 +1,19 @@
+// Construct 28 — Template type instantiation (row 28, "yes")
+// `pair_s<bit[16], 4>` and `pair_s<bit[8], 16>` must be two distinct types with
+// their own field widths, alive at the same time in one action: the same literal
+// 200 is truncated to 8 in the 4-bit `raw` and kept in the 16-bit `raw`.
+struct pair_s <type T, int W = 8> {
+   T      value;
+   bit[W] raw;
+};
+component t28_c {
+   action test {
+      pair_s<bit[16], 4>  narrow;
+      pair_s<bit[8], 16>  wide;
+      exec pre_solve {
+         narrow.raw = 200;
+         wide.raw   = 200;
+      }
+      rand int v;
+   };
+};

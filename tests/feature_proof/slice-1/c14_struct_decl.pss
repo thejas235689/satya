@@ -1,0 +1,20 @@
+// Construct 14 — struct declaration (PSS 6.5)
+// Flat members, a nested struct member, and an inherited member — each
+// constrained to a value that would be visible in the trace if it bound.
+package c14_pkg {
+    struct inner_s { bit[8] a; };
+    struct outer_s { bit[4] op; inner_s in; int n; };
+    struct derived_s : outer_s { bit[2] extra; };
+
+    component c14_c {
+        action a {
+            rand outer_s   o;
+            rand derived_s d;
+            constraint o.op    == 9;    // flat member
+            constraint o.n     == 5;    // flat member
+            constraint o.in.a  == 77;   // nested member
+            constraint d.n     == 6;    // inherited member
+            constraint d.extra == 3;    // own member
+        };
+    };
+};

@@ -1,0 +1,19 @@
+// Syntax 141 — Primitive write operations for byte addressable spaces
+// (PSS 24.10.9.2). The stored bytes are the evidence: little-endian, the first
+// byte going into bits [7:0].
+component C {
+  exec init_up { mem.addr = 0x400; mem.size = 0x1000; }
+  action a {
+    addr_handle_t h; addr_handle_t h1; addr_handle_t h2; addr_handle_t h3;
+    int b0; int b1; int b2; int b3;
+    exec pre_solve {
+      h  = make_handle_from_claim(mem, 0x10);
+      h1 = make_handle_from_handle(h, 1);
+      h2 = make_handle_from_handle(h, 2);
+      h3 = make_handle_from_handle(h, 3);
+      write32(h, 0xDEADBEEF);
+      b0 = read8(h); b1 = read8(h1); b2 = read8(h2); b3 = read8(h3);
+    }
+    rand int x;
+  };
+}

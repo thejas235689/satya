@@ -1,0 +1,11 @@
+// 109 Simple text file operations (doc: partial - accepted, no effect).
+component c {
+    action test {
+        int rc;
+        exec pre_solve {
+            rc = fprintf("proof_slice5_should_not_exist2.txt", "x=%d\n", 7);
+        }
+        rand int v;
+        constraint v == 2;
+    };
+};

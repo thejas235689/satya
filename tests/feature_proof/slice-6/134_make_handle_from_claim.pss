@@ -1,0 +1,16 @@
+// Syntax 134 — make_handle_from_claim function (PSS 24.10.4.1).
+// The returned handle's address is the claim's address plus the offset.
+component C {
+  exec init_up { mem.addr = 0x400; mem.size = 0x1000; }
+  action a {
+    addr_handle_t h0; addr_handle_t h1;
+    int a0; int a1;
+    exec pre_solve {
+      h0 = make_handle_from_claim(mem, 0);
+      h1 = make_handle_from_claim(mem, 0x10);
+      a0 = addr_value(h0);
+      a1 = addr_value(h1);
+    }
+    rand int x;
+  };
+}

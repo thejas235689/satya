@@ -1,0 +1,19 @@
+// Construct 35 — Atomic block (row 35, "yes")
+// The atomic block sits inside a parallel block: its two actions must form one
+// scheduling cluster, separate from the outside action C.
+component pss_top {
+   action A { rand int a; }
+   action B { rand int b; }
+   action C { rand int c; }
+   action test {
+      activity {
+         parallel {
+            at1: atomic {
+               do A;
+               do B;
+            };
+            do C;
+         };
+      };
+   };
+};

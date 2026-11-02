@@ -1,0 +1,19 @@
+// Construct 35 control — the same shape with a `sequence` block instead of
+// `atomic`. If the two traces are identical, the atomic block carries no
+// semantics of its own.
+component pss_top {
+   action A { rand int a; }
+   action B { rand int b; }
+   action C { rand int c; }
+   action test {
+      activity {
+         parallel {
+            at1: sequence {
+               do A;
+               do B;
+            };
+            do C;
+         };
+      };
+   };
+};

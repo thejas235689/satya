@@ -1,0 +1,12 @@
+// 115 float_sign (doc: yes). 6.0 -> 0; to_float(0,1023,1) -> 1.
+component c {
+    action test {
+        int s6; int sneg;
+        exec pre_solve {
+            s6 = float_sign(6.0);
+            sneg = float_sign(to_float(0, 1023, 1));
+        }
+        rand int v;
+        constraint v == 1;
+    };
+};
