@@ -138,16 +138,35 @@ def strip_code(text):
     return "".join(out)
 
 
+def prose_paragraph(line):
+    """A documentation paragraph swept in with the code.
+
+    Catches what the apostrophe test misses: lines of running text with no
+    statement punctuation. The earlier version of this was too aggressive only
+    because based literals (`4'b1010`) were being read as unterminated character
+    literals; that is fixed, so the test is safe again.
+    """
+    st = strip_code(line).strip()
+    if not st or st.startswith("//"):
+        return False
+    if re.search(r"[;{}()=<>\[\]]", st):
+        return False
+    words = st.split()
+    return len(words) >= 6 and re.match(r"^[A-Za-z]", st) is not None
+
+
 def classify(text):
     """ok | prose | truncated.
 
-    Only two signals, both strong: an apostrophe inside a word (documentation
-    text, never PSS), and a snippet that does not balance. A looser heuristic
-    flagged thirty examples that parse perfectly well, which would have
-    inflated the parse figure in the dishonest direction.
+    Two structural signals only: an apostrophe inside a word (documentation
+    text, never PSS), and a snippet that does not balance. Prose paragraphs are
+    detected by `prose_paragraph` but are *evidence* for the harness, not an
+    exclusion here: a heuristic cannot tell a fragment from damage, and both
+    looser and tighter versions of this flagged examples that parse fine.
     """
     if re.search(r"\w'\w", strip_code(text)):
         return "prose"
+
     depth = 0
     for ch in strip_code(text):
         if ch == "{":

@@ -3101,3 +3101,41 @@ component c {
         }
     }
 }
+
+#[test]
+fn forall_inside_a_constraint_block_is_parsed() {
+    // LRM Examples 128 and 130 put `forall (it : Type) { ... }` in three
+    // different places. All three failed with "expected `)`, found `:`",
+    // because `forall` was read as a call.
+    let in_named_block = r#"
+component c {
+  action a {
+    rand int x;
+    constraint {
+      forall (i : int) { x >= 0; }
+    }
+  };
+};
+"#;
+    assert!(compile_pss(in_named_block).is_ok(), "forall in a named block");
+
+    let inline = r#"
+component c {
+  action a { rand int x; };
+  action t {
+    activity { do a with { forall (i : int) { x >= 0; } } }
+  };
+};
+"#;
+    assert!(compile_pss(inline).is_ok(), "forall in an inline constraint");
+
+    let as_stmt = r#"
+component c {
+  action a { rand int x; };
+  action t {
+    activity { constraint forall (i : int) { x >= 0; } }
+  };
+};
+"#;
+    assert!(compile_pss(as_stmt).is_ok(), "forall as an activity constraint");
+}

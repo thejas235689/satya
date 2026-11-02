@@ -1141,11 +1141,41 @@ impl Parser {
 
     /// Parse a constraint set: either a `{ item* }` block or a single item.
     fn parse_constraint_set(&mut self) -> PssResult<Expr> {
+        // `forall (it : Type) { ... }` wherever a constraint set is expected —
+        // a named block, an inline `with { }`, or an activity statement
+        // (LRM Examples 128 and 130). The binding is parsed and the body kept;
+        // the per-instance expansion is not modelled.
+        if self.at_ident("forall") && self.peek_at(1).is_punct("(") {
+            self.bump();
+            self.expect_punct("(")?;
+            let _var = self.expect_ident()?;
+            self.expect_punct(":")?;
+            let _ty = self.parse_type_ref()?;
+            self.expect_punct(")")?;
+            let inner = self.parse_constraint_set()?;
+            return Ok(inner);
+        }
         if self.at_punct("{") {
             self.bump();
             let mut exprs = Vec::new();
             while !self.at_punct("}") && !self.at_eof() {
                 if self.eat_punct(";") {
+                    continue;
+                }
+                // `forall (it : Type) { ... }` as an item of a constraint
+                // block (LRM Example 128). The binding is parsed and the body
+                // is kept as a constraint; the per-instance expansion is not
+                // modelled, which is stated in SEMANTICS.md.
+                if self.at_ident("forall") && self.peek_at(1).is_punct("(") {
+                    self.bump();
+                    self.expect_punct("(")?;
+                    let _var = self.expect_ident()?;
+                    self.expect_punct(":")?;
+                    let _ty = self.parse_type_ref()?;
+                    self.expect_punct(")")?;
+                    let inner = self.parse_constraint_set()?;
+                    self.eat_punct(";");
+                    exprs.push(inner);
                     continue;
                 }
                 // `default <attr> == k;` and `default disable <attr>;` may
@@ -2506,6 +2536,21 @@ impl Parser {
             let mut constraints = Vec::new();
             while !self.at_punct("}") && !self.at_eof() {
                 if self.eat_punct(";") {
+                    continue;
+                }
+                // `forall (it : Type) { ... }` inside an inline constraint
+                // (LRM Example 130). Same treatment as in a named block: the
+                // body is kept, the per-instance expansion is not modelled.
+                if self.at_ident("forall") && self.peek_at(1).is_punct("(") {
+                    self.bump();
+                    self.expect_punct("(")?;
+                    let _var = self.expect_ident()?;
+                    self.expect_punct(":")?;
+                    let _ty = self.parse_type_ref()?;
+                    self.expect_punct(")")?;
+                    let inner = self.parse_constraint_set()?;
+                    self.eat_punct(";");
+                    constraints.push(inner);
                     continue;
                 }
                 constraints.push(self.parse_constraint_body_item()?);

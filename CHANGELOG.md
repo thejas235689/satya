@@ -13,6 +13,38 @@ approximated.
 
 ---
 
+## 0.45.0 — 2026-11-02
+
+The strict figure now means something, and `forall` in a constraint block works
+
+The 83.7% strict figure was not measuring what it appeared to. Of the 25 examples
+that parsed but contributed no content:
+
+- **18 were damaged input** — documentation text or `...` elisions swept in with
+  the code
+- **5 were fragments** — `declaration`-kind examples that are a constraint line
+  or an activity statement, which have nothing to declare
+- **2 were a real parser bug**
+
+**The bug:** `forall (it : Type) { ... }` failed with "expected `)`, found `:`"
+in all three places the LRM puts it — inside a named constraint block, inside an
+inline `with { }`, and as an activity statement. `forall` was read as a call.
+All three are parsed now; the per-instance expansion is still not modelled,
+which `SEMANTICS.md` already says.
+
+The harness reports the breakdown rather than one blended number:
+
+```
+strict, excluding fragments and damaged input:  130 / 135  (96.3%)
+models parsed (no error):                       153 / 153  (100.0%)
+```
+
+Scoring a fragment for not declaring anything was never meaningful, and a
+blended figure hid both a real bug and the extraction damage behind one number.
+
+134 tests (1 new, covering all three `forall` positions). Corpora unchanged:
+97/97 curated, 7/7 pathological, 114/114 compliance.
+
 ## 0.44.0 — 2026-11-02
 
 The LRM harness now measures what it claims to

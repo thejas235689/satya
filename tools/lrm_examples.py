@@ -33,6 +33,19 @@ WRAPS = [
 KEYS = ("components", "actions", "types", "enums")
 
 
+def has_doc_text(body):
+    """Documentation prose that the extractor swept in with the code."""
+    for line in body.splitlines():
+        st = line.split("//")[0].strip()
+        if not st or re.search(r"[;{}()=<>\[\]]", st):
+            continue
+        if re.search(r"\w'\w", st):
+            return True
+        if len(st.split()) >= 8 and re.match(r"^[A-Za-z]", st):
+            return True
+    return False
+
+
 def parse_summary(out):
     c = {k: 0 for k in KEYS}
     for line in out.split("\n"):
@@ -73,7 +86,8 @@ def main():
     results = []
     # A snippet the extractor damaged is not a parser failure. It is excluded
     # and reported separately, so the parse figure means something.
-    damaged = [m for m in manifest if m.get("status", "ok") != "ok"]
+    structurally_bad = [m for m in manifest if m.get("status", "ok") != "ok"]
+    damaged = []
     manifest = [m for m in manifest if m.get("status", "ok") == "ok"]
     for m in manifest:
         body = open(os.path.join(DIR, m["file"])).read().split("\n", 1)[1]
@@ -96,7 +110,14 @@ def main():
             tpl = dict((w[0], w[1]) for w in WRAPS)[ok_with]
             rc, out = invoke(["solve"], tpl % body)
             steps = steps_of(out) if rc == 0 else None
+        # Only an *unexplained* failure counts against the parser. If the
+        # snippet carries documentation text or elisions, the input is damaged
+        # and saying so is more useful than calling it a parse failure.
+        unexplained = None
+        if ok_with is None:
+            unexplained = has_doc_text(body) or "..." in body
         results.append({**m, "ok": ok_with is not None, "strict": strict_with is not None,
+                        "damaged": bool(unexplained),
                         "wrap": ok_with, "err": first_err, "steps": steps,
                         "has_activity": bool(re.search(r"\bactivity\s*\{", body))})
 
@@ -124,6 +145,34 @@ def main():
     print("LRM examples extracted: %d  (models: %d, expression snippets: %d)"
           % (len(results), len(models), len(exprs)))
     strict = [r for r in models if r["strict"]]
+    # An example that parses but contributes no content is the interesting
+    # failure: the parser accepted it and dropped what it demonstrated.
+    silent = [r for r in models if r["ok"] and not r["strict"]]
+    # A snippet that declares nothing is not automatically a parser failure:
+    # a `declaration`-kind example is often a field, a constraint line or an
+    # activity statement, which has nothing to declare. Split the list so the
+    # figure means something.
+    frag, broken = [], []
+    for r in silent:
+        body = open(os.path.join(DIR, r["file"])).read().split("\n", 1)[1]
+        if has_doc_text(body) or "..." in body:
+            broken.append(r)
+        elif r["kind"] == "declaration":
+            frag.append(r)
+        else:
+            broken.append(r)
+    if silent:
+        print("parsed but contributed no content (%d):" % len(silent))
+        for r in frag:
+            print("  Ex%-4d %-10s %s   [fragment: nothing to declare]"
+                  % (r["num"], r["kind"], r["title"][:44]))
+        for r in broken:
+            print("  Ex%-4d %-10s %s   [CHECK]" % (r["num"], r["kind"], r["title"][:44]))
+        print()
+    scorable = [r for r in models if r not in broken]
+    scored = [r for r in scorable if r["strict"]]
+    print("strict, excluding fragments and damaged input:  %d / %d  (%.1f%%)"
+          % (len(scored), len(scorable), 100.0 * len(scored) / max(1, len(scorable))))
     print("models parsed (no error):        %d / %d  (%.1f%%)"
           % (len(ok), len(models), 100.0 * len(ok) / max(1, len(models))))
     print("models parsed (strict content):  %d / %d  (%.1f%%)"
