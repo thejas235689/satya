@@ -170,6 +170,24 @@ New defects the scripts found that the audit missed:
 - **An extension's `exec` block never runs**, so an attribute it adds stays unusable (row 79).
 - Constructs **20–25, 38–50 and 145–146 had no models at all** in the first audit; they do now.
 
+## Reconciliation with `FEATURES.md`
+
+The doc revision that followed this audit re-derived every row from the proof
+scripts and arrives at **74 yes / 21 partial / 38 worse / 13 no**, against this
+audit's **74 PASS / 24 PARTIAL-OK / 35 PARTIAL-WORSE / 13 FAIL**. The PASS and
+FAIL columns agree exactly; three rows moved from `partial` to `worse`:
+
+| row | this audit | `FEATURES.md` | why they differ |
+|---|---|---|---|
+| 34 join specification | PARTIAL-OK | worse | Re-running it showed the four join forms are **not** fully indistinguishable — `join_branch(L1)` gives `A,C,B`, `join_branch(L2)` gives `B,C,A`, so ordering *is* gated; only the trace's group id is wrong. The audit's claim was too strong, the row is still not `yes`. |
+| 54 expression constraint | PARTIAL-OK | worse | The constraint is violated on 26 of 40 seeds while the counter reports satisfied. Both documents agree on the observation; they disagree on whether a reported-but-wrong constraint is "documented limitation" or "worse". |
+| 80 override | PASS in the audit | worse | The audit's model omitted a `;`, which dropped its activity entirely, so the PASS was never real. |
+
+Two documents disagreeing is worse than either being slightly wrong, so the
+disagreement is recorded here rather than smoothed away. Where they conflict,
+`FEATURES.md` is the more recent derivation and should be preferred; the
+per-slice `reports/` and the proof scripts remain the evidence for both.
+
 ## Reproducing
 
 Each slice directory holds one minimal model per construct. `run_all.sh` parses

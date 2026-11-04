@@ -13,6 +13,47 @@ approximated.
 
 ---
 
+## 0.49.0 — 2026-11-04
+
+Every doc now matches verified behaviour
+
+Four parallel agents re-derived the documentation from the proof scripts and the
+audit. Documentation only — no code changed.
+
+- **`docs/FEATURES.md`** — all 146 rows re-derived from the proof runs. The
+  summary is now **74 yes / 21 partial / 38 worse / 13 no**, replacing
+  "114 implemented / 32 partial / 0 not". Every `worse` and `no` row names the
+  defect that was measured, with its value.
+- **`docs/SEMANTICS.md`** — 20+ stale claims corrected, each quoting the old
+  wording beside the verified behaviour: `stream` consume-once *is* enforced;
+  `sequence`/`concat` gap semantics are the **opposite** of what the document
+  said; `get_tag()` returns the tag string, not an index; `compile has` is
+  unconditionally true; address-region traits *are* matched; `addr_value_abs`
+  returns a constant 1. A new §2.1 lists the defects the audit found that the
+  document never mentioned.
+- **`README.md`** — a verified-coverage block near the top, and the specific
+  over-claims the audit contradicts qualified (import, enum values, `forall`,
+  join forms, `bit[N]` width, `bind`, exec statements).
+- **`docs/VERIFICATION.md`** — a new §7 on the feature-proof harness, and the
+  "found and fixed" framing corrected: the audit found 35 rows worse than
+  documented and 13 non-working.
+- **`docs/CORPUS.md`** — a stale "6 of 7 pathological" fixed to 7 of 7, and a new
+  note that a green corpus does not imply conformance.
+- **`docs/DESIGN.md`** — 7 corrections, including that `schedule` is
+  indistinguishable from `parallel`, `select` picks at random rather than taking
+  the first branch, and `bind` is ignored so an input takes the *first* object.
+- **`docs/OPENTITAN.md`** — 5 corrections, including that
+  `array<bit[32], NUM_REGS_KEY>` with a symbolic count yields **no variables at
+  all** while reporting `8/8 satisfied`.
+
+**The agents disagreed with each other, and that is recorded rather than
+smoothed.** `FEATURES.md` and `FEATURE-AUDIT.md` now differ on three rows (34,
+54, 80); the reconciliation table in the audit explains each, including that the
+audit's own row-34 claim ("all four join forms are indistinguishable") did not
+reproduce — ordering *is* gated, only the group id is wrong.
+
+134 tests unchanged; corpora unchanged.
+
 ## 0.48.0 — 2026-11-02
 
 The feature proof is now executable, and it corrected the audit

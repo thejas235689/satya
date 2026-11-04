@@ -100,9 +100,13 @@ how the engine models "observe these steps". Cumulative over 60 seeds:
 | `c3_labelled.pss` | `mode_cg.len_bin` bin `small` | 27 |
 | | bin `large` | 33 |
 
-Every declared bin is reachable, and every declared coverage point — including
-the crosses `xfer_cg.cross(len,kind)` and the labelled `mode_cg.len_x_mode` —
-is reported.
+For these three examples every declared bin is reachable, and every declared
+coverage point — including the crosses `xfer_cg.cross(len,kind)` and the labelled
+`mode_cg.len_x_mode` — is reported. That is a statement about these models, not a
+general guarantee: the explicit bin forms they use (`bins short_len = [0..3];`,
+`bins exact_15 = 15;`) are counted correctly — three declarations report
+`bins 1/3` — but a bins *array* and a cross over a bit-select are not; see
+*What is still not applied* below.
 
 A single run samples one value, so the tool's per-run `bins 1/3` is **not** a
 coverage figure. Real coverage accumulates across a test; the checker computes
@@ -114,6 +118,23 @@ report, so the two have to agree.
 These parse but are **dropped** — not enforced and not counted, which is the
 worst of the three possible behaviours and is recorded as such in
 `docs/FEATURES.md`:
+
+- **A `bins` array declares one bin, not N.** `bins all[4] = {A, B, C, D};`
+  reports `bins 1/1`, and so does the other bins-array spelling `bins four[] =
+  [A, B, C, D];`. The explicit forms are counted correctly — three declarations
+  report `bins 1/3`, four report `bins 1/4` — so the error is specific to the
+  `[N]` / `[]` array form, and a coverage figure built on it understates the
+  declared space by a factor of N. This is the one place the tool cannot tell a
+  declared bin from a sampled one, which is the failure mode this document was
+  written to catch.
+
+- **A cross on a bit-select disappears.** `cross x[3:0], y;` reports no cross at
+  all — the bit-select coverpoint is keyed as `<expr>`, so the cross cannot find
+  it — while `cross x, y` over plain coverpoints reports `cg.cross(x,y)` and
+  `cross xb, yb` over labelled coverpoints reports `cg.cross(xb,yb)`. Naming the
+  bit-select through a `label` is the workaround. So "a coverpoint is keyed by
+  its label *or* its expression" holds only for expressions the keyer can
+  render.
 
 - **`a.sum()`** used to be counted but not solved. It now works: an aggregate
   cannot be seen by bound propagation, so the repair moves elements one at a

@@ -55,6 +55,16 @@ Two scenarios are modelled: `uart_smoke_test` (configure, a parallel burst of
 through a pool, and the UART address window is declared in an `exec init_up`
 block so the firmware and bench backends report real addresses.
 
+Two things about the schedule are worth stating precisely, because they are not
+what the source reads like. `poll_status` is written after the burst but is
+carried into the *same* concurrent group as the eight `write_byte` steps
+(`[parallel g1]` on all nine) — the join-specification defect the audit records,
+where the statement after a concurrent block lands inside it. And the recycled
+config object is shared but not *carried*: every `write_byte` takes
+`config_pool` object #0, yet its fields are solved independently of the object
+the `configure` step filled (audit row 48), so `frame.stop_bits` varies per step
+instead of following the configuration.
+
 Run it:
 
 ```bash
@@ -121,9 +131,11 @@ Two further improvements came out of the same work:
   one-step diagnosis.
 * The `fw` backend uses the same dependency ordering for its header.
 
-After the fixes the model solves cleanly — all 13 steps report `9/9 satisfied`,
-the generated C compiles and replays the scenario, and the generated bench
-driver runs.
+After the fixes the model solves cleanly — all 13 steps run and report every
+constraint they declare satisfied (`9/9` on the configured actions, `8/8` on
+`poll_status` and `read_byte`, `1/1` on `set_timeout`, and the two actions that
+declare none report none), the generated C compiles and replays the scenario, and
+the generated bench driver runs (13 steps, 0 unresolved).
 
 ---
 
@@ -140,22 +152,26 @@ it uses four constructs UART does not:
 | **REGWEN gate** (`rw0c`) | `CTRL_AUX_REGWEN` | yes |
 | **Enum-typed fields** | `OPERATION`, `MODE`, `KEY_LEN`, `PRNG_RESEED_RATE` | yes |
 
-The model parses (4 enums, 9 types, 9 actions) and both scenarios schedule — 10
-steps, 0 warnings, all constraints satisfied. The shadowed-write protocol is
-expressed as an activity plus a constraint (`complement == ~value`), and the
-REGWEN gate as an action ordering. All six backends generate, and the generated
-C compiles and runs.
+The model parses (4 enums, 8 types, 9 actions) and both scenarios schedule — 10
+steps, 0 warnings, every declared constraint reported satisfied (`10/10` on
+`program_ctrl`). One constraint in the model is *not* evaluated, though:
+`load_key`'s `key.words.sum() >= 1` comes back as `not evaluated: <expr>`
+because the multireg field it names never becomes a variable — see below. The
+shadowed-write protocol is expressed as an activity plus a constraint
+(`complement == ~value`), and the REGWEN gate as an action ordering. All six
+backends generate, and the generated C compiles and runs.
 
 ### Where it strains
 
-**Multiregs — resolved in 0.6.0.** AES declares `KEY_SHARE0` as a multireg with
+**Multiregs — resolved in 0.6.0 for a literal count.** AES declares `KEY_SHARE0` as a multireg with
 `count: "NumRegsKey"` — eight registers, not one. When this model was first
 written, Satya parsed `array<T, N>` but gave arrays **no semantics**: such a
 field collapsed to a single scalar. The model therefore hand-unrolled it into
 `word0 … word7`.
 
 Arrays now expand into one variable per element with per-element domains
-(PSS 8.4), so the model declares the multireg directly:
+(PSS 8.4) **when the element count is a literal**, so the model declares the
+multireg directly:
 
 ```pss
 struct aes_key_share0_s {
@@ -166,10 +182,23 @@ struct aes_key_share0_s {
 and constrains individual words (`key.words[0] == 0x2b7e1516`) and aggregates
 (`key.words.sum() >= 1`). `foreach (arr[i])` iterates elements.
 
+The expansion does not survive a *named* count, and this model uses one:
+`NUM_REGS_KEY` is a `static const int`. With a literal the eight words really do
+become eight variables — `array<bit[32], 4>` and `bit[32] w[4]` both solve per
+element, and `sum()` is enforced on them. With `array<bit[32], NUM_REGS_KEY>` the
+field yields **no variables at all** in a struct: `load_key` reports
+`constraints: 8/8 satisfied` and `not evaluated: <expr>` while `key.words[0]`
+appears nowhere in the solved fields, so the FIPS-197 first word is never
+written. That is the audit's worst pattern — success reported while nothing
+binds — reached here through a parameterised multireg. Declaring the field as
+`rand bit[32] words[NUM_REGS_KEY];` or with the literal `8` works; the
+`array<T, N>` form with a symbolic `N` does not.
+
 This was the honest answer to *"where would it break on a large production
 model?"* — not the parser, and not the scheduler, but **anywhere the register
-file is an array**. It is now closed for fixed-size arrays; what remains is the
-list of approximations in `docs/SEMANTICS.md` §2.
+file is an array**. It is closed for fixed-size arrays with a literal count;
+what remains is the symbolic-count form above and the list of approximations in
+`docs/SEMANTICS.md` §2.
 
 ### Three defects AES exposed
 

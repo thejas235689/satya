@@ -20,6 +20,20 @@ simulation, emulation or post-silicon bring-up without changing the model.
 
 ---
 
+> **Verified coverage — read this before trusting the feature list.**
+> Every construct Satya claims was re-tested against the published **v0.46.0**
+> binary and judged on **observed behaviour**, never on whether it parsed. The
+> audit covered **146 constructs and found 74 that behave as the standard
+> specifies** — 24 more whose documented limitation reproduces, 35 that behave
+> worse than documented, and 13 that do not work at all. That is 51% of the
+> construct table, against the 114 rows the feature matrix marks `yes`: the
+> matrix was counting *parsed* as *implemented*. The verdicts, the 120
+> reproducing models and `tests/feature_proof/run_all.sh` are in
+> [`docs/FEATURE-AUDIT.md`](docs/FEATURE-AUDIT.md). Where this README and the
+> audit disagree, the audit is the accurate description of the released binary.
+
+---
+
 > **Note — Satya does not replace any commercial tool.**
 > It is an independent, open-source implementation, not a substitute for a
 > commercial PSS product. Tools such as Cadence Perspec and Siemens InFact are
@@ -111,7 +125,7 @@ satya <command> [options]
 Options
   --action <name>          Root action to execute (default: `test`, else first)
   --seed <n>               Solver seed (default: 1)
-  --backend <name>         Backend for `gen` (uvm | json | trace)
+  --backend <name>         Backend for `gen` (uvm | c | fw | bench | json | trace)
   -o, --out <file>         Write output to a file instead of stdout
   --top-sequence <name>    Class name for the UVM top sequence
 ```
@@ -182,6 +196,8 @@ UART) with Satya, and [`docs/SEMANTICS.md`](docs/SEMANTICS.md) for what is
 implemented per the standard's defined behaviour and what is only approximated,
 and [`docs/FEATURES.md`](docs/FEATURES.md) for a per-construct feature matrix
 covering all 146 syntax excerpts the standard defines, and
+[`docs/FEATURE-AUDIT.md`](docs/FEATURE-AUDIT.md) for the behavioural re-test of
+all 146 of them against v0.46.0, and
 [`docs/CORPUS.md`](docs/CORPUS.md) for the result of running Satya against the
 shared community [PSS corpus](https://github.com/psstools/pss-corpus).
 [`CHANGELOG.md`](CHANGELOG.md) records what each release changed.
@@ -193,8 +209,10 @@ shared community [PSS corpus](https://github.com/psstools/pss-corpus).
 Satya parses a substantial, pragmatic subset of PSS v3.0. Constructs it
 understands:
 
-* `package` / `import` (`pkg::*`)
-* `enum` declarations and `extend enum`
+* `package` / `import` (`pkg::*`) — parsed, but `import` does not currently
+  affect name resolution (audit row 82)
+* `enum` declarations and `extend enum` — an explicit variant value is not
+  honoured; a variant solves to its position (audit row 11)
 * `struct` / `resource` / `buffer` / `state` with inheritance, template
   parameters and `extend`
 * `component` with sub-component instances, `extend component`
@@ -204,27 +222,40 @@ understands:
 * inline ranges: `rand int in [1..1024] n;` (and the lenient
   `rand int n in [1..1024];`)
 * `constraint` blocks: named, `default`, `forall`, and expression-form
-  (`constraint x <= 10;`)
+  (`constraint x <= 10;`) — `forall` is parsed but not expanded (audit row 58)
 * `activity` blocks: `do`, `do … with { … }`, `do … { }`, `parallel`
   (with `join_none` / `join_branch` / `join_select` / `join_first`),
   `schedule`, `select` (with branch guards), `repeat`, `foreach`,
   `replicate`, `if/else`, `atomic`, `sequence`, nested blocks, and
-  single-statement bodies (`repeat (n) do X;`)
-* `bit[N]` and ranged `bit[msb:lsb]` widths
+  single-statement bodies (`repeat (n) do X;`) — the four join forms behave
+  identically and gate nothing (audit row 34), the `sequence` scheduling
+  constraint is not honoured (row 62), and `repeat … while` never re-evaluates
+  its condition (row 37)
+* `bit[N]` and ranged `bit[msb:lsb]` widths — parsed and sized, but the declared
+  width is not enforced on solved values (audit row 9)
 * repeat/replicate **index binding**: `repeat (i: 4) do B with { size == i*10; }`
 * activity-level `constraint { … }`
-* `pool`, `pool [N] T p;`, `bind p *;`
+* `pool`, `pool [N] T p;`, `bind p *;` — `bind p *;` is parsed and ignored
+  (audit row 52)
 * `static const`, `compile if (…) { … } else { … }`
 * multi-file models and `.psf` project files
 * `exec` bodies parsed into statements (assignments, calls, `if`/`else`) and
-  translated into the C and UVM backends
+  translated into the C and UVM backends — only plain `=` and braced block
+  bodies take effect; `{ }` blocks, `+=`/`|=`, array-element assignment and
+  single-statement `repeat`/`if` bodies are dropped or mis-executed (audit
+  rows 89, 91, 94, 97)
 * address regions declared in `exec` blocks (`region.addr = …; region.size = …;`)
+
+A bullet above means the syntax is parsed and lowered. It does **not** mean the
+construct behaves as the standard requires — of the 146 constructs the audit
+judged, 74 do. The parenthetical audit references name the rows the proof shows
+are parse-only or wrong.
 
 Constructs outside the modelled subset are *accepted but skipped*, so a real
 `.pss` file still parses and its modelled parts remain usable: raw `exec`
-bodies (SystemVerilog), `function`/`task`/`covergroup`, `typedef`, `symbol`
-declarations, `match` statements and `super`. Skipped constructs are noted in
-the verification report and the design document.
+bodies (SystemVerilog), `task`/`covergroup` bodies, `symbol` declarations,
+`match` arms outside the exact-value braced form, and `super`. Skipped
+constructs are noted in the verification report and the design document.
 
 ### Constraints solved
 
@@ -245,6 +276,13 @@ Arithmetic relations are solved by a repair pass that inverts a single unknown
 (`x + y == 100` re-solves one operand); a relation that stays unsatisfiable
 within the declared domains is reported in the satisfied/total count rather
 than hidden.
+
+The audit qualifies this table: a solved value is not always a *correct* one.
+Multi-unknown relations (`a*b <= 20`, `a < b`) are violated on a substantial
+fraction of seeds, and membership over a literal list
+(`mode in {SYS_MEM, LOCAL}`) is not evaluated at all — the constraint is still
+counted satisfied (audit rows 21, 54). The satisfied/total counter reflects the
+constraints *seen*, not the constraints *met*.
 
 ---
 
@@ -332,16 +370,25 @@ replace any commercial tool — see [`NOTICE.md`](NOTICE.md). Known limits:
   is no queuing or priority.
 * **Pools are allocated and consumed**, `foreach` over a pool iterates its
   objects, and a pool's declared count is enforced — an allocation beyond it is
-  refused and reported.
-* **`compile if` takes the primary branch.**
-* **`function`/`task` bodies, `covergroup`s, `typedef`s and `symbol`
-  declarations are accepted but not executed.**
-* **`exec` bodies are translated for simple assignments and `if`/`else`;**
-  foreign calls (`make_handle_from_claim`, `add_region`, …) are emitted as
+  refused and reported. **Resource pools do not currently create instances**, so
+  concurrent lockers all resolve to instance 0 and always contend (audit rows
+  49, 50).
+* **`compile if` takes the primary branch**, but declarations from the enabled
+  branch are lost when the statement is nested, at package scope, or inside an
+  action body (audit row 103).
+* **`task` bodies, `covergroup`s and `symbol` declarations are accepted but not
+  executed** — a `symbol` expands to nothing (audit row 43). `typedef` *is*
+  implemented (row 17), and `function`s resolve when called unqualified, but a
+  package-qualified call does not reach its definition (row 84).
+* **`exec` bodies are translated for plain assignments and braced `if`/`else`;**
+  `{ }` blocks, `+=`/`|=`, array-element assignment and single-statement
+  `repeat`/`if` bodies are dropped or mis-executed (audit rows 89, 91, 94, 97).
+  Foreign calls (`make_handle_from_claim`, `add_region`, …) are emitted as
   comments in C and passed through in SystemVerilog — Satya does not implement
   the foreign functions.
-* **`match` is executed** with `[lo..hi]`, `[value, lo..hi, …]` lists and
-  `default`; `select` index expressions are parsed but ignored.
+* **`match` is only partly executed** — exact-value arms with a braced body
+  work, but range arms `[lo..hi]` never match and unbraced arms are dropped
+  (audit row 98). `select` index expressions are parsed but ignored.
 
 ---
 

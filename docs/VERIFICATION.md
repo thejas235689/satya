@@ -11,6 +11,10 @@ on 0.1.0; the findings are unchanged, but several limitations recorded at the
 time have since been closed (name resolution, arbitration, pool capacity,
 `match`, `select` guards, arithmetic, `exec` translation). Those rows are
 updated here and marked *closed in 0.2.0*.
+**Revision:** 3 — adds §7, the feature-proof harness, recording the behavioural
+audit of **v0.46.0**. Sections 1–6 are unchanged from the 0.2.0 pass and are a
+**grammar and parse** verification; they do not establish behavioural
+conformance, which §7 measures and which is materially lower.
 
 ---
 
@@ -28,6 +32,16 @@ six are fixed and covered by tests.
 
 The claims in the README and design document have been corrected where they
 over- or under-stated what the implementation does.
+
+**What this pass does not establish.** Everything above is a parse-level
+result: it proves that valid PSS is accepted and that the models compile and
+solve. It does not prove that a construct which parses behaves as the standard
+requires. A behavioural re-test of all 146 constructs on v0.46.0 (§7 and
+[`FEATURE-AUDIT.md`](FEATURE-AUDIT.md)) found **35 rows behaving worse than
+documented and 13 not working at all**, including constructs that report
+`constraints: 1/1 satisfied` while returning a wrong value. The statement that
+defects were "found and fixed" is true of the defects a *parse* pass can find;
+it is not a claim that the implementation is behaviourally correct.
 
 | Check | Before | After |
 |-------|--------|-------|
@@ -229,6 +243,13 @@ compiles). The distinction matters and is stated plainly.
 | activity: `do`, `do … with { … }`, `parallel` (+ join specs), `schedule`, `select`, `repeat`, `replicate`, `foreach`, `if/else`, `atomic`, `sequence`, labels, single-statement bodies | 12, Annex B.9 | scheduled |
 | `bit[N]`, `bit[msb:lsb]`, templated types | 7, 11 | typed and sized |
 
+*Modelled* here means the construct produces model content that the solver and
+engine consume — it does not mean that content is correct. The v0.46.0 audit
+re-tested these same rows on behaviour and found 74 of 146 passing: `bind p *`
+is recorded in the IR but ignored, `import` does not affect name resolution, and
+`compile if` loses declarations in nested scope (§7,
+[`FEATURE-AUDIT.md`](FEATURE-AUDIT.md)).
+
 ### 5.2 Accepted but not executed
 
 These parse (so a real file still compiles) but Satya does not act on them.
@@ -289,7 +310,74 @@ Still accepted but not executed:
 
 ---
 
-## 7. What was not verified, and residual risk
+## 7. The feature-proof harness
+
+The verification above is a **grammar and parse** pass: it proves that valid
+PSS is accepted, that the six defects it found were fixed, and that the workshop
+models compile and solve. It does **not** prove that a construct which parses
+behaves as the standard requires — and the behavioural audit of v0.46.0 showed
+that many do not.
+
+That audit is now a first-class verification method in the repository:
+
+```sh
+tests/feature_proof/run_all.sh /path/to/satya
+```
+
+`run_all.sh` runs six self-contained slice scripts (`proof-slice-1.sh` …
+`proof-slice-6.sh`), one per slice of the 146-row construct table in
+[`FEATURES.md`](FEATURES.md), over the 120 minimal models in
+`tests/feature_proof/slice-*/` (20 per slice). Each script takes the binary as
+`$1`, fails closed with exit 2 if it is missing or is not Satya, and **asserts
+on observed behaviour** rather than on parsing: it reads solved values back out
+of the `json` backend — never the trace text, never "it parsed" — and compares
+them against what PSS requires. A field constrained `in [10..20]` is checked in
+range over 20 seeds, a `bit[8]` is checked never to exceed 255, a `bool` is
+checked to be 0 or 1, a `float32` is checked to hold a binary32 bit pattern
+rather than a binary64 one, and an aggregate is checked for the elements and
+cardinality it must have. One `PASS`/`FAIL` line is printed per item, with the
+observed value on failure. Slice 6 also carries Part B, sixteen CLI and backend
+checks (exit statuses, line-numbered diagnostics, and every one of the six
+backends).
+
+Result on the checksum-verified v0.46.0 binary:
+
+| slice | constructs | pass | fail |
+|---|---|---|---|
+| 1 | 1–25 literals, data types, components | 12 | 13 |
+| 2 | 26–50 templates, activity, flow objects | 16 | 9 |
+| 3 | 51–75 constraints, coverage, monitors | 18 | 7 |
+| 4 | 76–100 monitors, extension, functions, procedural | 8 | 17 |
+| 5 | 101–125 compile-time, executors, address space | 18 | 7 |
+| 6 | 126–146 handles, registers, memory primitives | 16 | 5 |
+| CLI / backends | 16 items | 16 | 0 |
+| **total** | | **104** | **58** |
+
+That is 162 assertions, 104 pass and 58 fail. Judged four ways over the 146
+constructs, the audit found **74 PASS, 24 PARTIAL-OK, 35 PARTIAL-WORSE, 13
+FAIL** — 35 rows behave worse than this document describes, and 13 do not work
+at all. The per-row verdicts and observed values are in
+[`FEATURE-AUDIT.md`](FEATURE-AUDIT.md).
+
+The scripts use a two-way vocabulary, so a `PARTIAL-OK` row counts as PASS in
+some slices and FAIL in others depending on whether the assertion pins the
+documented limitation or the standard. That inconsistency is real; the
+four-way table in the audit is the more informative view, and the scripts are
+the reproducible evidence rather than a single score.
+
+This is the correction to the earlier framing. The verification described in
+§§1–6 found the defects a parse pass can find; it did not catch the behavioural
+ones — a constraint that reports `1/1 satisfied` while yielding 256 for
+`bit[8] in [256..300]`, `bind` and `import` that parse and do nothing, a
+`bins all[4]` that declares one bin — because its assertions tested that
+constraints were *satisfied*, not that values were *correct*. The audit also
+corrected this document's own record in six places (rows 62, 121, 14, 34, 80,
+104) and found new defects the audit itself had missed; both lists are in
+[`FEATURE-AUDIT.md`](FEATURE-AUDIT.md).
+
+---
+
+## 8. What was not verified, and residual risk
 
 * **Semantic equivalence with a commercial tool.** Satya's schedule is checked
   for internal consistency and against the LRM grammar; it has not been compared
@@ -315,11 +403,14 @@ Still accepted but not executed:
 
 ---
 
-## 8. Reproducing this verification
+## 9. Reproducing this verification
 
 ```bash
 cargo build --release
-cargo test                                  # 26 tests, incl. LRM-grammar cases
+cargo test                                  # 134 tests in tests/integration.rs
+
+# The behavioural feature proof — six slices, 162 assertions
+tests/feature_proof/run_all.sh ./target/release/satya
 
 WS=<path-to>/pss_workshop_examples_dvcon_2025
 for f in $(find $WS -name '*.pss'); do satya parse "$f"; done      # 11 / 11
@@ -342,7 +433,7 @@ plus the pool/address/arbitration/arithmetic/backend/`exec` tests (26 total).
 
 ---
 
-## 9. Changes to the deliverable
+## 10. Changes to the deliverable
 
 The Cargo project has been updated in place (same filename, new version):
 

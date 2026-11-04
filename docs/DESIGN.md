@@ -33,8 +33,15 @@ post-silicon bring-up through the portable JSON backend.
   not have. Unknown types become opaque references rather than errors, so a
   partial or single-file model still yields a usable component tree,
   constraint set and activity graph.
-* **Honest limits.** Constructs outside the solved subset are *reported*
+* **Honest limits.** Constructs outside the solved subset should be *reported*
   (counted as unsupported, surfaced as warnings) rather than silently dropped.
+  That holds for unsupported atoms (`not evaluated: <expr>`), pool exhaustion
+  and flow-object ordering, but not universally. The v0.46.0 feature audit
+  ([`FEATURE-AUDIT.md`](FEATURE-AUDIT.md)) finds `bind`, static `bind`
+  directives, `import`, `covergroup` instantiation and a symbolic-size
+  `array<T, N>` dropped with no diagnostic while the constraint counter still
+  reports satisfied — 35 of 146 constructs behave worse than documented, and
+  "reports success while doing nothing" is the most common failure it found.
 * **No dependencies.** The engine is built on the Rust standard library alone,
   which keeps the tool auditable and trivially portable.
 
@@ -163,6 +170,13 @@ set membership intersect domains; `!=` adds a forbidden value.
 runs are reproducible. `pick` samples within the domain and falls back to the
 first allowed value.
 
+**Declared widths are not domains.** Only bounds that arrive as constraints are
+enforced. A field's `bit[N]` width and `bool` are not treated as domain bounds,
+so `pick` can return a value outside them: the audit sees `rand bool` solve to
+69, and `bit[8]` constrained to `[256..300]` solve to 256 while the counter
+prints `1/1 satisfied` (a `not satisfied: conflicting constraints on …` line is
+emitted alongside it, so the two halves of the report disagree).
+
 **Arithmetic repair.** Relations that domain propagation cannot handle — where
 neither side is a bare variable (`x + y == 100`) — are extracted as
 `Atom::General` and resolved by a bounded repair pass. Each pass picks a
@@ -170,7 +184,10 @@ violated relation, inverts it for a single participating variable
 (`invert_eq` handles `+`, `-`, `*`, `/` by constants and unary minus), and
 accepts the inversion only if the result lies inside that variable's domain;
 otherwise it tries another operand. This is a heuristic, not a linear-programming
-solver, but it covers the arithmetic that appears in practice.
+solver. It handles a relation with one unknown; relations between two variables
+frequently stay unsatisfied — the audit sees `a + b == 10` with both operands
+confined to `[0..10]` violated on 26 of 40 seeds. Those failures are reported as
+unsatisfied rather than silently accepted.
 
 **Verification.** Every atom is re-checked against the repaired assignment; the
 report carries `satisfied`/`total` counts and the list of unsupported atoms,
@@ -202,8 +219,15 @@ The walker's rules:
   action has its own `activity`, that activity is expanded; otherwise the action
   is a leaf and a step is recorded after solving its constraints.
 * `parallel` / `schedule` assign a group id; the backend uses it to emit
-  `fork … join`.
-* `select` takes the first branch (and warns when there are alternatives).
+  `fork … join`. In the walker `schedule` is **indistinguishable from
+  `parallel`**: the two produce identical scenarios apart from the step's `mode`
+  label and share one concurrent group id, and scheduling constraints
+  (`constraint sequence { … }`, `constraint parallel { … }`) are not applied — an
+  activity that lists `do a2; do a1;` runs `a2, a1` whatever the declared order
+  says.
+* `select` picks one branch per seed from the seeded RNG, so every branch is
+  reachable across seeds, and emits no warning. Guards are not evaluated: the
+  choice does not depend on the solved assignment.
 * `repeat (n)` unrolls the body `n` times.
 * `foreach` executes its body once (pool sizes are not modelled) and warns.
 * `atomic` marks the enclosed steps.
@@ -212,17 +236,26 @@ The walker's rules:
 
 **Flow objects and pools.** Pools are gathered from the top component and its
 sub-components. An `output` field of a type served by a bound pool allocates an
-object (carrying that field's solved values); an `input` consumes the next
-object of that type. `foreach` over a pool iterates the allocated objects,
-binding both the index and each object's fields. Over-allocation beyond a pool's
-declared count is reported.
+object, carrying that field's solved values. An `input` is bound to the *first*
+object of that type rather than to the next one: `bind p2.out c.inp;` is parsed
+and ignored, so a consumer always takes object #0 whichever producer the bind
+names, and the input field is solved independently of the object — the audit
+sees the object hold `size = 7` while the consumer's input solves 269.
+`foreach` over a pool iterates the allocated objects, and it is that iteration —
+not consumption — which advances to later objects; the object id moves on but the
+object's fields are still not carried into the consumer. Over-allocation beyond a
+pool's declared count is reported: the trace prints `pool ... exhausted (1
+objects); allocation of ... refused`.
 
 **Resource arbitration.** `lock`/`share` fields claim instances of a resource
 type. The number of available instances is estimated from the model's component
-instances (a resource `pssm_executor_r` is served by `pssm_executor_c`
-instances). Inside a parallel or schedule group, the engine counts exclusive
-claims per resource and reports contention when they exceed the instances
-available.
+instances, and that path works: a resource `pssm_executor_r` is served by
+`pssm_executor_c` instances, so with four of them three parallel lockers take
+instances 0, 1 and 2. A resource **pool** creates no instances at all, however —
+`pool [4] core_r core_pool;` is reported as `core_pool:core_r=0` — so every claim
+on a pooled resource resolves to instance 0 and any parallel exclusive group
+contends. Inside a parallel or schedule group, the engine counts exclusive claims
+per resource and reports contention when they exceed the instances available.
 
 **Address space.** Address regions declared in `exec` blocks
 (`region.addr` / `region.size`) are collected during lowering. Each allocated
@@ -287,7 +320,12 @@ resolved by serialising (no queuing); `compile if` takes the primary branch; `fu
 `symbol` declarations are accepted but not executed; `exec` bodies are
 translated only for assignments and `if`/`else`, and foreign calls are not
 implemented; arithmetic solving is single-unknown heuristic inversion rather
-than a linear-programming solver.
+than a linear-programming solver. The v0.46.0 audit ([`FEATURE-AUDIT.md`](FEATURE-AUDIT.md))
+adds to this list: `bind` and static `bind` directives, `import`, `covergroup`
+instantiation, `forall`, `bins all[N]` and `constraint sequence` are dropped
+without a diagnostic; a symbolic-size `array<T, N>` in a struct yields no
+variables while reporting satisfied; `select` is randomised rather than
+guard-driven; and a resource pool never creates instances.
 
 **Roadmap**
 

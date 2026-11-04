@@ -31,8 +31,22 @@ The tool exits non-zero if any bucket misses its expectation, so it can gate CI.
   pathological     7 file(s)    7 correctly rejected   0 wrongly accepted
 ```
 
-**97/97** of the buckets that must parse, and 6 of 7 pathological files
+**97/97** of the buckets that must parse, and 7 of 7 pathological files
 correctly rejected.
+
+### What a green corpus does and does not prove
+
+A parsed file is not an implemented construct. Every bucket here is judged on
+whether Satya *accepts* the source, so a construct can parse cleanly, pass a
+corpus model, and still do nothing when it is solved. The behavioural audit of
+v0.46.0 ([`FEATURE-AUDIT.md`](FEATURE-AUDIT.md)) found exactly that: `import`
+has no effect on name resolution (row 82), `bind p *` is parsed and ignored
+(row 52), a `covergroup` instance binds nothing and never samples (row 64), and
+`bins all[4] = {A,B,C,D}` declares a single bin (row 66) — all of which parse,
+and all of which pass models of this kind. The corpus proves that the front end
+accepts the shared language; it does not prove that the constructs mean what
+the standard says. Conformance is measured separately, construct by construct,
+by `tests/feature_proof/run_all.sh`.
 
 ## What the corpus found
 
@@ -164,7 +178,10 @@ Three more defects, none of which the corpus alone exposed:
   compliance             114 file(s)  114 parsed   0 failed
 ```
 
-**97/97, 7/7, 114/114.** The last pathological file,
+**97/97, 7/7, 114/114.** These are acceptance counts: every file is judged on
+whether it parses (or, for `pathological/`, is correctly rejected), not on what
+the accepted constructs then do — see *What a green corpus does and does not
+prove* above. The last pathological file,
 `unclosed_mustache.pss`, contains an unclosed `{{` template expression in
 target code; a triple-quoted block is now checked for an opening `{{` with no
 matching `}}`. Only the *open* side is checked — ordinary code may legitimately
