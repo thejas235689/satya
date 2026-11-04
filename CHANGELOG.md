@@ -13,6 +13,21 @@ approximated.
 
 ---
 
+## 0.50.1 — 2026-11-04
+
+The held patch is in the repo
+
+v0.50.0 said the `forall` fix "stays as a prepared patch for the next release"
+and then did not put it anywhere. It is now in `docs/proposed/`:
+
+- `forall-binding.patch` — the working fix, verified to apply to the v0.49.0
+  `src/solver.rs`
+- `README.md` — what it fixes, the evidence, why it is not merged, and what a
+  mergeable version needs
+
+Recorded rather than dropped, because a promise in a changelog that nothing
+backs is worse than not making it.
+
 ## 0.50.0 — 2026-11-04
 
 First fixes from the audit: declared widths and two-unknown relations

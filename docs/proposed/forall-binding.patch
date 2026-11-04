@@ -1,0 +1,159 @@
+--- a/src/solver.rs
++++ b/src/solver.rs
+@@ -971,7 +971,10 @@
+                     }
+                 }
+             }
+-            Atom::Unsupported(e) => unsupported.push(render_expr(e)),
++            // Not evaluated is reported by the counting pass below, from
++            // `unevaluated`. Listing it here as well made one constraint show
++            // up both as "not satisfied" and as "not evaluated".
++            Atom::Unsupported(_) => {}
+         }
+     }
+ 
+@@ -2402,11 +2405,143 @@
+ fn extract_atoms(exprs: &[Expr], vars: &BTreeMap<String, Domain>, env: &Env) -> Vec<Atom> {
+     let mut out = Vec::new();
+     for e in exprs {
+-        split_and(e, &mut out, vars, env);
++        let mut atoms = Vec::new();
++        split_and(e, &mut atoms, vars, env);
++        let mut unevaluated = false;
++        for a in atoms {
++            match bind_unmodelled(&a, vars) {
++                Some(mut bound) => out.append(&mut bound),
++                None => unevaluated = true,
++            }
++        }
++        // Part of the expression named something the solver cannot resolve.
++        // Report the constraint as not evaluated rather than let it pass.
++        if unevaluated {
++            out.push(Atom::Unsupported(e.clone()));
++        }
+     }
+     out
+ }
+ 
++/// True when `name` is something the solver models: a leaf attribute, or the
++/// name of an array of them (`y` for `y[0]`, `y[1]`, ...).
++fn is_modelled(name: &str, vars: &BTreeMap<String, Domain>) -> bool {
++    vars.contains_key(name) || vars.contains_key(&format!("{}[0]", name))
++}
++
++/// True when every attribute an atom names is one the solver has a domain for.
++fn atom_is_grounded(atom: &Atom, vars: &BTreeMap<String, Domain>) -> bool {
++    match atom {
++        Atom::Rel(v, _, _)
++        | Atom::InRange(v, _, _)
++        | Atom::InSet(v, _)
++        | Atom::InArray(v, _) => is_modelled(v, vars),
++        Atom::Unique(names) => names.iter().all(|n| is_modelled(n, vars)),
++        Atom::Implies(_, cons) => cons.iter().all(|c| atom_is_grounded(c, vars)),
++        // A general relation is reported as not evaluated by the counting pass
++        // when either side fails to evaluate it.
++        Atom::General(_, _, _) | Atom::Unsupported(_) => true,
++    }
++}
++
++/// Bind an atom that names an attribute the solver has no domain for.
++///
++/// The dominant cause is a `forall (it : T) { body }` constraint (PSS 16.1.8).
++/// The parser keeps the body but the binding variable never becomes an
++/// attribute, so the body reaches the solver as `it.size < 5` with `it` free.
++/// Such an atom used to be collected like any other, and since `check_atom`
++/// treats a missing value as satisfied it could never fail: the constraint
++/// counter reported it satisfied while nothing was enforced.
++///
++/// The reference is resolved the way `eval` already resolves a relative
++/// reference — by its trailing segments. `it.size` binds to the attribute in
++/// scope that ends in `.size`:
++///
++///  * one candidate (`e.size`), or several that are elements of the same
++///    attribute (`es[0].size`, `es[1].size`), gives one atom per instance —
++///    which is exactly what `forall` means for a single attribute or an array
++///    of that type;
++///  * no candidate, or candidates under different roots, leaves the body
++///    unbindable, and the caller reports the constraint as not evaluated.
++///
++/// Returns `None` when the atom cannot be bound.
++fn bind_unmodelled(atom: &Atom, vars: &BTreeMap<String, Domain>) -> Option<Vec<Atom>> {
++    if atom_is_grounded(atom, vars) {
++        return Some(vec![atom.clone()]);
++    }
++    match atom {
++        Atom::Rel(v, op, rhs) => {
++            let names = resolve_unbound(v, vars)?;
++            Some(names.into_iter().map(|n| Atom::Rel(n, *op, rhs.clone())).collect())
++        }
++        Atom::InRange(v, lo, hi) => {
++            let names = resolve_unbound(v, vars)?;
++            Some(names.into_iter().map(|n| Atom::InRange(n, *lo, *hi)).collect())
++        }
++        Atom::InSet(v, items) => {
++            let names = resolve_unbound(v, vars)?;
++            Some(names.into_iter().map(|n| Atom::InSet(n, items.clone())).collect())
++        }
++        Atom::InArray(v, coll) => {
++            let names = resolve_unbound(v, vars)?;
++            Some(names.into_iter().map(|n| Atom::InArray(n, coll.clone())).collect())
++        }
++        // `unique { a, b }` is a joint property, so every name must resolve to
++        // exactly one attribute for the set to be rebuilt.
++        Atom::Unique(names) => {
++            let mut bound = Vec::new();
++            for n in names {
++                let mut r = resolve_unbound(n, vars)?;
++                if r.len() != 1 {
++                    return None;
++                }
++                bound.push(r.remove(0));
++            }
++            Some(vec![Atom::Unique(bound)])
++        }
++        // A general relation or an implication is left to the counting pass,
++        // which already reports an unevaluable one as not evaluated.
++        Atom::General(_, _, _) | Atom::Implies(_, _) | Atom::Unsupported(_) => {
++            Some(vec![atom.clone()])
++        }
++    }
++}
++
++/// The modelled attributes an unbound reference such as `it.size` can stand
++/// for: the variables whose name ends in `.size`, provided they all belong to
++/// the same root (`es[0].size` and `es[1].size` share the root `es`).
++fn resolve_unbound(v: &str, vars: &BTreeMap<String, Domain>) -> Option<Vec<String>> {
++    // A bare name carries nothing to match on.
++    let (_, rest) = v.split_once('.')?;
++    let suffix = format!(".{}", rest);
++    // `arr.size` / `arr.sum` are the array's own meta-attributes, not a
++    // member of an element type, so they cannot be what a `forall` body means.
++    let is_meta = |k: &str| -> bool {
++        match k.rsplit_once('.') {
++            Some((base, last)) if last == "size" || last == "sum" => {
++                vars.contains_key(&format!("{}[0]", base))
++            }
++            _ => false,
++        }
++    };
++    let candidates: Vec<String> = vars
++        .keys()
++        .filter(|k| k.ends_with(&suffix) && !is_meta(k))
++        .cloned()
++        .collect();
++    if candidates.is_empty() {
++        return None;
++    }
++    let root_of = |k: &str| -> String {
++        k.split('.').next().unwrap_or("").split('[').next().unwrap_or("").to_string()
++    };
++    let root = root_of(&candidates[0]);
++    if candidates.iter().any(|k| root_of(k) != root) {
++        return None;
++    }
++    Some(candidates)
++}
++
+ /// Replace the loop variable of a `foreach` with a constant index, so its body
+ /// can become one constraint per element.
+ fn subst_loop_var(e: &Expr, var: &str, idx: i64) -> Expr {
