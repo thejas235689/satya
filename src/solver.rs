@@ -87,18 +87,70 @@ struct Domain {
     allowed: Option<Vec<i64>>,
     #[allow(dead_code)]
     is_enum: bool,
+    /// The hard bounds of the declared type, when it has one: `bit[N]` is
+    /// `0 ..= 2^N-1` (the whole i64 range for N = 64, so bit 63 is
+    /// representable) and `bool` / a bare `bit` are `{0,1}` (PSS 6.1,
+    /// 24.10.2). Constraints may narrow `lo`/`hi` but never widen them past
+    /// these. `None` for a type with no declared width (`int`, enums, ...),
+    /// whose domain stays as open as it was.
+    decl: Option<(i64, i64)>,
 }
 
 impl Domain {
+    /// Does the declared type admit `v`? A `bit[8]` cannot hold 256 and a
+    /// `bool` cannot hold 2, whatever a constraint asks for.
+    fn in_declared_width(&self, v: i64) -> bool {
+        match self.decl {
+            Some((dlo, dhi)) => v >= dlo && v <= dhi,
+            None => true,
+        }
+    }
     fn contains(&self, v: i64) -> bool {
+        // The declared type is a hard bound, so a value outside it is never in
+        // the domain even if a constraint named it.
+        if !self.in_declared_width(v) {
+            return false;
+        }
         if let Some(a) = &self.allowed {
             return a.contains(&v);
         }
         v >= self.lo && v <= self.hi && !self.forbidden.contains(&v)
     }
     fn intersect_interval(&mut self, lo: i64, hi: i64) {
-        self.lo = self.lo.max(lo);
-        self.hi = self.hi.min(hi);
+        let (dlo, dhi) = self.decl.unwrap_or((i64::MIN, i64::MAX));
+        // Narrow to the request *and* to the declared type: a constraint can
+        // only ever narrow a domain, never widen it past its declared width.
+        let nlo = self.lo.max(lo).max(dlo);
+        let nhi = self.hi.min(hi).min(dhi);
+        if nlo <= nhi {
+            self.lo = nlo;
+            self.hi = nhi;
+        } else if hi < dlo || lo > dhi {
+            // The request lies wholly outside what the type can hold (`bit[8]`
+            // constrained to `[256..300]`). Keep the type's own range instead
+            // of an empty or out-of-width one, so the picker cannot invent a
+            // value the type cannot represent; the atom then fails the
+            // satisfaction check and is reported, rather than being counted as
+            // satisfied against an impossible assignment.
+            let (tlo, thi) = (self.lo.max(dlo), self.hi.min(dhi));
+            if tlo <= thi {
+                self.lo = tlo;
+                self.hi = thi;
+            } else {
+                self.lo = nlo;
+                self.hi = nhi;
+            }
+        } else {
+            // Genuinely contradictory constraints inside the type's range.
+            self.lo = nlo;
+            self.hi = nhi;
+        }
+        // Keep a named set inside the narrowed domain too, so a sparse set that
+        // reached past the declared width cannot leak an out-of-width member.
+        if let Some(a) = &mut self.allowed {
+            let (l, h) = (self.lo, self.hi);
+            a.retain(|v| *v >= l && *v <= h);
+        }
     }
 }
 
@@ -481,7 +533,10 @@ fn type_nbits(model: &Model, dt: &crate::ir::DataType) -> Option<i64> {
             }
             Some(total)
         }
-        "bit" | "int" | "byte" | "shortint" | "longint" | "integer" | "uint" => {
+        // A bare `bit` is one bit wide (PSS 6.1); the other scalar keywords
+        // default to 32 bits.
+        "bit" => Some(dt.fields.first().and_then(|f| f.bits).unwrap_or(1)),
+        "int" | "byte" | "shortint" | "longint" | "integer" | "uint" => {
             Some(dt.fields.first().and_then(|f| f.bits).unwrap_or(32))
         }
         "enum" => Some(dt.fields.first().and_then(|f| f.bits).unwrap_or(32)),
@@ -1099,6 +1154,7 @@ fn solve_impl(
                 forbidden: HashSet::new(),
                     allowed: None,
                 is_enum: false,
+                decl: None,
             });
             match dist_by_root.get(&root) {
                 Some(items) => pick_weighted(items, &mut rng).unwrap_or_else(|| pick(&d, &mut rng)),
@@ -1582,6 +1638,15 @@ fn repair(
                                 }
                             }
                         }
+                    } else if let (Some(x), Some(y)) = (eval(l, values, env), eval(r, values, env)) {
+                        // An ordering whose sides are expressions rather than
+                        // single variables (`p * q <= 20`) cannot be nudged by
+                        // one variable onto a target, so derive one instead.
+                        if !rel_holds(*op, x, y)
+                            && derive_relation(l, *op, r, values, bindings, env, class_domain)
+                        {
+                            changed = true;
+                        }
                     }
                 }
                 Atom::General(l, Op::Eq, r) => {
@@ -1617,6 +1682,17 @@ fn repair(
                                 values.insert(v, nv);
                                 changed = true;
                             }
+                            // One equation with two or more unknowns has no
+                            // unique inversion, and a clamped single-variable
+                            // move can leave it violated: derive one variable
+                            // from the others instead.
+                            if let (Some(a), Some(b)) = (eval(l, values, env), eval(r, values, env)) {
+                                if a != b
+                                    && derive_relation(l, Op::Eq, r, values, bindings, env, class_domain)
+                                {
+                                    changed = true;
+                                }
+                            }
                         }
                         (None, Some(b)) => {
                             let lu: Vec<String> = collect_unknowns(l, values, env)
@@ -1645,6 +1721,18 @@ fn repair(
                         _ => {}
                     }
                 }
+                // Any other relation (`p * q <= 20`): neither the ordering arm
+                // nor single-variable inversion reaches it, so derive one
+                // variable from the others.
+                Atom::General(l, op, r) => {
+                    if let (Some(a), Some(b)) = (eval(l, values, env), eval(r, values, env)) {
+                        if !rel_holds(*op, a, b)
+                            && derive_relation(l, *op, r, values, bindings, env, class_domain)
+                        {
+                            changed = true;
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -1653,6 +1741,259 @@ fn repair(
         }
     }
     let _ = uf;
+}
+
+/// How far a pair of values is from satisfying `x op y` (0 means it holds).
+/// Used to decide which way to move a variable when no inversion is available.
+fn relation_violation(op: Op, x: i64, y: i64) -> i128 {
+    let (x, y) = (x as i128, y as i128);
+    match op {
+        Op::Eq => (x - y).abs(),
+        Op::Ne => {
+            if x == y {
+                1
+            } else {
+                0
+            }
+        }
+        Op::Le => (x - y).max(0),
+        Op::Ge => (y - x).max(0),
+        Op::Lt => (x - y + 1).max(0),
+        Op::Gt => (y - x + 1).max(0),
+    }
+}
+
+/// The variables a relation may move: every assigned variable on either side
+/// that is not pinned by a binding, in sorted order so the choice is a function
+/// of the model and not of hash iteration order.
+fn relation_free_vars(
+    l: &Expr,
+    r: &Expr,
+    values: &BTreeMap<String, i64>,
+    bindings: &BTreeMap<String, i64>,
+) -> Vec<String> {
+    let mut out = vars_in(l, values);
+    for v in vars_in(r, values) {
+        if !out.contains(&v) {
+            out.push(v);
+        }
+    }
+    out.retain(|v| !bindings.contains_key(v));
+    out.sort();
+    out
+}
+
+/// Satisfy a relation that has more than one unknown.
+///
+/// A single unknown can be inverted (`adjust`/`invert_eq`), but with two or more
+/// there is no unique solution to invert towards — `x + y == 10` holds for
+/// eleven different pairs, so moving one variable onto the target and clamping
+/// it to its domain leaves the relation violated. Instead one variable is
+/// *derived* from the others: the value the relation demands of it is computed
+/// from the current values of the rest, and when that value lies outside its
+/// domain the other variables are moved (a directed nudge first, then a bounded
+/// number of deterministic re-draws) until the derived value fits.
+///
+/// The derived variable is the one with the widest domain (ties broken by name),
+/// so the choice depends only on the model. Every retry is either a pure
+/// function of the current assignment or drawn from a generator seeded with the
+/// run's seed, so a seed still reproduces its assignment exactly.
+///
+/// Returns true when the assignment changed.
+fn derive_relation(
+    l: &Expr,
+    op: Op,
+    r: &Expr,
+    values: &mut BTreeMap<String, i64>,
+    bindings: &BTreeMap<String, i64>,
+    env: &Env,
+    class_domain: &HashMap<String, Domain>,
+) -> bool {
+    let free = relation_free_vars(l, r, values, bindings);
+    if free.len() < 2 {
+        return false;
+    }
+
+    // Is `v` a legal value for `name`? A missing domain means unconstrained.
+    let fits = |name: &str, v: i64| -> bool {
+        match class_domain.get(name) {
+            Some(d) => d.contains(v),
+            None => true,
+        }
+    };
+
+    // Widest domain first, then the greater name: deterministic, and the widest
+    // domain is the one most likely to have room for the derived value.
+    let span = |n: &String| -> i128 {
+        match class_domain.get(n) {
+            Some(d) => (d.hi as i128) - (d.lo as i128),
+            None => i128::MAX,
+        }
+    };
+    let derive = free
+        .iter()
+        .max_by(|a, b| span(a).cmp(&span(b)).then_with(|| a.cmp(b)))
+        .cloned()
+        .unwrap();
+    let cur = match values.get(&derive).copied() {
+        Some(v) => v,
+        None => return false,
+    };
+
+    // The side holding the derived variable, and the side that provides the
+    // target. A variable appearing on both sides cannot be inverted.
+    let (side, other) = match (contains_var(l, &derive), contains_var(r, &derive)) {
+        (true, false) => (l, r),
+        (false, true) => (r, l),
+        _ => return false,
+    };
+
+    // The other variables the relation may move — wherever they sit.
+    let others: Vec<String> = free.iter().filter(|v| **v != derive).cloned().collect();
+
+    let satisfied = |vals: &BTreeMap<String, i64>| -> bool {
+        match (eval(l, vals, env), eval(r, vals, env)) {
+            (Some(a), Some(b)) => rel_holds(op, a, b),
+            _ => false,
+        }
+    };
+    // The value `derive` must take for `side` to equal the other side.
+    let derive_at = |vals: &BTreeMap<String, i64>| -> Option<i64> {
+        let o = eval(other, vals, env)?;
+        invert_eq(side, o, &derive, vals, env)
+    };
+
+    // 1. Derive from the assignment as it stands.
+    if let Some(c) = derive_at(values) {
+        if fits(&derive, c) {
+            let mut trial = values.clone();
+            trial.insert(derive.clone(), c);
+            if satisfied(&trial) {
+                values.insert(derive.clone(), c);
+                return true;
+            }
+        }
+    }
+
+    // 2. The derived value fell outside its domain: shift an other variable by
+    //    the shortfall. For a sum this lands exactly on a solution; for a
+    //    product it is close enough for the hill-climb below to finish.
+    if let Some(c) = derive_at(values) {
+        let need: i128 = match class_domain.get(&derive) {
+            Some(d) if c < d.lo => d.lo as i128 - c as i128,
+            Some(d) if c > d.hi => d.hi as i128 - c as i128,
+            _ => 0,
+        };
+        if need != 0 {
+            for o in &others {
+                let ov = match values.get(o).copied() {
+                    Some(v) => v,
+                    None => continue,
+                };
+                for cand in [ov as i128 - need, ov as i128 + need] {
+                    if cand < i64::MIN as i128 || cand > i64::MAX as i128 {
+                        continue;
+                    }
+                    let cand = cand as i64;
+                    if cand == ov || !fits(o, cand) {
+                        continue;
+                    }
+                    let mut trial = values.clone();
+                    trial.insert(o.clone(), cand);
+                    if let Some(c2) = derive_at(&trial) {
+                        if fits(&derive, c2) {
+                            trial.insert(derive.clone(), c2);
+                            if satisfied(&trial) {
+                                values.insert(o.clone(), cand);
+                                values.insert(derive.clone(), c2);
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Re-draw the other variables from their domains, bounded, until the
+    //    derived value fits. The generator is seeded from the run's seed and the
+    //    derived variable's name, so the same seed re-draws the same sequence.
+    let drawable: Vec<(&String, Domain)> = others
+        .iter()
+        .filter_map(|o| class_domain.get(o).map(|d| (o, d.clone())))
+        .collect();
+    if !drawable.is_empty() {
+        let mut h: u64 = env.seed ^ 0x5DEE_CE66_D0A5_1F0B;
+        for b in derive.as_bytes() {
+            h = h.wrapping_mul(1099511628211).wrapping_add(*b as u64);
+        }
+        let mut rng = Rng::new(h);
+        for _ in 0..128 {
+            let mut trial = values.clone();
+            for (o, d) in &drawable {
+                let v = pick(d, &mut rng);
+                trial.insert((*o).clone(), v);
+            }
+            if let Some(c2) = derive_at(&trial) {
+                if fits(&derive, c2) {
+                    trial.insert(derive.clone(), c2);
+                    if satisfied(&trial) {
+                        for (o, _) in &drawable {
+                            if let Some(v) = trial.get(*o).copied() {
+                                values.insert((*o).clone(), v);
+                            }
+                        }
+                        values.insert(derive.clone(), c2);
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. Last resort: move the derived variable one step at a time in whichever
+    //    direction reduces the violation, bounded so a hopeless relation cannot
+    //    spin. This is what finishes a product (`p * q <= 20`), whose boundary
+    //    is not always reachable by inversion.
+    let viol = |vals: &BTreeMap<String, i64>| -> Option<i128> {
+        match (eval(l, vals, env), eval(r, vals, env)) {
+            (Some(a), Some(b)) => Some(relation_violation(op, a, b)),
+            _ => None,
+        }
+    };
+    let mut trial = values.clone();
+    let mut v = cur;
+    for _ in 0..256 {
+        let v0 = match viol(&trial) {
+            Some(x) => x,
+            None => break,
+        };
+        if v0 == 0 {
+            values.insert(derive.clone(), v);
+            return true;
+        }
+        let mut best: Option<(i64, i128)> = None;
+        for cand in [v.checked_add(1), v.checked_sub(1)].into_iter().flatten() {
+            if !fits(&derive, cand) {
+                continue;
+            }
+            trial.insert(derive.clone(), cand);
+            if let Some(vc) = viol(&trial) {
+                if vc < v0 && best.map(|(_, bv)| vc < bv).unwrap_or(true) {
+                    best = Some((cand, vc));
+                }
+            }
+        }
+        trial.insert(derive.clone(), v);
+        match best {
+            Some((nv, _)) => {
+                v = nv;
+                trial.insert(derive.clone(), v);
+            }
+            None => break,
+        }
+    }
+    false
 }
 
 fn check_atom(
@@ -1783,10 +2124,12 @@ fn adjust(x: i64, op: Op, y: i64) -> Option<i64> {
     }
 }
 
-/// Is `raw` inside `var`'s current domain (interval and allowed set)?
+/// Is `raw` inside `var`'s current domain (interval and allowed set)? The
+/// declared type's width is part of that domain, so `bit[8]` rejects 256 and a
+/// `bool` rejects 2 even when a constraint named them.
 fn domain_ok(var: &str, raw: i64, class_domain: &HashMap<String, Domain>) -> bool {
     match class_domain.get(var) {
-        Some(d) => d.contains(raw),
+        Some(d) => d.in_declared_width(raw) && d.contains(raw),
         None => true,
     }
 }
@@ -2137,6 +2480,7 @@ fn expand_field(
                 forbidden: HashSet::new(),
                     allowed: None,
                 is_enum: false,
+                decl: None,
             },
         );
         return;
@@ -2149,12 +2493,34 @@ fn expand_field(
             // are carried in an i64 a pattern with bit 63 set *is* negative —
             // so the domain has to be the whole i64 range, or `bit[64]` could
             // never hold `0x8000_0000_0000_0000`.
-            let (lo, hi) = match (field.bits, fixed) {
+            //
+            // The width comes from an explicit `bit[N]`, else from the type
+            // keyword — `bool` and a bare `bit` are one bit wide, so `{0,1}`
+            // (PSS 6.1) — else from a named type. A type with no width at all
+            // (`int`) keeps the open default range.
+            let width = field.bits.or_else(|| {
+                match field.type_name.rsplit("::").next().unwrap_or(&field.type_name) {
+                    "bit" | "bool" => Some(1),
+                    _ => model
+                        .types
+                        .get(&model.resolve(&field.type_name))
+                        .and_then(|t| type_nbits(model, t)),
+                }
+            });
+            let (lo, hi) = match (width, fixed) {
                 (Some(b), Some(v)) => (v, v),
                 (Some(b), None) if b >= 64 => (i64::MIN, i64::MAX),
                 (Some(b), None) => (0, (1i64 << b.clamp(1, 63)) - 1),
                 (None, Some(v)) => (v, v),
                 (None, None) => (0, DEFAULT_INT_MAX),
+            };
+            // The declared width is a hard domain that no constraint may widen
+            // (PSS 6.1, 24.10.2). A fixed (non-`rand`) attribute keeps the
+            // value it is initialised with, so it gets no width of its own.
+            let decl = match (fixed.is_none(), width) {
+                (false, _) | (_, None) => None,
+                (true, Some(b)) if b >= 64 => Some((i64::MIN, i64::MAX)),
+                (true, Some(b)) => Some((0, (1i64 << b.clamp(1, 63)) - 1)),
             };
             out.insert(
                 path,
@@ -2164,6 +2530,7 @@ fn expand_field(
                     forbidden: HashSet::new(),
                     allowed: None,
                     is_enum: false,
+                    decl,
                 },
             );
         }
@@ -2181,6 +2548,7 @@ fn expand_field(
                     forbidden: HashSet::new(),
                     allowed: None,
                     is_enum: true,
+                    decl: None,
                 },
             );
         }

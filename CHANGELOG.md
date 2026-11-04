@@ -13,6 +13,69 @@ approximated.
 
 ---
 
+## 0.50.0 — 2026-11-04
+
+First fixes from the audit: declared widths and two-unknown relations
+
+Three agents worked the three worst solver defects in parallel. **Two landed,
+one is held** — and holding it is the interesting part.
+
+### Fixed: a declared width is now a hard domain
+
+`bit[8]` constrained to `[256..300]` used to yield **256** and print
+`constraints: 1/1 satisfied`. The declared type only *seeded* the domain and
+nothing re-clamped it. `Domain` now carries the declared bounds, `contains`
+rejects values outside them, and `intersect_interval` narrows to the request
+*and* the declaration — so a constraint can narrow a domain but never widen it.
+A request wholly outside the type leaves the domain at the type's own range, so
+the atom honestly fails instead of inventing an unrepresentable value:
+
+```
+before:  v=256  constraints: 1/1
+after:   v=69   constraints: 0/1   not satisfied: v in [256..300]
+```
+
+`bool` and a bare `bit` are one bit: `rand bool b` gave **69**, now 0 or 1.
+`bit[64]` keeps its existing full-i64 range.
+
+### Fixed: relations with two unknowns are solved
+
+`repair` adjusted one variable at a time, so a two-variable equation was
+violated on most seeds. It now derives one variable from the others, shifts or
+re-draws them to fit, and hill-climbs against the residual when inversion cannot
+reach a product boundary:
+
+| relation | before | after |
+|---|---|---|
+| `x + y == 10`, both `[0..100]` | 1/20 | **20/20** |
+| `x * y <= 20`, both `[0..10]` | 13/20 | **20/20** |
+| `a + b == 100`, both `[0..100]` | 20/20 | 20/20 |
+
+Determinism preserved: the same seed gives the same assignment, and no seed that
+passed before changed.
+
+### Held: the `forall` fix
+
+The third agent found the real root cause — the IR drops `is_forall` and the
+binding, so the body reaches the solver with its variable still free, and
+`check_atom` returns true for a missing value. Its fix binds ungrounded
+references by trailing segment and reports `not evaluated` when it cannot.
+
+It is **not merged**, for two reasons: combined with the other two patches it
+enforces nothing (the body reports `not evaluated` rather than being enforced),
+and it changes the detail of proof row 14 (`m_flat=6`, expected 5) — a
+behaviour change outside its intended scope. Total proof movement from merging
+it: **zero**. It stays as a prepared patch for the next release.
+
+### Verification
+
+- **136** tests (2 new, covering both fixes over 20 seeds each)
+- proof: **105 pass / 57 fail**, up from 104/58
+- corpora unchanged: 97/97 · 7/7 · 114/114
+
+Still broken and unchanged: `bins all[N]`, `import`, `bind`, `sizeof_s`,
+`addr_value_abs`, `compile has`, and the rest of the audit's 13.
+
 ## 0.49.0 — 2026-11-04
 
 Every doc now matches verified behaviour

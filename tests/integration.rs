@@ -3139,3 +3139,49 @@ component c {
 "#;
     assert!(compile_pss(as_stmt).is_ok(), "forall as an activity constraint");
 }
+
+#[test]
+fn declared_widths_are_a_hard_domain() {
+    // Found by the feature audit: the declared type only *seeded* the domain,
+    // so a constraint could widen a bit[8] past 255 and still report satisfied.
+    let m = compile_pss("component c { action a { rand bit[8] v; constraint v in [256..300]; } };").unwrap();
+    for seed in 1..=20u64 {
+        let s = engine::run_scenario(&m, "a", seed);
+        let v = s.steps[0].fields.iter().find(|(k, _)| k == "v").map(|(_, v)| *v).unwrap_or(-1);
+        assert!((0..=255).contains(&v), "bit[8] produced {} on seed {}", v, seed);
+    }
+
+    // bool and a bare bit are one bit, not a full integer.
+    let m = compile_pss("component c { action a { rand bool b; rand bit f; } };").unwrap();
+    for seed in 1..=20u64 {
+        let s = engine::run_scenario(&m, "a", seed);
+        for name in ["b", "f"] {
+            let v = s.steps[0].fields.iter().find(|(k, _)| k == name).map(|(_, v)| *v).unwrap_or(-1);
+            assert!(v == 0 || v == 1, "{} produced {} on seed {}", name, v, seed);
+        }
+    }
+}
+
+#[test]
+fn relations_with_two_unknowns_are_solved() {
+    // `repair` used to invert a relation for a single unknown, so a two-variable
+    // equation was violated on most seeds. It now derives one variable from the
+    // others and shifts or re-draws them until it fits.
+    let cases = [
+        ("x + y == 10", "rand int x; rand int y; constraint x in [0..100]; constraint y in [0..100];"),
+        ("x * y <= 20", "rand int x; rand int y; constraint x in [0..10]; constraint y in [0..10];"),
+        ("x + y == 100", "rand int x; rand int y; constraint x in [0..100]; constraint y in [0..100];"),
+    ];
+    for (rel, decls) in cases {
+        let src = format!("component c {{ action a {{ {} constraint {}; }} }};", decls, rel);
+        let m = compile_pss(&src).unwrap();
+        for seed in 1..=20u64 {
+            let s = engine::run_scenario(&m, "a", seed);
+            assert_eq!(
+                s.steps[0].satisfied, s.steps[0].total,
+                "`{}` unsatisfied on seed {} ({}/{})", rel, seed,
+                s.steps[0].satisfied, s.steps[0].total
+            );
+        }
+    }
+}
