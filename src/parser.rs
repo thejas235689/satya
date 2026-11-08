@@ -21,6 +21,10 @@ pub struct Parser {
     typedefs: std::collections::HashMap<String, crate::ast::TypeRef>,
     /// `function` / `task` bodies collected so a call can run them.
     functions: Vec<crate::ast::Function>,
+    /// The package or component currently being parsed, so a `function`
+    /// declaration records where it lives (PSS 22.2) and an `import` can
+    /// choose between two functions of the same name.
+    scope: Option<String>,
     /// The first error the token-level `exec` parser met. That parser returns
     /// `Option`, so it used to discard errors and turn a broken statement into
     /// a `Raw` one; keeping the first error lets the body be rejected.
@@ -36,6 +40,7 @@ impl Parser {
             monitors: Vec::new(),
             typedefs: std::collections::HashMap::new(),
             functions: Vec::new(),
+            scope: None,
             exec_err: None,
         }
     }
@@ -237,12 +242,17 @@ impl Parser {
                 col,
             ));
         }
-        Ok(SourceFile {
+        let mut file = SourceFile {
             items,
             covergroups: std::mem::take(&mut self.covergroups),
             monitors: std::mem::take(&mut self.monitors),
             functions: std::mem::take(&mut self.functions),
-        })
+        };
+        // `p = '{x : 3, y : 4};` / `p = '{3, 4};` name structure members, not
+        // array elements (PSS 8.5.2). Resolve them once the whole file — and so
+        // every structure declaration and every member's type — is known.
+        expand_struct_literals(&mut file);
+        Ok(file)
     }
 
     /// `covergroup NAME (ports) { items }` or the in-line
@@ -250,10 +260,21 @@ impl Parser {
     fn parse_covergroup(&mut self) -> PssResult<Covergroup> {
         self.expect_ident_named("covergroup")?;
         let mut name = String::new();
+        let mut params = Vec::new();
         if matches!(self.peek().kind, TokKind::Ident(_)) && !self.peek_at(1).is_punct("{") {
             name = self.expect_ident()?;
             if self.at_punct("(") {
-                self.skip_parens();
+                // `(int v, int w)` — the formals, in order, so an instance
+                // `cg inst (x, y)` can bind them (PSS 18.2).
+                self.bump();
+                while !self.at_punct(")") && !self.at_eof() {
+                    if self.eat_punct(",") {
+                        continue;
+                    }
+                    let _ty = self.parse_type_ref()?;
+                    params.push(self.expect_ident()?);
+                }
+                self.expect_punct(")")?;
             }
         }
         self.expect_punct("{")?;
@@ -303,14 +324,35 @@ impl Parser {
                             } else {
                                 String::new()
                             };
+                            // `bins all[4] = {A, B, C, D};` declares four bins,
+                            // and `bins four[] = [A, B, C, D];` as many as the
+                            // list holds (PSS 18.3.3). The `[N]` used to be left
+                            // unconsumed, so the whole declaration collapsed to
+                            // one bin named `all`.
+                            let mut array_bin = false;
+                            if self.at_punct("[") {
+                                self.bump();
+                                if !self.at_punct("]") {
+                                    let _ = self.parse_expr(0)?;
+                                }
+                                self.expect_punct("]")?;
+                                array_bin = true;
+                            }
                             let bexpr = if self.eat_punct("=") {
-                                self.parse_expr(0)?
+                                self.parse_range_or_set()?
                             } else {
                                 Expr::Bool(true)
                             };
                             self.eat_punct(";");
                             if is_bins {
-                                bins.push((bn, bexpr));
+                                match (array_bin, bexpr) {
+                                    (true, Expr::List(items)) if !items.is_empty() => {
+                                        for (i, item) in items.into_iter().enumerate() {
+                                            bins.push((format!("{}[{}]", bn, i), item));
+                                        }
+                                    }
+                                    (_, other) => bins.push((bn, other)),
+                                }
                             }
                             continue;
                         }
@@ -371,7 +413,11 @@ impl Parser {
             name = self.expect_ident()?;
         }
         self.eat_punct(";");
-        Ok(Covergroup { name, items })
+        Ok(Covergroup {
+            name,
+            params,
+            items,
+        })
     }
 
     /// Item list. `top` is true only for the file level, where an
@@ -549,6 +595,41 @@ impl Parser {
             self.eat_punct(";");
             return Ok(Path::simple("__imported_function"));
         }
+        // `import class [pkg::]Name [ { <function prototypes> } ] ;`
+        // (PSS 22.4.2.1). The declaration was a parse error in every spelling.
+        // `class` is a qualifier here, not the imported name: a package that
+        // really is called `class` keeps working through the `::` lookahead.
+        if self.peek().is_ident("class") && !self.peek_at(1).is_punct("::") {
+            self.bump();
+            let path = self.parse_scoped_path()?;
+            if self.eat_ident("as") {
+                let _ = self.expect_ident()?;
+            }
+            let mut braced = false;
+            if self.at_punct("{") {
+                // The body holds the imported class's function prototypes; they
+                // are recorded so a call can bind them.
+                self.bump();
+                while !self.at_punct("}") && !self.at_eof() {
+                    if self.eat_punct(";") {
+                        continue;
+                    }
+                    if self.at_ident("function") || self.at_ident("task") {
+                        self.parse_function()?;
+                        continue;
+                    }
+                    self.skip_braced_or_semicolon();
+                }
+                self.expect_punct("}")?;
+                braced = true;
+            }
+            if braced {
+                self.eat_punct(";");
+            } else {
+                self.expect_punct(";")?;
+            }
+            return Ok(path);
+        }
         let path = self.parse_scoped_path()?;
         // `import P3::P4 as P2;`
         if self.eat_ident("as") {
@@ -563,7 +644,9 @@ impl Parser {
         // A package name may be qualified: `package pkg1::a::b::c { ... }`.
         let name = self.parse_scoped_path()?.segments.join("::");
         self.expect_punct("{")?;
+        let saved = std::mem::replace(&mut self.scope, Some(name.clone()));
         let items = self.parse_items(false)?;
+        self.scope = saved;
         self.expect_punct("}")?;
         self.eat_punct(";");
         Ok(Package { name, items })
@@ -827,6 +910,52 @@ impl Parser {
             None
         };
 
+        // An instance list of a covergroup carries arguments — positional
+        // (`cg inst1 (x)`) or by port name (`cg inst1 (.len(len))`) — and an
+        // instance option block (PSS 18.2, Syntax 64). Only a declared
+        // covergroup takes them: `symbol lt(A x)` is not an instance list.
+        let mut args = Vec::new();
+        let cg_decl = self
+            .covergroups
+            .iter()
+            .find(|c| c.name == ty.path.leaf())
+            .cloned();
+        if self.at_punct("(") && cg_decl.is_some() {
+            let decl = cg_decl.unwrap();
+            self.bump();
+            let mut positional: Vec<Expr> = Vec::new();
+            let mut named: Vec<(String, Expr)> = Vec::new();
+            while !self.at_punct(")") && !self.at_eof() {
+                if self.eat_punct(",") {
+                    continue;
+                }
+                if self.at_punct(".") {
+                    self.bump();
+                    let port = self.expect_ident()?;
+                    self.expect_punct("(")?;
+                    let e = self.parse_expr(0)?;
+                    self.expect_punct(")")?;
+                    named.push((port, e));
+                    continue;
+                }
+                positional.push(self.parse_expr(0)?);
+            }
+            self.expect_punct(")")?;
+            args = if named.is_empty() {
+                positional
+            } else {
+                // Bind the ports by name, in the declaration's formal order.
+                decl.params
+                    .iter()
+                    .filter_map(|p| named.iter().find(|(n, _)| n == p).map(|(_, e)| e.clone()))
+                    .collect()
+            };
+        }
+        // `with { option.at_least = 2; }` — instance options (PSS 18.2.1).
+        if self.eat_ident("with") && self.at_punct("{") {
+            self.skip_braced();
+        }
+
         if !self.eat_punct(";") {
             // Declaration without a semicolon (e.g. an instance list): recover.
             self.skip_to_semicolon();
@@ -850,6 +979,7 @@ impl Parser {
             array,
             init,
             is_static,
+            args,
         }))
     }
 
@@ -918,6 +1048,7 @@ impl Parser {
             params,
             body,
             is_task,
+            scope: self.scope.clone(),
         });
         Ok(())
     }
@@ -1427,6 +1558,40 @@ impl Parser {
     }
 
     fn try_parse_exec_stmt(&mut self) -> Option<ExecStmt> {
+        // Procedural block statement (PSS Syntax 89): `{ stmt; ... }` groups
+        // statements and runs them once. It used to be swallowed whole, so
+        // `{ in_block = 5; }` never ran. A block introduces no new scope here:
+        // an assignment to an enclosing attribute must still reach it. The
+        // engine has no block node, so the group is carried as an `if (1)`,
+        // which runs its body once and propagates `break`/`continue`/`return`
+        // exactly as a block does.
+        if self.at_punct("{") {
+            self.bump();
+            let mut body = Vec::new();
+            let mut guard = 0;
+            while !self.at_punct("}") && !self.at_eof() && guard < 10_000 {
+                guard += 1;
+                if self.eat_punct(";") {
+                    continue;
+                }
+                let before = self.pos;
+                match self.try_parse_exec_stmt() {
+                    Some(st) => body.push(st),
+                    None => {
+                        if self.pos == before {
+                            let start = self.bump();
+                            self.skip_to_semicolon();
+                            body.push(ExecStmt::Raw(token_text(&start)));
+                        } else {
+                            body.push(ExecStmt::Raw("<unparsed>".into()));
+                        }
+                    }
+                }
+            }
+            self.expect_punct("}").ok()?;
+            self.eat_punct(";");
+            return Some(ExecStmt::If(Expr::Int(1), body, Vec::new()));
+        }
         // Procedural statements (PSS Syntax 89-101).
         if self.at_ident("repeat") {
             self.bump();
@@ -1621,59 +1786,12 @@ impl Parser {
             is_abstract = true;
         }
         self.expect_punct("{")?;
-        let mut items = Vec::new();
-        while !self.at_punct("}") && !self.at_eof() {
-            if self.eat_punct(";") {
-                continue;
-            }
-            // `compile if (...)` inside a component body (PSS 22.3): keep only
-            // the selected branch.
-            if self.at_ident("compile") {
-                self.bump();
-                if self.eat_ident("if") {
-                    self.expect_punct("(")?;
-                    let cond = self.parse_expr(0)?;
-                    self.expect_punct(")")?;
-                    let value = cond.eval_const(&|_| None).unwrap_or(1) != 0;
-                    let then_items = self.parse_comp_items_braced()?;
-                    let mut else_items = Vec::new();
-                    if self.eat_ident("else") {
-                        else_items = self.parse_comp_items_braced()?;
-                    }
-                    items.extend(if value { then_items } else { else_items });
-                    continue;
-                }
-                if self.eat_ident("assert") {
-                    self.expect_punct("(")?;
-                    let cond = self.parse_expr(0)?;
-                    self.expect_punct(")")?;
-                    self.eat_punct(";");
-                    if cond.eval_const(&|_| None).unwrap_or(1) == 0 {
-                        let (line, col) = (self.peek().line, self.peek().col);
-                        return Err(PssError::new(
-                            format!(
-                                "compile assert failed: `{}` is not true",
-                                crate::solver::render_expr(&cond)
-                            ),
-                            line,
-                            col,
-                        ));
-                    }
-                    continue;
-                }
-                if self.eat_ident("has") {
-                    if self.at_punct("(") {
-                        self.skip_parens();
-                    }
-                    self.eat_punct(";");
-                    continue;
-                }
-                self.skip_braced_or_semicolon();
-                continue;
-            }
-            let item = self.parse_comp_item()?;
-            items.push(item);
-        }
+        // The component body runs with the component's name as the current
+        // scope, so a `function` declared here keeps its package (binding fix),
+        // and `compile if` inside it keeps only the selected branch (parser fix).
+        let saved_scope = std::mem::replace(&mut self.scope, Some(name.clone()));
+        let items = self.parse_comp_body()?;
+        self.scope = saved_scope;
         self.expect_punct("}")?;
         self.eat_punct(";");
         Ok(ComponentDecl {
@@ -1686,21 +1804,98 @@ impl Parser {
         })
     }
 
-    /// `{ comp_items }` — the body of a `compile if` branch inside a component.
-    fn parse_comp_items_braced(&mut self) -> PssResult<Vec<CompItem>> {
-        let mut out = Vec::new();
-        if !self.at_punct("{") {
-            return Ok(out);
-        }
-        self.bump();
+    /// The items of a component body, up to (not including) its closing `}`.
+    ///
+    /// `compile if` is handled here rather than only in the outermost loop, so
+    /// a branch body — which is another item list — keeps its own nested
+    /// conditionals (PSS 22.3).
+    fn parse_comp_body(&mut self) -> PssResult<Vec<CompItem>> {
+        let mut items = Vec::new();
         while !self.at_punct("}") && !self.at_eof() {
             if self.eat_punct(";") {
                 continue;
             }
-            out.push(self.parse_comp_item()?);
+            // `compile if (...)` inside a component body: keep only the
+            // selected branch.
+            if let Some(value) = self.eat_compile_if_head()? {
+                let then_items = self.parse_comp_branch()?;
+                let mut else_items = Vec::new();
+                if self.eat_ident("else") {
+                    else_items = self.parse_comp_branch()?;
+                }
+                items.extend(if value { then_items } else { else_items });
+                continue;
+            }
+            if self.at_ident("compile") {
+                self.parse_compile_directive()?;
+                continue;
+            }
+            items.push(self.parse_comp_item()?);
         }
+        Ok(items)
+    }
+
+    /// `{ comp_items }` — one branch body of a `compile if` inside a component.
+    fn parse_comp_branch(&mut self) -> PssResult<Vec<CompItem>> {
+        if !self.at_punct("{") {
+            return Ok(Vec::new());
+        }
+        self.bump();
+        let out = self.parse_comp_body()?;
         self.expect_punct("}")?;
         Ok(out)
+    }
+
+    /// Consume `compile if ( cond )` and report whether the *then* branch is
+    /// selected. Returns `None` (consuming nothing) when the tokens are not a
+    /// `compile if` at all.
+    fn eat_compile_if_head(&mut self) -> PssResult<Option<bool>> {
+        if !self.at_ident("compile") {
+            return Ok(None);
+        }
+        let save = self.pos;
+        self.bump();
+        if !self.eat_ident("if") {
+            self.pos = save;
+            return Ok(None);
+        }
+        self.expect_punct("(")?;
+        let cond = self.parse_expr(0)?;
+        self.expect_punct(")")?;
+        Ok(Some(cond.eval_const(&|_| None).unwrap_or(1) != 0))
+    }
+
+    /// `compile assert (...)` / `compile has (...)` / any other compile-time
+    /// directive, consumed for its side effect only.
+    fn parse_compile_directive(&mut self) -> PssResult<()> {
+        self.expect_ident_named("compile")?;
+        if self.eat_ident("assert") {
+            self.expect_punct("(")?;
+            let cond = self.parse_expr(0)?;
+            self.expect_punct(")")?;
+            self.eat_punct(";");
+            if cond.eval_const(&|_| None).unwrap_or(1) == 0 {
+                let (line, col) = (self.peek().line, self.peek().col);
+                return Err(PssError::new(
+                    format!(
+                        "compile assert failed: `{}` is not true",
+                        crate::solver::render_expr(&cond)
+                    ),
+                    line,
+                    col,
+                ));
+            }
+            return Ok(());
+        }
+        if self.eat_ident("has") {
+            if self.at_punct("(") {
+                self.skip_parens();
+            }
+            self.eat_punct(";");
+            return Ok(());
+        }
+        self.skip_braced_or_semicolon();
+        Ok(())
     }
 
     fn parse_comp_item(&mut self) -> PssResult<CompItem> {
@@ -1918,13 +2113,51 @@ impl Parser {
         } else {
             None
         };
-        let mut members = Vec::new();
-        let mut constraints = Vec::new();
-        let mut execs = Vec::new();
-        let mut activity = None;
         self.expect_punct("{")?;
+        let mut body = ActionBody::default();
+        self.parse_action_body(&mut body)?;
+        self.expect_punct("}")?;
+        self.eat_punct(";");
+        let ActionBody {
+            members,
+            constraints,
+            execs,
+            activity,
+        } = body;
+        Ok(ActionDecl {
+            name,
+            base,
+            template_params,
+            is_abstract,
+            members,
+            constraints,
+            execs,
+            activity,
+            is_extend,
+        })
+    }
+
+    /// The items of an action body, up to (not including) its closing `}`.
+    ///
+    /// `compile if` is handled here too: a declaration in a selected branch
+    /// belongs to the action, and used to be skipped together with the whole
+    /// directive (PSS 22.3).
+    fn parse_action_body(&mut self, body: &mut ActionBody) -> PssResult<()> {
         while !self.at_punct("}") && !self.at_eof() {
             if self.eat_punct(";") {
+                continue;
+            }
+            if let Some(value) = self.eat_compile_if_head()? {
+                let then_body = self.parse_action_branch()?;
+                let mut else_body = ActionBody::default();
+                if self.eat_ident("else") {
+                    else_body = self.parse_action_branch()?;
+                }
+                body.merge(if value { then_body } else { else_body });
+                continue;
+            }
+            if self.at_ident("compile") {
+                self.parse_compile_directive()?;
                 continue;
             }
             // `dynamic constraint NAME { ... }` in an action body (see the
@@ -1935,19 +2168,19 @@ impl Parser {
                 if c.name.is_none() {
                     c.name = Some("<dynamic>".to_string());
                 }
-                constraints.push(c);
+                body.constraints.push(c);
                 continue;
             }
             if self.at_ident("constraint") {
-                constraints.push(self.parse_constraint()?);
+                body.constraints.push(self.parse_constraint()?);
                 continue;
             }
             if self.at_ident("exec") {
-                execs.push(self.parse_exec()?);
+                body.execs.push(self.parse_exec()?);
                 continue;
             }
             if self.at_ident("activity") {
-                activity = Some(self.parse_activity()?);
+                body.activity = Some(self.parse_activity()?);
                 continue;
             }
             if self.at_ident("covergroup") {
@@ -1964,10 +2197,6 @@ impl Parser {
                 self.parse_function()?;
                 continue;
             }
-            if self.at_ident("compile") {
-                self.skip_braced_or_semicolon();
-                continue;
-            }
             // A declaration that cannot appear in an action body is an error,
             // not something to skip (12.3).
             for bad in ["component", "package", "coverpoint", "bins"] {
@@ -1981,24 +2210,24 @@ impl Parser {
                 }
             }
             if let Some(m) = self.try_parse_member()? {
-                members.push(m);
+                body.members.push(m);
             } else {
                 self.skip_to_semicolon();
             }
         }
+        Ok(())
+    }
+
+    /// `{ action_items }` — one branch body of a `compile if` in an action.
+    fn parse_action_branch(&mut self) -> PssResult<ActionBody> {
+        let mut out = ActionBody::default();
+        if !self.at_punct("{") {
+            return Ok(out);
+        }
+        self.bump();
+        self.parse_action_body(&mut out)?;
         self.expect_punct("}")?;
-        self.eat_punct(";");
-        Ok(ActionDecl {
-            name,
-            base,
-            template_params,
-            is_abstract,
-            members,
-            constraints,
-            execs,
-            activity,
-            is_extend,
-        })
+        Ok(out)
     }
 
     // ---- activities ----------------------------------------------------
@@ -2413,6 +2642,38 @@ impl Parser {
             self.eat_punct(";");
             return Ok(None);
         }
+        // `bind <producer>.<port> <consumer>.<port>;` — a binding statement
+        // between two action instances (PSS 12.3, Syntax 44). It was skipped
+        // as an unknown statement, so it never reached the IR.
+        if self.at_ident("bind") {
+            let save = self.pos;
+            self.bump();
+            if let Ok(from) = self.parse_handle_path() {
+                let mut to = None;
+                let mut ok = true;
+                if self.eat_punct("*") {
+                    // `bind p *;` — no explicit target.
+                } else if self.at_punct("{") {
+                    // `bind <handle> {<port>, <port>};` — hierarchical resource
+                    // binding (LRM Example 102). Recorded as a binding with no
+                    // flow target; the engine does not model resource ports.
+                    self.skip_braced();
+                } else if !self.at_punct(";") {
+                    match self.parse_handle_path() {
+                        Ok(t) => to = Some(t),
+                        Err(_) => ok = false,
+                    }
+                }
+                if ok && self.eat_punct(";") {
+                    return Ok(Some(ActivityStmt::Bind { from, to }));
+                }
+            }
+            // Anything else is not a binding this parser understands: skip it,
+            // rather than failing a model that parsed before.
+            self.pos = save;
+            self.skip_braced_or_semicolon();
+            return Ok(None);
+        }
         if self.at_ident("atomic") {
             self.bump();
             let body = self.parse_activity_block()?;
@@ -2571,6 +2832,21 @@ impl Parser {
         Ok(ActivityStmt::Do(action))
     }
 
+    /// Parse an instance path as a `bind` statement writes it: `p2.out`,
+    /// `pkg::C::c.inp` — dotted instance and port segments, `::` for scope.
+    fn parse_handle_path(&mut self) -> PssResult<Path> {
+        let mut segments = vec![self.expect_ident()?];
+        loop {
+            if self.at_punct(".") || self.at_punct("::") {
+                self.bump();
+                segments.push(self.expect_ident()?);
+                continue;
+            }
+            break;
+        }
+        Ok(Path::new(segments))
+    }
+
     /// Parse an action reference, allowing `Component::action` qualification.
     fn parse_action_ref(&mut self) -> PssResult<Path> {
         let mut segments = vec![self.expect_ident()?];
@@ -2591,7 +2867,16 @@ impl Parser {
             self.pos = save;
             return Ok(None);
         }
-        let _ty = self.parse_type_ref()?;
+        // `static const NAME = value;` (no explicit type) is as common as the
+        // typed form, and used to be dropped entirely: the name was read as a
+        // type and the declaration abandoned.
+        let typeless = matches!(self.peek().kind, TokKind::Ident(_))
+            && (self.peek_at(1).is_punct("=")
+                || self.peek_at(1).is_punct(";")
+                || self.peek_at(1).is_punct(","));
+        if !typeless {
+            let _ty = self.parse_type_ref()?;
+        }
         let name = match &self.peek().kind {
             TokKind::Ident(_) => self.expect_ident()?,
             _ => {
@@ -2825,6 +3110,19 @@ impl Parser {
                 let e = self.parse_unary()?;
                 return Ok(Expr::Cast(ty, Box::new(e)));
             }
+            // `(ref T)expr` — a cast to a reference type (LRM Example 27).
+            if ident == "ref"
+                && matches!(self.peek_at(2).kind, TokKind::Ident(_))
+                && self.peek_at(3).is_punct(")")
+                && starts_expr(self.peek_at(4))
+            {
+                self.bump(); // (
+                self.bump(); // ref
+                let inner = self.expect_ident()?;
+                self.expect_punct(")")?;
+                let e = self.parse_unary()?;
+                return Ok(Expr::Cast(format!("ref {}", inner), Box::new(e)));
+            }
             if self.peek_at(2).is_punct("[") {
                 // `(bit[N])expr` — save the position so a non-cast `(a[i])`
                 // is not mistaken for one.
@@ -3032,13 +3330,30 @@ impl Parser {
                 Ok(Expr::Path(path))
             }
             TokKind::Punct(p) if p == "'" => {
-                // `'{ ... }` aggregate (assignment-pattern) literal.
+                // `'{ ... }` aggregate (assignment-pattern) literal. Entries are
+                // either positional (`'{3, 4}`) or keyed (`'{x : 3, y : 4}`,
+                // PSS 8.5.2); a keyed entry is carried as `key : value` so the
+                // target's field names are available when the literal is
+                // applied to a structure.
                 self.bump();
                 if self.at_punct("{") {
                     self.bump();
                     let mut items = Vec::new();
                     while !self.at_punct("}") && !self.at_eof() {
-                        items.push(self.parse_expr(0)?);
+                        let keyed = matches!(self.peek().kind, TokKind::Ident(_))
+                            && self.peek_at(1).is_punct(":");
+                        if keyed {
+                            let key = self.expect_ident()?;
+                            self.bump();
+                            let value = self.parse_expr(0)?;
+                            items.push(Expr::Binary(
+                                ":".into(),
+                                Box::new(Expr::Path(Path::simple(key))),
+                                Box::new(value),
+                            ));
+                        } else {
+                            items.push(self.parse_expr(0)?);
+                        }
                         if !self.eat_punct(",") {
                             break;
                         }
@@ -3073,7 +3388,10 @@ impl Parser {
                     self.eat_punct(";");
                 }
                 self.expect_punct("}")?;
-                if saw_comma {
+                if saw_comma || exprs.is_empty() {
+                    // An empty `{}` is the empty literal collection (PSS 8.5),
+                    // not a trivially-true constraint: `arr = {};` must leave
+                    // an empty collection.
                     return Ok(Expr::List(exprs));
                 }
                 Ok(combine_and(exprs))
@@ -3482,6 +3800,296 @@ pub fn parse_expression(src: &str) -> PssResult<Expr> {
         ));
     }
     Ok(e)
+}
+
+/// The parts of an action body, accumulated as they are parsed so a
+/// `compile if` branch can contribute its own (PSS 22.3).
+#[derive(Default)]
+struct ActionBody {
+    members: Vec<Member>,
+    constraints: Vec<ConstraintBlock>,
+    execs: Vec<ExecBlock>,
+    activity: Option<Activity>,
+}
+
+impl ActionBody {
+    fn merge(&mut self, other: ActionBody) {
+        self.members.extend(other.members);
+        self.constraints.extend(other.constraints);
+        self.execs.extend(other.execs);
+        if other.activity.is_some() {
+            self.activity = other.activity;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Aggregate (structure) literals
+// ---------------------------------------------------------------------------
+
+/// The members of a declared structure, in declaration order, plus its base.
+#[derive(Default, Clone)]
+struct StructInfo {
+    base: Option<String>,
+    fields: Vec<(String, String)>,
+}
+
+/// Declared structures by leaf name.
+type StructTable = std::collections::HashMap<String, StructInfo>;
+
+/// The type of one variable in scope: a leaf type name.
+type VarScope = std::collections::HashMap<String, String>;
+
+fn note_struct(t: &TypeDecl, table: &mut StructTable) {
+    let leaf = t.name.rsplit("::").next().unwrap_or(&t.name).to_string();
+    let e = table.entry(leaf).or_default();
+    if let Some(b) = &t.base {
+        e.base = Some(b.name());
+    }
+    for m in &t.members {
+        if !e.fields.iter().any(|(n, _)| n == &m.name) {
+            e.fields.push((m.name.clone(), m.ty.path.leaf()));
+        }
+    }
+}
+
+/// Every structure declared anywhere in the file, including inside packages and
+/// component bodies.
+fn collect_structs(items: &[Item], table: &mut StructTable) {
+    for it in items {
+        match it {
+            Item::Struct(t) => note_struct(t, table),
+            Item::Package(p) => collect_structs(&p.items, table),
+            Item::Component(c) => collect_comp_structs(&c.items, table),
+            Item::CompileIf {
+                then_items,
+                else_items,
+                ..
+            } => {
+                collect_structs(then_items, table);
+                collect_structs(else_items, table);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_comp_structs(items: &[CompItem], table: &mut StructTable) {
+    for it in items {
+        if let CompItem::Struct(t) = it {
+            note_struct(t, table);
+        }
+    }
+}
+
+/// A structure's members with inherited ones first (`extend struct`).
+fn struct_fields(name: &str, table: &StructTable) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut cur = name.to_string();
+    let mut chain = Vec::new();
+    for _ in 0..8 {
+        let Some(info) = table.get(&cur) else { break };
+        chain.push(info.clone());
+        match &info.base {
+            Some(b) => cur = b.rsplit("::").next().unwrap_or(b).to_string(),
+            None => break,
+        }
+    }
+    for info in chain.iter().rev() {
+        for (n, t) in &info.fields {
+            if !out.iter().any(|(x, _): &(String, String)| x == n) {
+                out.push((n.clone(), t.clone()));
+            }
+        }
+    }
+    out
+}
+
+/// The structure type an assignment target names, if it names one.
+fn target_struct(path: &Path, scope: &VarScope, table: &StructTable) -> Option<String> {
+    let mut ty = scope.get(path.segments.first()?)?.clone();
+    for seg in &path.segments[1..] {
+        let fields = struct_fields(&ty, table);
+        ty = fields.iter().find(|(n, _)| n == seg)?.1.clone();
+    }
+    if table.contains_key(&ty) {
+        Some(ty)
+    } else {
+        None
+    }
+}
+
+/// Turn one aggregate literal into one assignment per member. Returns false when
+/// nothing could be resolved, so the statement is left as it was.
+fn expand_literal(
+    path: &Path,
+    ty: &str,
+    items: &[Expr],
+    table: &StructTable,
+    out: &mut Vec<ExecStmt>,
+) -> bool {
+    let fields = struct_fields(ty, table);
+    if fields.is_empty() {
+        return false;
+    }
+    let mut emitted = false;
+    for (i, item) in items.iter().enumerate() {
+        // A keyed entry (`x : 3`) names its member; a positional one takes the
+        // member at that position.
+        let (field, value) = match item {
+            Expr::Binary(op, lhs, rhs) if op == ":" => {
+                let Expr::Path(k) = &**lhs else { continue };
+                let Some(f) = fields.iter().find(|(n, _)| n == &k.leaf()) else {
+                    continue;
+                };
+                (f.clone(), (**rhs).clone())
+            }
+            other => {
+                let Some(f) = fields.get(i) else { continue };
+                (f.clone(), other.clone())
+            }
+        };
+        let mut sub = path.clone();
+        sub.segments.push(field.0.clone());
+        // A member that is itself a structure takes a nested literal.
+        if let Expr::List(inner) = &value {
+            if table.contains_key(&field.1) && !inner.is_empty() {
+                if expand_literal(&sub, &field.1, inner, table, out) {
+                    emitted = true;
+                    continue;
+                }
+            }
+        }
+        out.push(ExecStmt::Assign(sub, value));
+        emitted = true;
+    }
+    emitted
+}
+
+fn expand_stmts(stmts: &mut Vec<ExecStmt>, scope: &VarScope, table: &StructTable) {
+    if stmts.is_empty() {
+        return;
+    }
+    let old = std::mem::take(stmts);
+    let mut out = Vec::with_capacity(old.len());
+    for st in old {
+        match st {
+            ExecStmt::Assign(path, Expr::List(items)) if !items.is_empty() => {
+                let expanded = match target_struct(&path, scope, table) {
+                    Some(ty) => {
+                        let mut v = Vec::new();
+                        let ok = expand_literal(&path, &ty, &items, table, &mut v);
+                        if ok {
+                            Some(v)
+                        } else {
+                            None
+                        }
+                    }
+                    None => None,
+                };
+                match expanded {
+                    Some(v) => out.extend(v),
+                    None => out.push(ExecStmt::Assign(path, Expr::List(items))),
+                }
+            }
+            ExecStmt::If(c, mut t, mut e) => {
+                expand_stmts(&mut t, scope, table);
+                expand_stmts(&mut e, scope, table);
+                out.push(ExecStmt::If(c, t, e));
+            }
+            ExecStmt::Repeat { count, mut body } => {
+                expand_stmts(&mut body, scope, table);
+                out.push(ExecStmt::Repeat { count, body });
+            }
+            ExecStmt::RepeatWhile { mut body, cond } => {
+                expand_stmts(&mut body, scope, table);
+                out.push(ExecStmt::RepeatWhile { body, cond });
+            }
+            ExecStmt::Foreach { var, iter, mut body } => {
+                expand_stmts(&mut body, scope, table);
+                out.push(ExecStmt::Foreach { var, iter, body });
+            }
+            ExecStmt::Match {
+                subject,
+                mut arms,
+            } => {
+                for (_, b) in arms.iter_mut() {
+                    expand_stmts(b, scope, table);
+                }
+                out.push(ExecStmt::Match { subject, arms });
+            }
+            other => out.push(other),
+        }
+    }
+    *stmts = out;
+}
+
+fn expand_execs(execs: &mut [ExecBlock], scope: &VarScope, table: &StructTable) {
+    for e in execs.iter_mut() {
+        expand_stmts(&mut e.stmts, scope, table);
+    }
+}
+
+/// Resolve every structure literal in the file into per-member assignments.
+fn expand_struct_literals(file: &mut SourceFile) {
+    let mut table = StructTable::new();
+    collect_structs(&file.items, &mut table);
+    if table.is_empty() {
+        return;
+    }
+    for it in file.items.iter_mut() {
+        expand_item(it, &table);
+    }
+}
+
+fn expand_item(item: &mut Item, table: &StructTable) {
+    match item {
+        Item::Package(p) => {
+            for it in p.items.iter_mut() {
+                expand_item(it, table);
+            }
+        }
+        Item::Component(c) => expand_component(c, table),
+        Item::Action(a) => {
+            let scope = VarScope::new();
+            expand_action(a, &scope, table);
+        }
+        Item::CompileIf {
+            then_items,
+            else_items,
+            ..
+        } => {
+            for it in then_items.iter_mut().chain(else_items.iter_mut()) {
+                expand_item(it, table);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn expand_component(c: &mut ComponentDecl, table: &StructTable) {
+    // The component's own attributes are visible to its `exec` blocks.
+    let mut scope = VarScope::new();
+    for it in &c.items {
+        if let CompItem::Member(m) = it {
+            scope.insert(m.name.clone(), m.ty.path.leaf());
+        }
+    }
+    for it in c.items.iter_mut() {
+        match it {
+            CompItem::Exec(e) => expand_stmts(&mut e.stmts, &scope, table),
+            CompItem::Action(a) => expand_action(a, &scope, table),
+            _ => {}
+        }
+    }
+}
+
+fn expand_action(a: &mut ActionDecl, outer: &VarScope, table: &StructTable) {
+    let mut scope = outer.clone();
+    for m in &a.members {
+        scope.insert(m.name.clone(), m.ty.path.leaf());
+    }
+    expand_execs(&mut a.execs, &scope, table);
 }
 
 /// Parse a sequence of `exec`-body statements from captured tokens.

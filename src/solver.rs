@@ -212,6 +212,23 @@ impl<'a> Env<'a> {
             }
         }
         let mut type_bits = HashMap::new();
+        // The scalar keywords are not declared types, so they have no entry in
+        // `model.types` and `sizeof_s<int>` used to evaluate to nothing (0).
+        // Seed their widths from the language definition (PSS 6.1 / Table 4):
+        // a bare `bit` and `bool` are one bit, `byte` 8, `shortint` 16,
+        // `longint` 64, and the default integer width is 32.
+        for (name, bits) in [
+            ("bit", 1i64),
+            ("bool", 1),
+            ("byte", 8),
+            ("shortint", 16),
+            ("int", 32),
+            ("integer", 32),
+            ("uint", 32),
+            ("longint", 64),
+        ] {
+            type_bits.insert(name.to_string(), bits);
+        }
         for (name, dt) in &model.types {
             if let Some(n) = type_nbits(model, dt) {
                 type_bits.insert(name.clone(), n);
@@ -220,12 +237,32 @@ impl<'a> Env<'a> {
                 type_bits.entry(leaf).or_insert(n);
             }
         }
+        // An enum is a named type too, but it is held in `model.enums` rather
+        // than `model.types`, so `sizeof_s<color_e>` used to evaluate to 0.
+        // Its width is its base type's; the base type is not retained in the
+        // model, so the default integer width is used (PSS 12.4).
+        for name in model.enums.keys() {
+            type_bits.insert(name.clone(), 32);
+            let leaf = name.rsplit("::").next().unwrap_or(name).to_string();
+            type_bits.entry(leaf).or_insert(32);
+        }
         Env {
             seed: 0,
             type_bits,
             constants: &model.constants,
             variants,
         }
+    }
+
+    /// The bit width recorded for a `sizeof_s<T>` type argument, trying the
+    /// name as written, then its leaf, so a package-qualified spelling finds
+    /// the type registered under its leaf name.
+    pub fn type_bits_of(&self, name: &str) -> Option<i64> {
+        if let Some(n) = self.type_bits.get(name) {
+            return Some(*n);
+        }
+        let leaf = name.rsplit("::").next().unwrap_or(name);
+        self.type_bits.get(leaf).copied()
     }
 
     pub fn lookup(&self, name: &str) -> Option<i64> {
@@ -375,7 +412,7 @@ pub fn eval(expr: &Expr, values: &BTreeMap<String, i64>, env: &Env) -> Option<i6
         }
         // `sizeof_s<T>::nbits` / `::nbytes` (PSS 24.10.2).
         Expr::Sizeof { ty, bits } => {
-            let n = *env.type_bits.get(ty)?;
+            let n = env.type_bits_of(ty)?;
             Some(if *bits { n } else { (n + 7) / 8 })
         }
         // The standard library's `float_pkg` (Annex C.1). A floating-point
@@ -438,9 +475,14 @@ pub fn eval(expr: &Expr, values: &BTreeMap<String, i64>, env: &Env) -> Option<i6
                     let h = arg(0)?;
                     values.get(&format!("__h.{}.addr", h)).copied()
                 }
+                // PSS 24.10.7: the handle's absolute address. A region added
+                // to an address space is transparent, so the absolute address
+                // is the handle's address — the same value `addr_value` gives.
+                // It used to return a constant 1 (an "address known" flag), so
+                // every handle reported 1 instead of where it points.
                 "addr_value_abs" => {
                     let h = arg(0)?;
-                    Some(values.get(&format!("__h.{}.abs", h)).copied().unwrap_or(1))
+                    values.get(&format!("__h.{}.addr", h)).copied()
                 }
                 "get_tag" => {
                     // The tag is a string and the engine has no string values,
@@ -511,18 +553,52 @@ pub fn eval(expr: &Expr, values: &BTreeMap<String, i64>, env: &Env) -> Option<i6
     }
 }
 
+/// Look up a declared type by name: as written, through the qualified-name
+/// index, then by leaf. A field's `type_name` is a leaf (`ctrl_s`) while
+/// `model.types` is keyed by qualified name (`p::ctrl_s`), so the plain
+/// `model.types.get()` lookup missed every nested struct and the size came out
+/// as 0.
+fn find_type<'m>(model: &'m Model, name: &str) -> Option<&'m crate::ir::DataType> {
+    if let Some(t) = model.types.get(name) {
+        return Some(t);
+    }
+    if let Some(t) = model.types.get(&model.resolve(name)) {
+        return Some(t);
+    }
+    let leaf = name.rsplit("::").next().unwrap_or(name);
+    if let Some(t) = model.types.get(leaf) {
+        return Some(t);
+    }
+    let suffix = format!("::{}", leaf);
+    let mut hits = model.types.iter().filter(|(k, _)| k.ends_with(&suffix));
+    let first = hits.next();
+    if hits.next().is_none() {
+        return first.map(|(_, t)| t);
+    }
+    None
+}
+
 /// The size in bits of a declared type (PSS 24.10.2). A packed struct is the
 /// sum of its fields; a bit vector is its width; other scalars use their width.
 fn type_nbits(model: &Model, dt: &crate::ir::DataType) -> Option<i64> {
+    type_nbits_at(model, dt, 0)
+}
+
+fn type_nbits_at(model: &Model, dt: &crate::ir::DataType, depth: usize) -> Option<i64> {
+    // A type that (illegally) contains itself must not recurse forever.
+    if depth > 16 {
+        return None;
+    }
     match dt.keyword.as_str() {
-        "struct" => {
+        "struct" | "resource" | "buffer" | "state" | "stream" => {
             let mut total = 0i64;
             for f in &dt.fields {
                 let w = match f.bits {
                     Some(b) => b,
                     None => {
-                        let key = model.resolve(&f.type_name);
-                        match model.types.get(&key).and_then(|t| type_nbits(model, t)) {
+                        match find_type(model, &f.type_name)
+                            .and_then(|t| type_nbits_at(model, t, depth + 1))
+                        {
                             Some(n) => n,
                             None => return None,
                         }
@@ -541,7 +617,15 @@ fn type_nbits(model: &Model, dt: &crate::ir::DataType) -> Option<i64> {
         }
         "enum" => Some(dt.fields.first().and_then(|f| f.bits).unwrap_or(32)),
         "bool" => Some(1),
-        _ => dt.fields.first().and_then(|f| f.bits),
+        // A `typedef` is the width of what it aliases (PSS 12.2).
+        "typedef" => {
+            let base = dt.base.as_deref()?;
+            find_type(model, base).and_then(|t| type_nbits_at(model, t, depth + 1))
+        }
+        _ => dt.fields.first().and_then(|f| f.bits).or_else(|| {
+            let base = dt.base.as_deref()?;
+            find_type(model, base).and_then(|t| type_nbits_at(model, t, depth + 1))
+        }),
     }
 }
 

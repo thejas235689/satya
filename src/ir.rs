@@ -94,6 +94,11 @@ pub struct Action {
     pub activity: Option<Activity>,
     /// Leaf name of the component that declared this action, if any.
     pub owner: Option<String>,
+    /// Covergroups instantiated by this action (`cg inst1 (x);`), with the
+    /// instance's arguments substituted for the covergroup's formals, so the
+    /// instance samples (PSS 18.2, Syntax 64). Each carries the instance name,
+    /// so it is reported as `inst1.<coverpoint>`.
+    pub covergroup_instances: Vec<Covergroup>,
 }
 
 impl Action {
@@ -145,6 +150,10 @@ pub struct Component {
     pub actions: Vec<String>,
     pub pools: Vec<Pool>,
     pub binds: Vec<Bind>,
+    /// `import pkg::*;` / `import pkg::name;` in this component's body, as
+    /// dotted paths (`fpa::*`), which decide what an unqualified name means
+    /// (PSS 22.2).
+    pub imports: Vec<String>,
     /// Named activity fragments declared with `symbol` (PSS 12.7).
     pub symbols: HashMap<String, crate::ast::Activity>,
     /// `override` statements in this component (PSS 20.5).
@@ -187,8 +196,13 @@ pub struct Model {
     pub covergroups: Vec<crate::ast::Covergroup>,
     /// Monitor declarations in the model (PSS 19.1).
     pub monitors: Vec<crate::ast::Monitor>,
-    /// `function` / `task` declarations, by name (PSS 22.1).
+    /// `function` / `task` declarations, keyed by qualified name
+    /// (`fpa::value`) when the declaring scope is known, else by leaf name
+    /// (PSS 22.1). A qualified key is what makes an `import` able to choose
+    /// between two functions of the same name.
     pub functions: std::collections::HashMap<String, crate::ast::Function>,
+    /// `import pkg::*;` / `import pkg::name;` at file scope.
+    pub imports: Vec<String>,
 }
 
 impl Model {
@@ -219,18 +233,118 @@ impl Model {
 
     pub fn lower(file: &SourceFile) -> PssResult<Model> {
         let mut lw = Lowerer::default();
+        // Covergroups are indexed before lowering so an action's instance
+        // (`cg inst1 (x);`) can be bound while its members are lowered.
+        for cg in &file.covergroups {
+            lw.covergroup_decls.insert(cg.name.clone(), cg.clone());
+        }
         lw.collect(file.items.iter(), None);
         lw.finish();
         lw.model.covergroups = file.covergroups.clone();
         lw.model.monitors = file.monitors.clone();
         for f in &file.functions {
-            lw.model.functions.insert(f.name.clone(), f.clone());
+            // Qualified by the scope that declares it, so `import fpa::*` can
+            // select fpa's `value` rather than whichever was declared last.
+            let key = qualify(f.scope.as_deref(), &f.name);
+            lw.model.functions.entry(key).or_insert_with(|| f.clone());
         }
         Ok(lw.model)
     }
 
     pub fn component(&self, name: &str) -> Option<&Component> {
         self.components.get(name)
+    }
+
+    /// Every `import` visible from a component: the file's own, then the
+    /// component's, then those of the components above it.
+    pub fn imports_for(&self, component: Option<&str>) -> Vec<String> {
+        let mut out = self.imports.clone();
+        let mut cur = component.map(|c| c.rsplit('.').next().unwrap_or(c).to_string());
+        let mut guard = 0;
+        while let Some(name) = cur {
+            guard += 1;
+            if guard > 8 {
+                break;
+            }
+            match self.components.get(&name) {
+                Some(c) => {
+                    for i in &c.imports {
+                        if !out.contains(i) {
+                            out.push(i.clone());
+                        }
+                    }
+                    cur = c
+                        .base
+                        .as_ref()
+                        .map(|b| b.rsplit("::").next().unwrap_or(b).to_string());
+                }
+                None => break,
+            }
+        }
+        out
+    }
+
+    /// Resolve a `function` / `task` call (PSS 22.2).
+    ///
+    /// A qualified name resolves directly. An unqualified one is resolved
+    /// through the imports visible from `component`: `import fpa::*` and
+    /// `import fpa::value` both select `fpa::value`. With no import that names
+    /// it, a name declared in more than one scope is ambiguous and does not
+    /// resolve — that is the whole point of an import. A name declared in one
+    /// scope only still resolves, so a single-package model keeps working.
+    pub fn resolve_function(
+        &self,
+        component: Option<&str>,
+        name: &str,
+    ) -> (Option<&crate::ast::Function>, Option<String>) {
+        let leaf = name.rsplit("::").next().unwrap_or(name);
+        if name.contains("::") {
+            if let Some(f) = self.functions.get(name) {
+                return (Some(f), None);
+            }
+        }
+        let imports = self.imports_for(component);
+        // A scope the imports name explicitly.
+        for imp in &imports {
+            let (scope, item) = match imp.rsplit_once("::") {
+                Some((s, i)) => (s, i),
+                None => continue,
+            };
+            if item == "*" || item == leaf {
+                if let Some(f) = self.functions.get(&format!("{}::{}", scope, leaf)) {
+                    return (Some(f), None);
+                }
+            }
+        }
+        // The component's own declaration wins over a package's.
+        if let Some(comp) = component {
+            let own = comp.rsplit('.').next().unwrap_or(comp);
+            if let Some(f) = self.functions.get(&format!("{}::{}", own, leaf)) {
+                return (Some(f), None);
+            }
+        }
+        let mut hits: Vec<&String> = self
+            .functions
+            .keys()
+            .filter(|k| k.as_str() == leaf || k.ends_with(&format!("::{}", leaf)))
+            .collect();
+        hits.sort();
+        match hits.len() {
+            0 => (None, None),
+            1 => (self.functions.get(hits[0]), None),
+            _ => {
+                let names: Vec<String> = hits.iter().map(|k| (*k).clone()).collect();
+                (
+                    None,
+                    Some(format!(
+                        "`{}` is declared in {} scopes ({}) and no import selects one (PSS 22.2)",
+                        leaf,
+                        hits.len(),
+                        names.join(", ")
+                    )),
+                )
+            }
+        }
     }
 
     pub fn action(&self, name: &str) -> Option<&Action> {
@@ -269,6 +383,9 @@ struct Lowerer {
     raw_components: HashMap<String, RawComponent>,
     raw_actions: HashMap<String, RawAction>,
     component_names: Vec<String>,
+    /// Declared covergroups, by name, so an action's instance of one can be
+    /// bound (PSS 18.2).
+    covergroup_decls: HashMap<String, Covergroup>,
 }
 
 /// The name a field's type is keyed by. A templated use carries its arguments,
@@ -357,6 +474,7 @@ struct RawComponent {
     actions: Vec<ActionDecl>,
     pools: Vec<PoolDecl>,
     binds: Vec<BindDecl>,
+    imports: Vec<String>,
     execs: Vec<ExecBlock>,
     constraints: Vec<ConstraintBlock>,
 }
@@ -382,7 +500,12 @@ impl Lowerer {
     fn collect<'a>(&mut self, items: impl Iterator<Item = &'a Item>, pkg: Option<String>) {
         for item in items {
             match item {
-                Item::Import(_) => {}
+                Item::Import(p) => {
+                    let path = p.segments.join("::");
+                    if !self.model.imports.contains(&path) {
+                        self.model.imports.push(path);
+                    }
+                }
                 Item::Package(p) => {
                     self.model.packages.push(p.name.clone());
                     self.collect(p.items.iter(), Some(p.name.clone()));
@@ -504,6 +627,13 @@ impl Lowerer {
                 CompItem::Action(a) => self.raw_components.get_mut(&c.name).unwrap().actions.push(a.clone()),
                 CompItem::Pool(p) => self.raw_components.get_mut(&c.name).unwrap().pools.push(p.clone()),
                 CompItem::Bind(b) => self.raw_components.get_mut(&c.name).unwrap().binds.push(b.clone()),
+                CompItem::Import(p) => {
+                    let path = p.segments.join("::");
+                    let rc = self.raw_components.get_mut(&c.name).unwrap();
+                    if !rc.imports.contains(&path) {
+                        rc.imports.push(path);
+                    }
+                }
                 CompItem::Exec(x) => self.raw_components.get_mut(&c.name).unwrap().execs.push(x.clone()),
                 CompItem::Override(list) => self
                     .raw_components
@@ -1052,6 +1182,7 @@ impl Lowerer {
                     actions,
                     pools,
                     binds,
+                    imports: rc.imports.clone(),
                     symbols,
                     overrides,
                     execs: rc.execs.clone(),
@@ -1133,7 +1264,17 @@ impl Lowerer {
     fn lower_action(&self, a: &ActionDecl, owner: Option<String>) -> Action {
         let mut fields: Vec<Field> = Vec::new();
         let mut constraints = self.lower_constraints(&a.constraints);
+        let mut covergroup_instances: Vec<Covergroup> = Vec::new();
         for m in &a.members {
+            // `cg inst1 (x);` — an instance of a declared covergroup (PSS 18.2,
+            // Syntax 64). It is not a data member: its coverpoints are bound to
+            // the instance's arguments and sampled when the action runs.
+            let ty_leaf = m.ty.path.leaf();
+            if let Some(decl) = self.covergroup_decls.get(&ty_leaf) {
+                let bound = bind_covergroup(decl, &m.name, &m.args);
+                covergroup_instances.push(bound);
+                continue;
+            }
             let f = self.lower_member(m);
             if let Some(inline) = &f.inline_constraint {
                 constraints.push(Constraint {
@@ -1155,7 +1296,98 @@ impl Lowerer {
             execs: a.execs.clone(),
             activity: a.activity.clone(),
             owner,
+            covergroup_instances,
         }
+    }
+}
+
+/// Bind a covergroup declaration to one instance: the formals are replaced by
+/// the instance's arguments, in declaration order (PSS 18.2), and the result is
+/// named after the instance so coverage is reported as `inst1.<coverpoint>`.
+fn bind_covergroup(decl: &Covergroup, instance: &str, args: &[Expr]) -> Covergroup {
+    let map: HashMap<String, Expr> = decl
+        .params
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| args.get(i).map(|a| (p.clone(), a.clone())))
+        .collect();
+    let items = decl
+        .items
+        .iter()
+        .map(|it| match it {
+            CoverItem::Coverpoint {
+                label,
+                expr,
+                iff,
+                bins,
+            } => CoverItem::Coverpoint {
+                label: label.clone(),
+                expr: subst_expr(expr, &map),
+                iff: iff.as_ref().map(|c| subst_expr(c, &map)),
+                bins: bins
+                    .iter()
+                    .map(|(n, e)| (n.clone(), subst_expr(e, &map)))
+                    .collect(),
+            },
+            CoverItem::Cross { label, refs, iff } => CoverItem::Cross {
+                label: label.clone(),
+                refs: refs.clone(),
+                iff: iff.as_ref().map(|c| subst_expr(c, &map)),
+            },
+        })
+        .collect();
+    Covergroup {
+        name: instance.to_string(),
+        params: Vec::new(),
+        items,
+    }
+}
+
+/// Replace each formal parameter with the instance's argument.
+fn subst_expr(e: &Expr, map: &HashMap<String, Expr>) -> Expr {
+    if map.is_empty() {
+        return e.clone();
+    }
+    match e {
+        Expr::Path(p) if p.segments.len() == 1 => map
+            .get(&p.segments[0])
+            .cloned()
+            .unwrap_or_else(|| e.clone()),
+        Expr::Unary(op, a) => Expr::Unary(op.clone(), Box::new(subst_expr(a, map))),
+        Expr::Binary(op, a, b) => Expr::Binary(
+            op.clone(),
+            Box::new(subst_expr(a, map)),
+            Box::new(subst_expr(b, map)),
+        ),
+        Expr::Ternary(c, a, b) => Expr::Ternary(
+            Box::new(subst_expr(c, map)),
+            Box::new(subst_expr(a, map)),
+            Box::new(subst_expr(b, map)),
+        ),
+        Expr::Call(name, args) => {
+            Expr::Call(name.clone(), args.iter().map(|a| subst_expr(a, map)).collect())
+        }
+        Expr::Method(recv, name, args) => Expr::Method(
+            Box::new(subst_expr(recv, map)),
+            name.clone(),
+            args.iter().map(|a| subst_expr(a, map)).collect(),
+        ),
+        Expr::Index(a, b) => Expr::Index(
+            Box::new(subst_expr(a, map)),
+            Box::new(subst_expr(b, map)),
+        ),
+        Expr::Slice(a, b, c) => Expr::Slice(
+            Box::new(subst_expr(a, map)),
+            Box::new(subst_expr(b, map)),
+            Box::new(subst_expr(c, map)),
+        ),
+        Expr::InRange(a, lo, hi) => Expr::InRange(
+            Box::new(subst_expr(a, map)),
+            Box::new(subst_expr(lo, map)),
+            Box::new(subst_expr(hi, map)),
+        ),
+        Expr::List(items) => Expr::List(items.iter().map(|i| subst_expr(i, map)).collect()),
+        _ => e.clone(),
     }
 }
 

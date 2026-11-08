@@ -67,6 +67,7 @@ pub fn model_from_json(src: &str) -> PssResult<Model> {
         addr_regions: Vec::new(),
         qual_index: HashMap::new(),
         duplicates: Vec::new(),
+        imports: Vec::new(),
     };
 
     if let Some(pkgs) = obj_get(obj, "packages").and_then(|v| v.as_arr()) {
@@ -192,6 +193,7 @@ pub fn model_from_json(src: &str) -> PssResult<Model> {
                             execs: Vec::new(),
                             activity,
                             owner: Some(name.clone()),
+                            covergroup_instances: Vec::new(),
                         },
                     );
                     action_names.push(aname.clone());
@@ -236,6 +238,7 @@ pub fn model_from_json(src: &str) -> PssResult<Model> {
                     actions: action_names,
                     pools,
                     binds,
+                    imports: Vec::new(),
                     execs: Vec::new(),
                     constraints: Vec::new(),
                 },

@@ -155,6 +155,9 @@ struct Engine<'a> {
     warnings: Vec<String>,
     group_counter: u32,
     pools: Vec<PoolState>,
+    /// Element type -> the pool a static `bind <pool> *;` names, so an
+    /// allocation of that type comes from that pool (PSS 14.3, Syntax 52).
+    pool_binds: HashMap<String, String>,
     resources: HashMap<String, ResourceState>,
     /// Bump cursors over the model's address regions.
     addr_cursors: Vec<(i64, i64)>,
@@ -170,6 +173,9 @@ struct Engine<'a> {
     in_cover: bool,
     /// The action whose `exec` block is running, so `randomize` can re-solve it.
     exec_action: Option<crate::ir::Action>,
+    /// The component whose `exec` block is running, so an unqualified function
+    /// name is resolved against that component's imports (PSS 22.2).
+    exec_component: Option<String>,
     /// Next address-handle index (PSS 24.10.3).
     handle_seq: i64,
     /// Bump pointer for address claims, per region (PSS 24.8).
@@ -255,6 +261,7 @@ pub fn run_scenario(model: &Model, root_action: &str, seed: u64) -> Scenario {
         warnings: Vec::new(),
         group_counter: 0,
         pools: Vec::new(),
+        pool_binds: HashMap::new(),
         resources: HashMap::new(),
         addr_cursors: model
             .addr_regions
@@ -269,6 +276,7 @@ pub fn run_scenario(model: &Model, root_action: &str, seed: u64) -> Scenario {
         messages: Vec::new(),
         globals: BTreeMap::new(),
         exec_action: None,
+        exec_component: None,
         handle_seq: 0,
         claim_cursor: Vec::new(),
         ret_value: None,
@@ -278,7 +286,9 @@ pub fn run_scenario(model: &Model, root_action: &str, seed: u64) -> Scenario {
         coverage_bins: BTreeMap::new(),
     };
     if let Some(t) = &top {
-        eng.pools = collect_pools(model, t);
+        let (pools, binds) = collect_pools(model, t);
+        eng.pools = pools;
+        eng.pool_binds = binds;
         eng.resources = collect_resources(model, t);
     }
     // Component `init_down`/`init_up` blocks run before the root action's
@@ -375,11 +385,117 @@ impl<'a> Engine<'a> {
             self.record_step(action, component.clone(), depth, mode, group, &[], &BTreeMap::new());
         }
         if let Some(act) = &action.activity {
+            // A `bind` statement is declarative: it relates two action
+            // instances of this activity whatever its position in the body
+            // (PSS 12.3, Syntax 44), so the body is scanned for bindings before
+            // it is walked and they are applied to the steps it produced.
+            let binds = collect_binds(act);
+            let first_step = self.steps.len();
             // Solve the container action first so its random fields — a repeat
             // count, for instance — are available while walking the activity.
             let report = solver::solve(self.model, action, self.seed ^ (depth as u64) ^ 0x5EED);
             let ctx = report.assignment.values;
             self.walk_activity(act, component, depth + 1, mode, group, &ctx);
+            if !binds.is_empty() {
+                self.apply_binds(&binds, action, first_step);
+            }
+        }
+    }
+
+    /// Apply `bind <producer>.<port> <consumer>.<port>;` statements (PSS 12.3,
+    /// Syntax 44): the consumer's input takes the object the named producer
+    /// instance produced, instead of the first object of that type on the
+    /// stream. Without this the statement was parsed and dropped.
+    fn apply_binds(&mut self, binds: &[(Path, Path)], action: &Action, first_step: usize) {
+        for (from, to) in binds {
+            let (producer, producer_port) = match split_handle_port(from) {
+                Some(x) => x,
+                None => continue,
+            };
+            let (consumer, consumer_port) = match split_handle_port(to) {
+                Some(x) => x,
+                None => continue,
+            };
+            let ps = match handle_slot(action, &producer) {
+                Some(x) => x,
+                None => {
+                    self.warnings.push(format!(
+                        "bind: `{}` is not an action instance of this action (PSS 12.3)",
+                        producer
+                    ));
+                    continue;
+                }
+            };
+            let cs = match handle_slot(action, &consumer) {
+                Some(x) => x,
+                None => {
+                    self.warnings.push(format!(
+                        "bind: `{}` is not an action instance of this action (PSS 12.3)",
+                        consumer
+                    ));
+                    continue;
+                }
+            };
+            let p_step = nth_step_of(&self.steps[first_step..], &ps.0, ps.1);
+            let c_step = nth_step_of(&self.steps[first_step..], &cs.0, cs.1);
+            let (p_step, c_step) = match (p_step, c_step) {
+                (Some(p), Some(c)) => (first_step + p, first_step + c),
+                _ => {
+                    self.warnings.push(format!(
+                        "bind `{}` -> `{}`: the named instance was not traversed in this activity",
+                        producer, consumer
+                    ));
+                    continue;
+                }
+            };
+            // The object the producer's port holds.
+            let produced = self.steps[p_step]
+                .flow
+                .iter()
+                .find(|f| f.direction == "output" && f.field == producer_port)
+                .and_then(|f| f.obj_id.map(|id| (f.pool.clone(), f.type_name.clone(), id)));
+            let (pool, ty, obj) = match produced {
+                Some(x) => x,
+                None => {
+                    self.warnings.push(format!(
+                        "bind: `{}.{}` produced no object to bind",
+                        producer, producer_port
+                    ));
+                    continue;
+                }
+            };
+            // Bind it to the consumer's port, and give the consumer the bound
+            // object's values, not values solved independently for its input.
+            let values = self
+                .pools
+                .iter()
+                .find(|p| pool.as_deref() == Some(p.name.as_str()) && p.type_name == ty)
+                .and_then(|p| p.instances.get(obj))
+                .map(|o| o.values.clone())
+                .unwrap_or_default();
+            let mut bound = false;
+            for fr in self.steps[c_step].flow.iter_mut() {
+                if fr.direction == "input" && fr.field == consumer_port {
+                    fr.obj_id = Some(obj);
+                    fr.pool = pool.clone();
+                    bound = true;
+                }
+            }
+            if !bound {
+                self.warnings.push(format!(
+                    "bind: `{}.{}` is not an input of `{}`",
+                    consumer, consumer_port, consumer
+                ));
+                continue;
+            }
+            let step = &mut self.steps[c_step];
+            for (k, v) in &values {
+                let key = format!("{}.{}", consumer_port, k);
+                match step.fields.iter_mut().find(|(n, _)| *n == key) {
+                    Some(entry) => entry.1 = *v,
+                    None => step.fields.push((key, *v)),
+                }
+            }
         }
     }
 
@@ -843,6 +959,9 @@ impl<'a> Engine<'a> {
                 }
                 self.walk_activity(then, component.to_string(), depth, mode, group, ctx);
             }
+            // A binding statement is applied to the steps the enclosing
+            // activity produced (see `apply_binds`).
+            ActivityStmt::Bind { .. } => {}
             ActivityStmt::Raw(_) => {}
         }
     }
@@ -963,7 +1082,9 @@ impl<'a> Engine<'a> {
         // init_down: this component first, then its children.
         for e in &downs {
             let mut g = std::mem::take(&mut self.globals);
+            let saved = self.exec_component.replace(comp_name.to_string());
             self.exec_stmts(&e.stmts, &mut g);
+            self.exec_component = saved;
             self.globals = g;
         }
         for (_, sub_ty) in &subs {
@@ -972,7 +1093,9 @@ impl<'a> Engine<'a> {
         // init_up: children first, then this component.
         for e in &ups {
             let mut g = std::mem::take(&mut self.globals);
+            let saved = self.exec_component.replace(comp_name.to_string());
             self.exec_stmts(&e.stmts, &mut g);
+            self.exec_component = saved;
             self.globals = g;
         }
     }
@@ -996,13 +1119,28 @@ impl<'a> Engine<'a> {
     /// Parameters are bound into the caller's value map and restored after, so
     /// a call does not leak them. Nested calls inside an argument expression
     /// are not evaluated.
+    /// Resolve a `function` / `task` name against the running component's
+    /// imports (PSS 22.2), reporting a name that no import selects.
+    fn resolve_function(&mut self, name: &str) -> Option<crate::ast::Function> {
+        let comp = self.exec_component.clone();
+        match self.model.resolve_function(comp.as_deref(), name) {
+            (Some(f), _) => Some(f.clone()),
+            (None, Some(why)) => {
+                if !self.warnings.contains(&why) {
+                    self.warnings.push(why);
+                }
+                None
+            }
+            (None, None) => None,
+        }
+    }
+
     fn call_user_function(
         &mut self,
-        name: &str,
+        f: crate::ast::Function,
         args: &[Expr],
         values: &mut BTreeMap<String, i64>,
     ) -> Option<i64> {
-        let f = self.model.functions.get(name)?.clone();
         let mut saved: Vec<(String, Option<i64>)> = Vec::new();
         for (i, p) in f.params.iter().enumerate() {
             saved.push((p.clone(), values.get(p).copied()));
@@ -1097,8 +1235,8 @@ impl<'a> Engine<'a> {
                 // the numeric one (PSS 7.2).
                 // `y = f(...)` where `f` is a user function (PSS 22.1).
                 if let crate::ast::Expr::Call(fname, fargs) = rhs {
-                    if self.model.functions.contains_key(fname) {
-                        if let Some(v) = self.call_user_function(fname, fargs, values) {
+                    if let Some(f) = self.resolve_function(fname) {
+                        if let Some(v) = self.call_user_function(f, fargs, values) {
                             values.insert(base.clone(), v);
                             return Flow::Normal;
                         }
@@ -1336,8 +1474,8 @@ impl<'a> Engine<'a> {
             ExecStmt::Yield => Flow::Normal,
             ExecStmt::Call(name, args) => {
                 // A user `function` / `task` runs its body (PSS 22.1).
-                if self.model.functions.contains_key(name) {
-                    self.call_user_function(name, args, values);
+                if let Some(f) = self.resolve_function(name) {
+                    self.call_user_function(f, args, values);
                     return Flow::Normal;
                 }
                 self.exec_call(name, args, values);
@@ -2195,8 +2333,11 @@ impl<'a> Engine<'a> {
         extra: &[Expr],
         bindings: &BTreeMap<String, i64>,
     ) {
-        // Remember the action so an `exec` `randomize` can re-solve it.
+        // Remember the action so an `exec` `randomize` can re-solve it, and the
+        // component so an unqualified function call resolves against its
+        // imports (PSS 22.2).
         self.exec_action = Some(action.clone());
+        self.exec_component = Some(component.clone());
 
         // `exec pre_solve` runs before the solver and its assignments to
         // non-random fields feed the solve (PSS 16.4.12).
@@ -2284,6 +2425,14 @@ impl<'a> Engine<'a> {
         if self.in_cover {
             let cgs = self.model.covergroups.clone();
             self.sample_covergroups(&cgs, &solved);
+            // A covergroup instantiated by this action (`cg inst1 (x);`) samples
+            // in this action's scope, with its formals bound to the instance's
+            // arguments (PSS 18.2, Syntax 64). Before this it bound nothing and
+            // never sampled.
+            if !action.covergroup_instances.is_empty() {
+                let insts = action.covergroup_instances.clone();
+                self.sample_covergroups(&insts, &solved);
+            }
         }
 
         // Allocate / consume flow objects and claim resources. A flow object
@@ -2414,7 +2563,7 @@ impl<'a> Engine<'a> {
         }
         let size = obj_values.get("size").copied().unwrap_or(64).max(1);
         let addr = self.alloc_addr(size);
-        match self.pools.iter().position(|p| p.type_name == ty) {
+        match self.pool_for_type(&ty) {
             Some(i) => {
                 if let Some(cap) = self.pools[i].capacity {
                     if self.pools[i].instances.len() as i64 >= cap {
@@ -2474,7 +2623,7 @@ impl<'a> Engine<'a> {
     /// Consume an object of the field's type from its pool.
     fn consume(&mut self, f: &Field, direction: &'static str) -> FlowRecord {
         let ty = f.type_name.clone();
-        match self.pools.iter().position(|p| p.type_name == ty) {
+        match self.pool_for_type(&ty) {
             Some(i) => {
                 let avail = self.pools[i].instances.len();
                 if avail == 0 {
@@ -2572,6 +2721,17 @@ impl<'a> Engine<'a> {
         ));
     }
 
+    /// The pool an allocation or a consumption of `ty` uses: the one a static
+    /// `bind <pool> *;` names, else the first pool of that type (PSS 14.3).
+    fn pool_for_type(&self, ty: &str) -> Option<usize> {
+        if let Some(name) = self.pool_binds.get(ty) {
+            if let Some(i) = self.pools.iter().position(|p| &p.name == name) {
+                return Some(i);
+            }
+        }
+        self.pools.iter().position(|p| p.type_name == ty)
+    }
+
     fn pool_index_for(&self, iter: &Expr) -> Option<usize> {
         if let Expr::Path(p) = iter {
             let leaf = p.segments.last()?;
@@ -2579,6 +2739,94 @@ impl<'a> Engine<'a> {
         }
         None
     }
+}
+
+/// Collect the `bind` statements of an activity body, at any depth.
+fn collect_binds(activity: &Activity) -> Vec<(Path, Path)> {
+    fn walk(a: &Activity, out: &mut Vec<(Path, Path)>) {
+        let Activity::Sequence(stmts) = a;
+        for st in stmts {
+            match st {
+                ActivityStmt::Bind { from, to } => {
+                    if let Some(to) = to {
+                        out.push((from.clone(), to.clone()));
+                    }
+                }
+                ActivityStmt::Labeled { stmt, .. } => {
+                    let one = Activity::Sequence(vec![(**stmt).clone()]);
+                    walk(&one, out);
+                }
+                ActivityStmt::DoWith { body: Some(b), .. } => walk(b, out),
+                ActivityStmt::Parallel { branches, .. }
+                | ActivityStmt::Schedule { branches, .. } => {
+                    for b in branches {
+                        walk(b, out);
+                    }
+                }
+                ActivityStmt::Select(branches) | ActivityStmt::Match { choices: branches, .. } => {
+                    for (_, b) in branches {
+                        walk(b, out);
+                    }
+                }
+                ActivityStmt::Repeat { body, .. } | ActivityStmt::Foreach { body, .. } => {
+                    walk(body, out)
+                }
+                ActivityStmt::Atomic(body) => walk(body, out),
+                ActivityStmt::If { then, els, .. } => {
+                    walk(then, out);
+                    if let Some(e) = els {
+                        walk(e, out);
+                    }
+                }
+                ActivityStmt::Cover { body: Some(b), .. } => walk(b, out),
+                _ => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(activity, &mut out);
+    out
+}
+
+/// Split `p2.out` into the instance (`p2`) and the port (`out`).
+fn split_handle_port(p: &Path) -> Option<(String, String)> {
+    let segs = &p.segments;
+    if segs.len() < 2 {
+        return None;
+    }
+    Some((segs[segs.len() - 2].clone(), segs[segs.len() - 1].clone()))
+}
+
+/// The (action type, occurrence) slot an action instance occupies: `p2` in
+/// `P p1; P p2;` is the second `P` of the activity.
+fn handle_slot(action: &Action, handle: &str) -> Option<(String, usize)> {
+    let ty = action
+        .fields
+        .iter()
+        .find(|f| f.name == handle)
+        .map(|f| f.type_name.clone())?;
+    let leaf = ty.rsplit("::").next().unwrap_or(&ty).to_string();
+    let mut seen = 0usize;
+    for f in &action.fields {
+        let fl = f.type_name.rsplit("::").next().unwrap_or(&f.type_name);
+        if fl != leaf {
+            continue;
+        }
+        if f.name == handle {
+            return Some((leaf, seen));
+        }
+        seen += 1;
+    }
+    None
+}
+
+/// Index of the `n`th step in `steps` that traverses `action_type`.
+fn nth_step_of(steps: &[Step], action_type: &str, n: usize) -> Option<usize> {
+    steps
+        .iter()
+        .filter(|s| s.action.rsplit("::").next().unwrap_or(&s.action) == action_type)
+        .nth(n)
+        .map(|s| s.index)
 }
 
 fn split_action_ref(path: &Path) -> (Option<String>, String) {
@@ -2609,17 +2857,19 @@ fn resolve_component(model: &Model, current: &str, want: &str) -> Option<String>
 }
 
 /// Gather the pools of a component and its sub-components.
-fn collect_pools(model: &Model, top: &str) -> Vec<PoolState> {
+fn collect_pools(model: &Model, top: &str) -> (Vec<PoolState>, HashMap<String, String>) {
     let mut out = Vec::new();
+    let mut binds = HashMap::new();
     let mut seen = Vec::new();
-    collect_pools_into(model, top, &mut out, &mut seen, 0);
-    out
+    collect_pools_into(model, top, &mut out, &mut binds, &mut seen, 0);
+    (out, binds)
 }
 
 fn collect_pools_into(
     model: &Model,
     name: &str,
     out: &mut Vec<PoolState>,
+    binds: &mut HashMap<String, String>,
     seen: &mut Vec<String>,
     depth: usize,
 ) {
@@ -2637,8 +2887,19 @@ fn collect_pools_into(
                 read_cursor: 0,
             });
         }
+        // `bind <pool> *;` — every object of the pool's element type is
+        // allocated from that pool, not from whichever pool of the type came
+        // first (PSS 14.3, Syntax 52). A named target (`bind <pool> <comp>;`)
+        // scopes the directive to that component, which this engine does not
+        // model separately, so it is applied to the type as well.
+        for b in &c.binds {
+            let pool = c.pools.iter().find(|p| p.name == b.pool);
+            if let Some(pool) = pool {
+                binds.insert(pool.type_name.clone(), pool.name.clone());
+            }
+        }
         for (_, ty) in &c.subcomponents {
-            collect_pools_into(model, ty, out, seen, depth + 1);
+            collect_pools_into(model, ty, out, binds, seen, depth + 1);
         }
     }
 }

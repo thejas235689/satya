@@ -1529,7 +1529,12 @@ fn address_handles_carry_absolute_addresses() {
     assert_eq!(get("addr0"), 0x410, "0x400 + 0x10");
     assert_eq!(get("addr1"), 0x414, "handle plus an offset");
     assert_eq!(get("addr2"), 0x420);
-    assert_eq!(get("abs0"), 1, "a region of an address space is transparent");
+    // PSS 24.10.7: the handle's absolute address. A region added to an address
+    // space is transparent, so the absolute address is the handle's address —
+    // the same value `addr_value` gives. (This assertion used to expect 1, an
+    // "address is known" flag; docs/SEMANTICS.md is the specification and
+    // documents the address, so the expectation follows the document.)
+    assert_eq!(get("abs0"), 0x410, "the handle's absolute address");
 }
 
 #[test]
@@ -3184,4 +3189,152 @@ fn relations_with_two_unknowns_are_solved() {
             );
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Flow-object bindings, static pool bindings, covergroup instantiation and
+// import-driven name resolution (FEATURE-AUDIT rows 44, 52, 64, 82).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bind_statement_binds_the_named_producer() {
+    // `bind p2.out c.inp;` was parsed and dropped: the consumer took the first
+    // producer's object, and the trace was identical with and without it.
+    let with = r#"
+buffer data_b { rand int size; };
+component pss_top {
+   pool [4] data_b b_pool;
+   bind b_pool *;
+   action P { output data_b out; };
+   action C { input data_b inp; };
+   action test {
+      P p1;
+      P p2;
+      C c;
+      activity { do P; do P; do C; bind p2.out c.inp; };
+   };
+};
+"#;
+    let without = with.replace(" bind p2.out c.inp;", "");
+    let m = compile_pss(with).unwrap();
+    let s = engine::run_scenario(&m, "test", 1);
+    assert_eq!(s.steps.len(), 3, "expected three steps");
+    let out = |i: usize| s.steps[i].flow.iter().find(|f| f.direction == "output").and_then(|f| f.obj_id);
+    let inp = |i: usize| s.steps[i].flow.iter().find(|f| f.direction == "input").and_then(|f| f.obj_id);
+    assert_ne!(out(0), out(1), "the two producers must get distinct objects");
+    assert_eq!(inp(2), out(1), "the consumer must take p2's object, not p1's");
+    // ... and it must carry p2's values, not values solved for the consumer.
+    let p2_size = s.steps[1].fields.iter().find(|(k, _)| k == "out.size").map(|(_, v)| *v);
+    let c_size = s.steps[2].fields.iter().find(|(k, _)| k == "inp.size").map(|(_, v)| *v);
+    assert_eq!(p2_size, c_size, "the bound consumer must see the producer's values");
+
+    // Without the statement the consumer falls back to the first producer, so
+    // the two traces differ — the statement is no longer silently dropped.
+    let m2 = compile_pss(&without).unwrap();
+    let s2 = engine::run_scenario(&m2, "test", 1);
+    assert_ne!(
+        inp(2),
+        s2.steps[2].flow.iter().find(|f| f.direction == "input").and_then(|f| f.obj_id),
+        "`bind p2.out c.inp;` left the trace identical to the model without it"
+    );
+}
+
+#[test]
+fn static_bind_directive_selects_the_pool() {
+    // `bind pa *;` was ignored, so every allocation came from `pb`.
+    let src = r#"
+package p52 {
+    struct pkt_s { rand int size; constraint size in [1..16]; };
+    component c52 {
+        pool [2] pkt_s pb;
+        pool [2] pkt_s pa;
+        bind pa *;
+        action item_a { output pkt_s p; constraint p.size in [1..8]; };
+        action top_a { activity { do item_a; do item_a; }; };
+    };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "top_a", 1);
+    let pools: Vec<String> = s
+        .steps
+        .iter()
+        .flat_map(|st| st.flow.iter().filter_map(|f| f.pool.clone()))
+        .collect();
+    assert_eq!(pools, vec!["pa".to_string(), "pa".to_string()], "allocations came from {:?}", pools);
+    let pa = s.pools.iter().find(|(n, _, _)| n == "pa").map(|(_, _, c)| *c);
+    let pb = s.pools.iter().find(|(n, _, _)| n == "pb").map(|(_, _, c)| *c);
+    assert_eq!((pa, pb), (Some(2), Some(0)), "pa={:?} pb={:?}", pa, pb);
+}
+
+#[test]
+fn instantiated_covergroup_samples() {
+    // `named_cg inst1 (x);` bound nothing and never sampled; only the in-line
+    // form worked.
+    let src = r#"
+package p64 {
+    component c64 {
+        covergroup named_cg (int v) {
+            coverpoint v { bins lo = [0..3]; bins hi = [4..7]; }
+        }
+        action item_a {
+            rand int x;
+            constraint x in [0..7];
+            named_cg inst1 (x);
+        };
+        action top_a { activity { cover { do item_a; } }; };
+    };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "top_a", 1);
+    let hit = s
+        .coverage
+        .iter()
+        .find(|c| c.name.starts_with("inst1."))
+        .unwrap_or_else(|| panic!("inst1 never sampled (coverage: {:?})",
+            s.coverage.iter().map(|c| &c.name).collect::<Vec<_>>()));
+    let hits: usize = hit.values.iter().map(|(_, n)| *n).sum();
+    assert_eq!(hits, 1, "inst1 reported {:?}", hit.values);
+    assert_eq!(hit.bins.map(|(_, declared)| declared), Some(2), "declared bins lost");
+}
+
+#[test]
+fn import_selects_which_package_name_resolves() {
+    // With `import fpa::*`, with `import fpa::value` and with no import at all,
+    // the same name resolved to the same thing (whichever was declared last).
+    let body = |import: &str| {
+        format!(
+            r#"
+package fpa {{ function int value() {{ return (11); }} }}
+package fpb {{ function int value() {{ return (22); }} }}
+component c {{
+  {}
+  action a {{ int r; exec post_solve {{ r = value(); }} }};
+}};
+"#,
+            import
+        )
+    };
+    let run = |src: &str| {
+        let m = compile_pss(src).unwrap();
+        let s = engine::run_scenario(&m, "a", 1);
+        (
+            s.steps[0].fields.iter().find(|(k, _)| k == "r").map(|(_, v)| *v),
+            s.warnings.clone(),
+        )
+    };
+    let (star, _) = run(&body("import fpa::*;"));
+    let (named, _) = run(&body("import fpa::value;"));
+    assert_eq!(star, Some(11), "`import fpa::*` must select fpa's value");
+    assert_eq!(named, Some(11), "`import fpa::value` must select fpa's value");
+    // No import: the name is declared in two scopes and nothing selects one, so
+    // it does not resolve — and the reason is reported.
+    let (none, warnings) = run(&body(""));
+    assert_ne!(none, Some(22), "an unimported ambiguous name must not resolve");
+    assert_ne!(none, Some(11), "an unimported ambiguous name must not resolve");
+    assert!(
+        warnings.iter().any(|w| w.contains("no import selects one")),
+        "no diagnostic for the unresolved name (warnings: {:?})", warnings
+    );
 }

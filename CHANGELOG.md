@@ -13,6 +13,53 @@ approximated.
 
 ---
 
+## 0.51.0 — 2026-11-08
+
+Nine of the twelve audit failures fixed
+
+Three agents worked the remaining defects in parallel — parser, binding/import,
+and builtins. Their patches were merged by hand (two of them edited
+`src/parser.rs`, and the conflict was real: one had extracted a
+`parse_comp_body()`, the other had added scope tracking in the same block; the
+merge keeps both).
+
+**Fixed and verified by the proof harness:**
+
+| # | construct | was |
+|---|---|---|
+| 4 | Empty aggregate literal | `arr = {};` stored 1, array stayed size 3 → now size 0 |
+| 7 | Structure literal | keyed `'{x:3, y:4}` was a parse error → now assigns members |
+| 44 | `bind` statement | dropped → the consumer now receives p2's object |
+| 52 | Static `bind` | ignored → allocations come from the named pool |
+| 64 | covergroup instantiation | never sampled → now reports `bins 1/2` with hits |
+| 66 | `bins all[4]` | declared 1 bin → now `bins 1/4` |
+| 82 | `import` | no effect on name resolution → an unimported name no longer resolves |
+| 89 | procedural block | dropped → `{ v = 5; }` executes |
+| 138 | `addr_value_abs` | constant 1 → the handle's address (1040, 3072) |
+
+**Partially fixed, recorded rather than claimed:**
+
+- **87 `import class`** — all four spellings now parse, but `h.get(7)` still
+  returns 0: binding a call to a body-less imported-class prototype is
+  expression evaluation in the solver and engine.
+- **103 `compile if`** — declarations now survive in a component body, a package
+  and an action body, but a `compile if` inside an **`exec` body** does not
+  execute its branch.
+- **132 `sizeof_s`** — 4 of 6 cases fixed (nested struct 0→16 bits, `int` 0→32,
+  `bit` 0→1, enum 0→32). `sizeof_s<word24_t>` is still 0 because `typedef`
+  aliases live in a parser-private map that never reaches the model, and
+  `sizeof_s<bit[24]>` still fails to parse.
+
+**One test expectation changed:** `address_handles_carry_absolute_addresses`
+asserted `1` for `addr_value_abs` as an "absolute-known" flag, while
+`SEMANTICS.md` specifies the handle's address. The documentation was treated as
+the specification, so the test now asserts `0x410`. The two could not both be
+right.
+
+**Verification:** 140 tests (4 new); proof **105 → 114 pass**, 57 → 48 fail;
+corpus unchanged 97/97 · 7/7 · 114/114; conformance, reproducers and
+randomisation checks all pass.
+
 ## 0.50.1 — 2026-11-04
 
 The held patch is in the repo

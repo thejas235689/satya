@@ -94,6 +94,9 @@ pub struct Member {
     pub init: Option<Expr>,
     /// `rand bit[..]` sized-array style, captured for completeness.
     pub is_static: bool,
+    /// Arguments of an instance list: the `(x)` of `cg inst1 (x);` (PSS 18.2).
+    /// Empty for an ordinary attribute.
+    pub args: Vec<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -188,6 +191,9 @@ pub struct Function {
     pub body: Vec<ExecStmt>,
     /// A `task` has no return value.
     pub is_task: bool,
+    /// The package (or component) that declares it, so an `import` can pick
+    /// between two functions of the same name (PSS 22.2).
+    pub scope: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -337,6 +343,8 @@ pub enum CoverItem {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Covergroup {
     pub name: String,
+    /// Formal parameters, in declaration order (`covergroup cg (int v)`).
+    pub params: Vec<String>,
     pub items: Vec<CoverItem>,
 }
 
@@ -432,6 +440,10 @@ pub enum ActivityStmt {
     SchedConstraint { parallel: bool, refs: Vec<String> },
     /// `name(args);` — a call to a symbol declared with `symbol` (PSS 12.7).
     SymbolCall(String, Vec<Expr>),
+    /// `bind <producer>.<port> <consumer>.<port>;` — binds a flow object
+    /// produced by one action instance to an input of another (PSS 12.3,
+    /// Syntax 44).
+    Bind { from: Path, to: Option<Path> },
     /// `[label:] cover { <monitor body> }` — monitor the executed stream for a
     /// scenario (PSS 19.2).
     Cover {

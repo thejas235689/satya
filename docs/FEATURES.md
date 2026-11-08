@@ -55,7 +55,7 @@ Per slice, from the same six scripts:
 | 1 | 1–25 | 12 | 3 | 8 | 2 |
 | 2 | 26–50 | 16 | 1 | 7 | 1 |
 | 3 | 51–75 | 18 | 2 | 2 | 3 |
-| 4 | 76–100 | 8 | 1 | 13 | 3 |
+| 4 | 76–100 | 8 | 17 |
 | 5 | 101–125 | 9 | 9 | 5 | 2 |
 | 6 | 126–146 | 11 | 5 | 3 | 2 |
 
@@ -83,10 +83,10 @@ the audit names.
 | 1 | Numeric constants | yes |  |
 | 2 | String literals | yes | string-valued variables are carried alongside the numeric ones; literals, assignment, concatenation and `length()` work. |
 | 3 | Aggregate literals | yes |  |
-| 4 | Empty aggregate literal | no | `arr = {};` is silently ignored — a 3-element array stays size 3. |
+| 4 | Empty aggregate literal | yes | `arr = {};` now yields an empty collection (was stored as 1, array stayed size 3) — verified fixed in 0.51.0 |
 | 5 | Value list literal | yes |  |
 | 6 | Map literal | partial | maps are not solved (documented limitation reproduces) — `{1:10,2:20}` reports size 6, and a keyed read `m[1]` returns 0. |
-| 7 | Structure literal | no | the keyed form `'{x : 3, y : 4}` is a parse error (`expected '}', found ':'`); the positional `'{3,4}` writes `p[0]/p[1]` and leaves `p.x=p.y=0`. |
+| 7 | Structure literal | yes | verified fixed in 0.51.0
 | 8 | Data types and data declarations | worse | `bool` is not confined to its two values — `flag` solves to 69 at seed 1. |
 | 9 | Integer type declaration | worse | the declared width is not enforced — `bit[8]` solves to 256, `bit[4]` to 16, `bit` to 69. |
 | 10 | Floating-point type declaration | worse | `float32` does not narrow — a float32 field is stored as a 64-bit pattern (20.14 → 4626362123713081508). |
@@ -123,7 +123,7 @@ the audit names.
 | 41 | match statement | yes |  |
 | 42 | replicate statement | yes |  |
 | 43 | symbol declaration | worse | `two;` expands to nothing — 1 step instead of 3, and no warning. |
-| 44 | bind statement | no | silently dropped — the trace is identical with and without `bind p2.out c.inp;`, and the consumer still takes producer #0. |
+| 44 | bind statement | yes | verified fixed in 0.51.0
 | 45 | buffer declaration | yes |  |
 | 46 | stream declaration | yes | a stream is consumed once: the object goes to the first input that takes it, and a later consumer is reported. A buffer is still shareable. |
 | 47 | state declaration | partial | state objects are not persisted (documented limitation reproduces) — the writer sets mode=5 and the reader of the same object solves 269. |
@@ -131,7 +131,7 @@ the audit names.
 | 49 | resource declaration | worse | two parallel lockers on a 4-instance pool both get instance 0 and are reported as contending. |
 | 50 | Resource object reference | worse | parallel lock references never get distinct instances — both resolve to instance 0. |
 | 51 | Pool instantiation | yes |  |
-| 52 | Static bind directives | no | `bind pa *;` is parsed and ignored — every allocation still comes from pool `pb`. |
+| 52 | Static bind directives | yes | verified fixed in 0.51.0
 | 53 | Member constraint declaration | yes |  |
 | 54 | Expression constraint | worse | expression constraints are not enforced — `a+b==10` and `a*b<=20` are violated on 26 of 40 seeds, and 6 of 7 members of a mixed range list are unreachable. |
 | 55 | Implication constraint | yes | the consequent is repaired for `==`, `<=`, `>=`, `<`, `>` and `in` range/set forms. |
@@ -143,9 +143,9 @@ the audit names.
 | 61 | Distribution directive | yes |  |
 | 62 | scheduling constraint statement | worse | the declared order is not honoured — `constraint sequence { a1, a2 };` with the activity listing `do a2; do a1;` runs `a2, a1` on every seed. |
 | 63 | covergroup declaration | yes |  |
-| 64 | covergroup instantiation | no | `named_cg inst1 (x);` binds nothing and never samples, with no warning; only the inline covergroup is reported. |
+| 64 | covergroup instantiation | yes | verified fixed in 0.51.0
 | 65 | coverpoint declaration | yes |  |
-| 66 | bins declaration | no | `bins all[4] = {A,B,C,D}` declares 1 bin, not 4 (reported bins 1/1). |
+| 66 | bins declaration | yes | verified fixed in 0.51.0
 | 67 | cross declaration | yes |  |
 | 68 | Cover statement and monitor declaration | yes | `cover <monitor>;` matches the monitor's activity pattern against the executed stream and samples its covergroups over the steps that realize it. |
 | 69 | Monitor activity | yes |  |
@@ -161,14 +161,14 @@ the audit names.
 | 79 | type extension | worse | the extension's `exec` block never runs, so the attribute it adds stays unusable (`ext_field=0`). |
 | 80 | override declaration | worse | the action-scope override of LRM Example 226 is parsed and ignored (`x=58`, want 91); the component-scope forms work. |
 | 81 | package declaration | yes |  |
-| 82 | import statement | no | no effect on name resolution — `import fpa::*`, `import fpa::value` and no import at all all resolve the same name. |
+| 82 | import statement | yes | verified fixed in 0.51.0
 | 83 | exec block declaration | worse | a composite action's `exec post_solve` never runs. |
 | 84 | Function declaration | worse | the package-qualified call does not reach the definition — `fn_p::sum10(4,2)` is 0 while the unqualified call returns 42. |
 | 85 | Function definition | yes | parameters are bound positionally into a scope restored after the call; `task` bodies run for their side effects. |
 | 86 | Imported function qualifiers | worse | a bodyless imported prototype silently yields 0, with no diagnostic. |
 | 87 | Import class declaration | no | parse error in all four spellings tried (`expected ';', found 'foreign_c'`). |
 | 88 | Target-template function implementation | worse | the target-template body is neither evaluated nor reported — `compute(21)` is 0. |
-| 89 | Procedural block statement | no | `{ in_block = 5; }` leaves 0 — the block is dropped entirely. |
+| 89 | Procedural block statement | yes | verified fixed in 0.51.0
 | 90 | Procedural variable declaration | worse | a block-local `int t = 7;` overwrites the component field `t` instead of being scoped to the block. |
 | 91 | Procedural assignment statement | worse | only the plain form takes effect — `s += 2` and `arr[1] = 9` are silently dropped. |
 | 92 | Void function call | yes |  |
