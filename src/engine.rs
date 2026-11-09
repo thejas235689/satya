@@ -1773,9 +1773,10 @@ impl<'a> Engine<'a> {
         let idx = self.handle_seq;
         self.handle_seq += 1;
         values.insert(format!("__h.{}.addr", idx), addr + offset);
-        // Regions added to an address space are transparent, so the absolute
-        // address is known (PSS 24.10.7).
-        values.insert(format!("__h.{}.abs", idx), 1);
+        // `__h.<n>.abs` used to be written here as a constant 1 ("absolute
+        // address known"), and `addr_value_abs` read it — which is why that
+        // builtin returned 1 for every handle. The flag is gone: the address is
+        // `__h.<n>.addr`, and `addr_value_abs` derives from it (PSS 24.10.7).
         values.insert(format!("__h.{}.tag", idx), tag);
         Some(idx)
     }

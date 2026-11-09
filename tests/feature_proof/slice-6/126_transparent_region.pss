@@ -1,7 +1,7 @@
 // Syntax 126 — Transparent region type (PSS 24.7.1.4).
 // A transparent region has a known absolute address. Evidence: the region's
 // address/size are visible, and a handle made from it resolves to that address
-// with addr_value_abs() == 1 (absolute address known).
+// with addr_value_abs() equal to that address (PSS 24.10.7).
 component C {
   transparent_addr_space_c<> sys_mem;
   exec init_up { sys_mem.addr = 0xA0000000; sys_mem.size = 0x1000; }

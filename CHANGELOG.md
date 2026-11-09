@@ -13,6 +13,29 @@ approximated.
 
 ---
 
+## 0.51.1 — 2026-11-09
+
+`addr_value_abs`: the documentation is authoritative, and the code now says so
+
+Confirmed the call: `SEMANTICS.md` is the specification for this builtin, so
+`addr_value_abs` returns the handle's address and the unit test that asserted
+the old `1` flag was the thing that was wrong. Three loose ends from 0.51.0 are
+now tied off:
+
+- **The dead flag is removed.** `src/engine.rs` still wrote
+  `__h.<n>.abs = 1` for every handle after 0.51.0 stopped reading it. Nothing in
+  the engine, the backends or the frontends read it, so it is gone rather than
+  left to be picked up again by mistake — it is exactly the shape of the bug
+  that made the builtin return 1.
+- **`SEMANTICS.md` no longer lists it as an open defect.** The row now reads
+  ✔ fixed, states the values (1040 and 3072 for two handles), explains the
+  `__h.<n>.abs` cause, and records that this document is the specification here.
+- **A stale comment in `126_transparent_region.pss`** said
+  `addr_value_abs() == 1 (absolute address known)`; it now says the address.
+
+Verified: `addr_value_abs` and `addr_value` agree (1040 / 3072), 140 tests pass,
+proof unchanged at 114 pass / 48 fail.
+
 ## 0.51.0 — 2026-11-08
 
 Nine of the twelve audit failures fixed
