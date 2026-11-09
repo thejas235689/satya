@@ -13,6 +13,43 @@ approximated.
 
 ---
 
+## 0.52.0 — 2026-11-09
+
+Target-code templates are emitted at last
+
+Found while running a user's PSS model: `exec body C = """ printf("%s\n",
+msg.text.c_str()); """` reached **no backend at all**.
+
+The cause was in `parse_exec`, which branched only on `{` or `;`. The template
+form is `exec <kind> <lang> = <template>`, so after `exec` and `body` the next
+token is `C` — an identifier, not `{` — and it fell into the empty branch. The
+body was discarded at parse time, before any backend could see it. There was no
+`"""` handling in the parser at all.
+
+**Fixed:**
+
+- `parse_exec` recognises `exec <kind> <lang> = <string>` and stores the text in
+  `ExecBlock.body`, which already existed for it ("kept verbatim for backends
+  that pass it through") and was never read.
+- The **C** and **UVM** backends emit that text when the body has no parsed
+  statements, so a braced body is still translated and is not also emitted
+  verbatim.
+- The lexer **preserves escapes inside triple-quoted strings**. It was
+  unescaping `\n` to a real newline, which turned valid target code into broken
+  code on the way out — `printf("%s\n", …)` came back as a literal line break.
+
+**Still not implemented:** `{{ expr }}` substitution inside a template. The text
+is emitted with `{{ … }}` intact. The lexer already rejects an unclosed `{{`,
+but nothing substitutes the expression.
+
+**Documentation:** `SEMANTICS.md` claimed this worked — "the body is *target*
+code and is emitted into the generated C and SystemVerilog". It did not. The row
+now describes both forms accurately and records the `{{ }}` gap.
+
+**Verification:** 141 tests (1 new, asserting the target text appears in both
+backends and that a braced body is not duplicated); proof unchanged at 114 pass /
+48 fail; corpus 97/97 · 7/7 · 114/114; conformance all pass.
+
 ## 0.51.1 — 2026-11-09
 
 `addr_value_abs`: the documentation is authoritative, and the code now says so

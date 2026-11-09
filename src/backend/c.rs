@@ -157,6 +157,21 @@ fn emit_action(s: &mut String, model: &Model, action: &Action, step: &Step) {
         for st in &exec.stmts {
             emit_exec_stmt(s, st, "    ", &field_names);
         }
+        // `exec body C = """..."""` — target code, passed through verbatim.
+        // A braced body is translated statement by statement above, so the raw
+        // text is only emitted when there are no parsed statements.
+        if exec.stmts.is_empty() && !exec.body.trim().is_empty() {
+            s.push_str("    /* exec body (target code from the PSS model) */\n");
+            for line in exec.body.lines() {
+                let line = line.trim_end();
+                if line.trim().is_empty() {
+                    continue;
+                }
+                s.push_str("    ");
+                s.push_str(line.trim_start());
+                s.push('\n');
+            }
+        }
     }
     s.push_str("}\n\n");
 }

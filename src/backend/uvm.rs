@@ -153,6 +153,18 @@ fn emit_action_sequence(
             for st in &exec.stmts {
                 emit_exec_sv(s, st, "    ");
             }
+        } else if !exec.body.trim().is_empty() {
+            // `exec body <lang> = """..."""` — target code, passed through.
+            s.push_str("    // exec body (target code from the PSS model)\n");
+            for line in exec.body.lines() {
+                let line = line.trim_end();
+                if line.trim().is_empty() {
+                    continue;
+                }
+                s.push_str("    ");
+                s.push_str(line.trim_start());
+                s.push('\n');
+            }
         }
     }
     s.push_str("  endtask\n");

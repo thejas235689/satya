@@ -1511,6 +1511,29 @@ impl Parser {
                 return Err(e);
             }
             (text, stmts)
+        } else if matches!(self.peek().kind, TokKind::Ident(_)) && self.peek_at(1).is_punct("=") {
+            // `exec body C = """..."""` — a target-language template (PSS 22.2).
+            // The language name is advisory here: the text is passed through to
+            // whichever backend emits target code. It used to fall into the
+            // empty branch below, so the body was discarded at parse time.
+            let _lang = self.bump();
+            self.expect_punct("=")?;
+            let text = match self.peek().kind.clone() {
+                TokKind::Str(text) => {
+                    self.bump();
+                    text
+                }
+                _ => {
+                    let (line, col) = (self.peek().line, self.peek().col);
+                    return Err(PssError::new(
+                        "expected a target-code string after `exec <kind> <lang> =`",
+                        line,
+                        col,
+                    ));
+                }
+            };
+            self.eat_punct(";");
+            (text, Vec::new())
         } else {
             self.eat_punct(";");
             (String::new(), Vec::new())

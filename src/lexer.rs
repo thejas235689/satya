@@ -205,13 +205,22 @@ impl Lexer {
                         Some('"') if !triple => break,
                         Some('\\') => {
                             if let Some(e) = self.bump() {
-                                s.push(match e {
-                                    'n' => '\n',
-                                    't' => '\t',
-                                    '\\' => '\\',
-                                    '"' => '"',
-                                    other => other,
-                                });
+                                if triple {
+                                    // Target code is passed through verbatim
+                                    // (PSS 22.2): a `\n` in the source is two
+                                    // characters the C compiler will see, not a
+                                    // line break the lexer should swallow.
+                                    s.push('\\');
+                                    s.push(e);
+                                } else {
+                                    s.push(match e {
+                                        'n' => '\n',
+                                        't' => '\t',
+                                        '\\' => '\\',
+                                        '"' => '"',
+                                        other => other,
+                                    });
+                                }
                             }
                         }
                         Some(ch) => s.push(ch),

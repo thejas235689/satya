@@ -3338,3 +3338,47 @@ component c {{
         "no diagnostic for the unresolved name (warnings: {:?})", warnings
     );
 }
+
+#[test]
+fn target_code_in_an_exec_body_reaches_the_backends() {
+    // PSS 22.2: `exec body C = """..."""` is target code. It used to fall into
+    // the empty branch of `parse_exec` and be discarded, so no backend ever saw
+    // it — while the docs claimed it was emitted.
+    let src = r#"
+component c {
+  action a {
+    exec body C = """
+      printf("%s\n", "hi");
+    """;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+
+    // The raw text is captured, with its escapes intact.
+    let act = m.actions.get("a").expect("action a");
+    let exec = act.execs.iter().find(|e| e.kind == "body").expect("exec body");
+    assert!(exec.stmts.is_empty(), "a template body has no parsed statements");
+    assert!(
+        exec.body.contains("printf(\"%s\\n\", \"hi\");"),
+        "escapes must survive verbatim, got: {:?}", exec.body
+    );
+
+    // And both target-code backends emit it.
+    let scenario = engine::run_scenario(&m, "a", 1);
+    for backend in ["c", "uvm"] {
+        let out = get(backend).unwrap()
+            .emit(&m, &scenario, &BackendOptions::default())
+            .unwrap_or_else(|e| panic!("backend {}: {}", backend, e));
+        assert!(
+            out.contains("printf(\"%s\\n\", \"hi\");"),
+            "{} output is missing the target code:\n{}", backend, out
+        );
+    }
+
+    // A braced body is still translated, and is not also emitted verbatim.
+    let braced = compile_pss("component c { action a { int y; exec body { y = 1; } }; };").unwrap();
+    let bscenario = engine::run_scenario(&braced, "a", 1);
+    let out = get("c").unwrap().emit(&braced, &bscenario, &BackendOptions::default()).unwrap();
+    assert_eq!(out.matches("self->y = 1").count(), 1, "braced body duplicated:\n{}", out);
+}
