@@ -3476,10 +3476,14 @@ fn an_activity_that_produces_no_steps_warns() {
     // A `foreach` over an array of action handles produced an empty scenario and
     // reported nothing at all. Silence over a model that tests nothing is the
     // worst outcome, so any activity that yields no steps must say so.
+    //
+    // The handle-array `foreach` itself is now iterated (see
+    // `foreach_over_a_handle_array_dispatches_each_element`), so the empty case
+    // is an activity with nothing in it at all.
     let src = r#"
 component c {
   action t { }
-  action run { c::t xs[2]; activity { foreach (xs[i]) { xs[i]; } } }
+  action run { c::t xs[2]; activity { } }
 };
 "#;
     let m = compile_pss(src).unwrap();
@@ -3533,6 +3537,15 @@ component pss_top {
     let s = engine::run_scenario(&m, "run", 1);
     assert_eq!(s.steps.len(), 1);
     assert!(!s.steps[0].unresolved, "constrained handle traversal left unresolved");
+    // The inline set is written against the handle (`x.v`), the action it
+    // dispatches owns the field unqualified (`v`). Left as written, the
+    // constraint named nothing and `v` randomised.
+    let v = s.steps[0]
+        .fields
+        .iter()
+        .find(|(k, _)| k == "v")
+        .map(|(_, v)| *v);
+    assert_eq!(v, Some(3), "inline constraint on a handle was dropped");
 
     // A struct field of the same shape must not be mistaken for a handle.
     let not_a_handle = r#"
@@ -3545,4 +3558,80 @@ component c {
     let s = engine::run_scenario(&m, "run", 1);
     assert!(s.steps.is_empty() || s.steps[0].unresolved,
             "a plain field was treated as an action handle");
+}
+
+#[test]
+fn an_inline_constraint_on_a_handle_reaches_the_solved_field() {
+    // `cfg with { cfg.slave_addr == 0x50; }` — the handle prefix names the
+    // handle, but the field the solver owns is `slave_addr`. The constraint was
+    // silently dropped and the field randomised.
+    let src = r#"
+component i2c_c { action write_registers { rand int slave_addr; } }
+component pss_top {
+  i2c_c i2c0;
+  action run {
+    i2c_c::write_registers cfg;
+    activity { cfg with { cfg.slave_addr == 0x50; }; }
+  }
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    for seed in [1u64, 2, 7, 99] {
+        let s = engine::run_scenario(&m, "run", seed);
+        assert_eq!(s.steps.len(), 1);
+        let v = s.steps[0]
+            .fields
+            .iter()
+            .find(|(k, _)| k == "slave_addr")
+            .map(|(_, v)| *v);
+        assert_eq!(v, Some(80), "handle-prefixed constraint dropped (seed {})", seed);
+    }
+
+    // A nested path is stripped only at the front, and a path that does not
+    // name the handle is left alone.
+    let nested = r#"
+struct s_t { rand int b; }
+component i2c_c { action wr { rand int addr; s_t st; } }
+component pss_top {
+  i2c_c i2c0;
+  action run { i2c_c::wr cfg; activity { cfg with { cfg.st.b == 5; }; } }
+};
+"#;
+    let m = compile_pss(nested).unwrap();
+    let s = engine::run_scenario(&m, "run", 3);
+    let b = s.steps[0]
+        .fields
+        .iter()
+        .find(|(k, _)| k == "st.b")
+        .map(|(_, v)| *v);
+    assert_eq!(b, Some(5), "nested handle path was not rewritten to `st.b`");
+}
+
+#[test]
+fn foreach_over_a_handle_array_dispatches_each_element() {
+    // `foreach (xs[i])` over an array of action handles ran zero times: the
+    // solver records no `.size` for a handle array, so the loop produced
+    // nothing. It must iterate once per declared element and dispatch the
+    // handle's action each time.
+    let src = r#"
+component c { action t { rand int x; } action run { c::t xs[2]; activity { foreach (xs[i]) { xs[i]; } } } }
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "run", 1);
+    assert_eq!(s.steps.len(), 2, "handle array foreach did not iterate twice");
+    for st in &s.steps {
+        assert!(!st.unresolved, "handle array element left unresolved");
+        assert_eq!(st.action, "t", "element dispatched the wrong action");
+        assert!(
+            st.fields.iter().any(|(k, _)| k == "x"),
+            "element was not solved: {:?}",
+            st.fields
+        );
+    }
+    // Three elements means three steps.
+    let three = r#"
+component c { action t { } action run { c::t xs[3]; activity { foreach (xs[i]) { xs[i]; } } } }
+"#;
+    let m = compile_pss(three).unwrap();
+    assert_eq!(engine::run_scenario(&m, "run", 1).steps.len(), 3);
 }

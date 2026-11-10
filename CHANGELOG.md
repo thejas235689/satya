@@ -13,6 +13,66 @@ approximated.
 
 ---
 
+## 0.58.0 — 2026-11-09
+
+The spurious conflict, and two engine fixes
+
+### The conflict was not a 16-bit truncation
+
+I narrowed the spurious `conflicting constraints` report to "a non-zero lower
+bound with an upper bound above 65535" and guessed at a truncation. Wrong.
+
+The real cause: `src/solver.rs` seeds any integer whose width the model never
+declared (`int`, `uint`) with `0..=DEFAULT_INT_MAX`, and `DEFAULT_INT_MAX` is
+**1023** — a *sampling* default, which is why unconstrained ints are small. But
+`intersect_interval` treated that ceiling as if the model had declared it, so
+`x in [9600..115200]` became `lo=9600 hi=1023` and the conflict loop fired while
+the picker still returned a valid member. `[0..100000]` survived only because a
+floor of 0 kept the intersection non-empty.
+
+**Fixed:** the untouched `0..=1023` placeholder is now marked, and the first real
+constraint *replaces* it (up to what the type can hold: `uint` 2^32-1, `int`
+2^31-1) instead of intersecting with it. The conflict test now uses a proper
+`is_empty()`, so emptied sets and fully-forbidden intervals are still reported —
+nothing was silenced.
+
+```
+[9600..115200]  x=72768, 1/1, no conflict   (was: conflict reported)
+[65535..65536]  x=65536, no conflict
+{9600, 19200, 38400, 115200}  x=19200, no conflict
+x in [1..5]; x in [10..20]    still 1/2 + "conflicting constraints"  <- correct
+```
+
+Side effects of the same cause, also fixed: `x == 50000`, `x > 5000`, `uint`
+ranges above 2^31, `longint` above 2^32, and `x in [9600..115200]; x % 4096 == 0`
+(was 1/2 + conflict, now 2/2).
+
+### Inline `with { }` on a handle now applies
+
+`cfg with { cfg.slave_addr == 0x50; }` was solved as a *random* value while the
+trace still claimed `constraints: 1/1 satisfied` — the constraint referenced the
+handle name and the field is `slave_addr`. The engine now strips the handle
+prefix when the traversal resolved through a handle: `slave_addr=80` on every
+seed tested. Nested paths work; a non-handle path is left alone.
+
+### `foreach` over an array of handles iterates
+
+It read `xs.size`, which is absent for a handle array, so it produced nothing.
+It now uses the declared bound: two handles give two resolved steps.
+
+**One test of mine asserted the bug** — `an_activity_that_produces_no_steps_warns`
+checked `steps.len() == 0` for exactly the model this fixes. Had it stayed, the
+fix would have looked like a regression. It now uses a genuinely empty activity.
+
+**Recorded, not fixed:** `xs[i];` inside an activity body is never parsed as a
+traversal (the parser wants `;`, `with` or `::` after the name), so the loop body
+still arrives at the engine empty; the engine dispatches the element on its
+behalf in the meantime.
+
+**Verification:** 153 tests (5 new solver unit tests, 2 new engine behaviour
+tests); proof unchanged at 114 pass / 48 fail; corpus 97/97 · 7/7 · 114/114;
+conformance all pass.
+
 ## 0.57.0 — 2026-11-09
 
 56x faster seed sweeps: `--seeds N`

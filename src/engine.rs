@@ -158,6 +158,11 @@ struct Engine<'a> {
     /// action name, so the name has to be resolved against the enclosing
     /// action's declarations before falling back to an unresolved step.
     handle_scopes: Vec<Vec<(String, String, String)>>,
+    /// Action-handle *arrays* in scope, innermost last: `(name, bound)` for a
+    /// field like `c::t xs[2];`. Such a field has a declared extent but no
+    /// `.size` entry (the solver records sizes only for arrays it owns), so
+    /// `foreach (xs[i])` needs the declared bound to iterate at all.
+    handle_array_scopes: Vec<Vec<(String, i64)>>,
     group_counter: u32,
     pools: Vec<PoolState>,
     /// Element type -> the pool a static `bind <pool> *;` names, so an
@@ -265,6 +270,7 @@ pub fn run_scenario(model: &Model, root_action: &str, seed: u64) -> Scenario {
         steps: Vec::new(),
         warnings: Vec::new(),
         handle_scopes: Vec::new(),
+        handle_array_scopes: Vec::new(),
         group_counter: 0,
         pools: Vec::new(),
         pool_binds: HashMap::new(),
@@ -404,8 +410,11 @@ impl<'a> Engine<'a> {
             let report = solver::solve(self.model, action, self.seed ^ (depth as u64) ^ 0x5EED);
             let ctx = report.assignment.values;
             let handles = self.handles_of(action, &component);
+            let handle_arrays = self.handle_arrays_of(action, &component);
             self.handle_scopes.push(handles);
+            self.handle_array_scopes.push(handle_arrays);
             self.walk_activity(act, component, depth + 1, mode, group, &ctx);
+            self.handle_array_scopes.pop();
             self.handle_scopes.pop();
             // An activity that produced nothing and said nothing is the worst
             // outcome for a test tool: the model runs, reports success, and
@@ -879,6 +888,58 @@ impl<'a> Engine<'a> {
                     Expr::Path(p) => Some(p.segments.join(".")),
                     _ => None,
                 };
+                // An array of action handles (`c::t xs[2];`) is not an array
+                // the solver randomises: its `.size` entry is 0 (or absent),
+                // so iterating that count produced no steps at all. Its extent
+                // is the declared bound, and the point of the loop is to
+                // dispatch the element's action, so iterate the bound and
+                // dispatch each element.
+                if let Some(path) = iter_path.as_ref() {
+                    let leaf = path.rsplit('.').next().unwrap_or(path.as_str()).to_string();
+                    if let Some(bound) = self.handle_array_len(&leaf) {
+                        let n = bound.max(0);
+                        for i in 0..n {
+                            let mut local = ctx.clone();
+                            if !var.is_empty() {
+                                local.insert(var.clone(), i);
+                            }
+                            // `xs[i]` selects the i-th handle; record the index
+                            // so a body that names the element can see it.
+                            local.insert(format!("{}.index", path), i);
+                            let steps_before = self.steps.len();
+                            self.walk_activity(
+                                body,
+                                component.to_string(),
+                                depth,
+                                mode,
+                                group,
+                                &local,
+                            );
+                            if self.steps.len() == steps_before {
+                                // The body's job is to dispatch the element
+                                // (`foreach (xs[i]) { xs[i]; }`). When it
+                                // produced nothing — the element traversal is
+                                // the whole point of the loop — dispatch the
+                                // handle's action for this element, so the loop
+                                // is not silently empty.
+                                self.dispatch(
+                                    &Path::simple(leaf.clone()),
+                                    component,
+                                    depth,
+                                    mode,
+                                    group,
+                                );
+                            }
+                        }
+                        if n == 0 {
+                            self.warnings.push(format!(
+                                "foreach over handle array `{}` ran zero iterations (its bound is 0)",
+                                path
+                            ));
+                        }
+                        return;
+                    }
+                }
                 if let Some(path) = iter_path.as_ref() {
                     if let Some(n) = ctx.get(&format!("{}.size", path)).copied() {
                         for i in 0..n.max(0) {
@@ -1055,17 +1116,38 @@ impl<'a> Engine<'a> {
                     self.record_step(&act, comp, depth, mode, group, constraints, bindings);
                 }
             }
-                        None => match self.resolve_handle(&action_name) {
-                Some((hcomp, hact)) => match self.model.find_action(Some(&hcomp), &hact).cloned() {
-                    Some(act) => {
-                        if act.activity.is_some() {
-                            self.walk_action(&act, hcomp, depth, mode, group, false);
-                        } else {
-                            self.record_step(&act, hcomp, depth, mode, group, constraints, bindings);
+            // The traversal named a handle rather than an action, so the
+            // inline constraint set was written against the *handle*
+            // (`cfg with { cfg.slave_addr == 0x50; }`) while the action it
+            // dispatches has unqualified fields (`slave_addr`). Left as
+            // written, the constraint names an attribute the solve does not
+            // own, so it is silently ignored and the field randomises. Rewrite
+            // the expressions to drop the handle prefix before solving.
+            None => match self.resolve_handle(&action_name) {
+                Some((hcomp, hact)) => {
+                    let rewritten: Vec<Expr> = constraints
+                        .iter()
+                        .map(|e| strip_handle_prefix(e, &action_name))
+                        .collect();
+                    match self.model.find_action(Some(&hcomp), &hact).cloned() {
+                        Some(act) => {
+                            if act.activity.is_some() {
+                                self.walk_action(&act, hcomp, depth, mode, group, false);
+                            } else {
+                                self.record_step(
+                                    &act,
+                                    hcomp,
+                                    depth,
+                                    mode,
+                                    group,
+                                    &rewritten,
+                                    bindings,
+                                );
+                            }
                         }
+                        None => self.push_unresolved(&action_name, comp, path, depth, mode, group),
                     }
-                    None => self.push_unresolved(&action_name, comp, path, depth, mode, group),
-                },
+                }
                 None => self.push_unresolved(&action_name, comp, path, depth, mode, group),
             },
         }
@@ -1089,6 +1171,38 @@ impl<'a> Engine<'a> {
             }
         }
         out
+    }
+
+    /// The action-handle *arrays* declared by `action`, as `(name, bound)`:
+    /// a field whose type names an action and which carries an array extent
+    /// (`c::t xs[2];`). Such a field is a collection of handles, so a
+    /// `foreach (xs[i])` over it has `bound` elements (PSS 8.4, 16.2).
+    fn handle_arrays_of(&self, action: &Action, owner: &str) -> Vec<(String, i64)> {
+        let mut out = Vec::new();
+        for f in &action.fields {
+            let Some(bound) = f.array else { continue };
+            let ty = f.type_name.as_str();
+            let (comp, name) = match ty.rsplit_once("::") {
+                Some((c, n)) => (c.to_string(), n.to_string()),
+                None => (owner.to_string(), ty.to_string()),
+            };
+            if self.model.find_action(Some(&comp), &name).is_some()
+                || self.model.find_action(Some(owner), &name).is_some()
+            {
+                out.push((f.name.clone(), bound));
+            }
+        }
+        out
+    }
+
+    /// The declared extent of a handle array in scope, innermost first.
+    fn handle_array_len(&self, name: &str) -> Option<i64> {
+        for scope in self.handle_array_scopes.iter().rev() {
+            if let Some((_, bound)) = scope.iter().find(|(n, _)| n == name) {
+                return Some(*bound);
+            }
+        }
+        None
     }
 
     /// Resolve a traversed name against the handle scopes, innermost first.
@@ -2900,6 +3014,91 @@ fn nth_step_of(steps: &[Step], action_type: &str, n: usize) -> Option<usize> {
         .filter(|s| s.action.rsplit("::").next().unwrap_or(&s.action) == action_type)
         .nth(n)
         .map(|s| s.index)
+}
+
+/// Rewrite an inline constraint set written against an action handle so it
+/// names the handle's action's attributes directly.
+///
+/// `cfg with { cfg.slave_addr == 0x50; }` constrains the field `slave_addr` of
+/// the action `cfg` dispatches, but the expression reaches the solver as the
+/// path `cfg.slave_addr`, which matches no variable, so the constraint is
+/// dropped and the field randomises. Stripping the leading `<handle>.` from
+/// every path expression makes it `slave_addr`, which the solve owns.
+///
+/// A nested path is stripped only at the front (`cfg.a.b` -> `a.b`); anything
+/// that does not start with the handle name — a constant, a global, a path
+/// through another handle — is left exactly as written.
+fn strip_handle_prefix(expr: &Expr, handle: &str) -> Expr {
+    let strip = |p: &Path| -> Expr {
+        if p.segments.len() > 1 && p.segments[0] == handle {
+            Expr::Path(Path::new(p.segments[1..].to_vec()))
+        } else {
+            Expr::Path(p.clone())
+        }
+    };
+    match expr {
+        Expr::Path(p) => strip(p),
+        Expr::Unary(op, e) => Expr::Unary(op.clone(), Box::new(strip_handle_prefix(e, handle))),
+        Expr::Binary(op, l, r) => Expr::Binary(
+            op.clone(),
+            Box::new(strip_handle_prefix(l, handle)),
+            Box::new(strip_handle_prefix(r, handle)),
+        ),
+        Expr::Ternary(c, t, f) => Expr::Ternary(
+            Box::new(strip_handle_prefix(c, handle)),
+            Box::new(strip_handle_prefix(t, handle)),
+            Box::new(strip_handle_prefix(f, handle)),
+        ),
+        Expr::Call(name, args) => Expr::Call(
+            name.clone(),
+            args.iter().map(|a| strip_handle_prefix(a, handle)).collect(),
+        ),
+        Expr::Method(recv, name, args) => Expr::Method(
+            Box::new(strip_handle_prefix(recv, handle)),
+            name.clone(),
+            args.iter().map(|a| strip_handle_prefix(a, handle)).collect(),
+        ),
+        Expr::InRange(e, lo, hi) => Expr::InRange(
+            Box::new(strip_handle_prefix(e, handle)),
+            Box::new(strip_handle_prefix(lo, handle)),
+            Box::new(strip_handle_prefix(hi, handle)),
+        ),
+        Expr::InSet(e, items) => Expr::InSet(
+            Box::new(strip_handle_prefix(e, handle)),
+            items.iter().map(|i| strip_handle_prefix(i, handle)).collect(),
+        ),
+        Expr::Cast(ty, e) => Expr::Cast(ty.clone(), Box::new(strip_handle_prefix(e, handle))),
+        Expr::Range(lo, hi) => Expr::Range(
+            Box::new(strip_handle_prefix(lo, handle)),
+            Box::new(strip_handle_prefix(hi, handle)),
+        ),
+        Expr::Foreach {
+            vars,
+            iter,
+            body,
+            bound,
+        } => Expr::Foreach {
+            vars: vars.clone(),
+            iter: Box::new(strip_handle_prefix(iter, handle)),
+            body: Box::new(strip_handle_prefix(body, handle)),
+            bound: *bound,
+        },
+        Expr::Index(base, idx) => Expr::Index(
+            Box::new(strip_handle_prefix(base, handle)),
+            Box::new(strip_handle_prefix(idx, handle)),
+        ),
+        Expr::Slice(base, msb, lsb) => Expr::Slice(
+            Box::new(strip_handle_prefix(base, handle)),
+            Box::new(strip_handle_prefix(msb, handle)),
+            Box::new(strip_handle_prefix(lsb, handle)),
+        ),
+        Expr::List(items) => Expr::List(
+            items.iter().map(|i| strip_handle_prefix(i, handle)).collect(),
+        ),
+        // Literals, `sizeof_s<T>` and the captured-not-solved forms carry no
+        // attribute path to rewrite.
+        other => other.clone(),
+    }
 }
 
 fn split_action_ref(path: &Path) -> (Option<String>, String) {

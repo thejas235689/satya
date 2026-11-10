@@ -19,8 +19,29 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use crate::ast::Expr;
 use crate::ir::{Action, Field, FieldKind, Model, TypeCategory};
 
-/// Upper bound applied to a bare `int` field when no width is declared.
+/// Upper bound applied to a bare `int` field when no width is declared. It is
+/// a *default* for sampling, not a bound the model declared: see
+/// `Domain::intersect_interval`.
 const DEFAULT_INT_MAX: i64 = 1023;
+/// The upper bound a constraint may widen an undeclared-width integer to when
+/// its type keyword is not one the solver knows. 32 bits is the default integer
+/// width (PSS 6.1), and a bounded ceiling keeps a one-sided constraint such as
+/// `x > 5000` from sampling near `i64::MAX`.
+const DEFAULT_WIDEN_MAX: i64 = i32::MAX as i64;
+
+/// The full range of a built-in integer type keyword (PSS 6.1, Table 4), used
+/// as the ceiling a constraint may widen a variable to. The signedness matters:
+/// `uint` holds 4294967290 and `int` does not.
+fn keyword_range(ty: &str) -> Option<(i64, i64)> {
+    match ty.rsplit("::").next().unwrap_or(ty) {
+        "int" | "integer" => Some((i32::MIN as i64, i32::MAX as i64)),
+        "uint" => Some((0, u32::MAX as i64)),
+        "shortint" => Some((i16::MIN as i64, i16::MAX as i64)),
+        "byte" => Some((0, u8::MAX as i64)),
+        "longint" => Some((i64::MIN, i64::MAX)),
+        _ => None,
+    }
+}
 /// Recursion limit when expanding nested structs into leaf variables.
 const MAX_EXPAND_DEPTH: usize = 6;
 
@@ -94,6 +115,13 @@ struct Domain {
     /// these. `None` for a type with no declared width (`int`, enums, ...),
     /// whose domain stays as open as it was.
     decl: Option<(i64, i64)>,
+    /// `Some(ceiling)` while `lo`/`hi` are still the `0 ..= DEFAULT_INT_MAX`
+    /// placeholder an undeclared-width integer is seeded with, i.e. while no
+    /// constraint has said anything about the variable yet. The placeholder's
+    /// upper bound is a sampling default, not a declared bound, so the first
+    /// constraint replaces it — up to `ceiling`, the widest value the type can
+    /// hold. `None` once the bounds are real.
+    soft_hi: Option<i64>,
 }
 
 impl Domain {
@@ -116,12 +144,45 @@ impl Domain {
         }
         v >= self.lo && v <= self.hi && !self.forbidden.contains(&v)
     }
+    /// Is there no value left at all? An interval that inverted (`lo > hi`) is
+    /// the obvious case, but a named set whose members were all narrowed away,
+    /// or a narrow interval every value of which is forbidden, is just as empty
+    /// — and used to be reported as satisfied-with-a-wrong-value instead of as
+    /// a conflict. The scan is bounded by the same 4096-value window the rest of
+    /// the module uses for enumeration, so a `bit[64]` domain stays O(1).
+    fn is_empty(&self) -> bool {
+        if self.lo > self.hi {
+            return true;
+        }
+        if let Some(a) = &self.allowed {
+            return a.is_empty();
+        }
+        if self.forbidden.is_empty() {
+            return false;
+        }
+        let span = (self.hi as i128) - (self.lo as i128) + 1;
+        span <= 4096 && (self.lo..=self.hi).all(|v| !self.contains(v))
+    }
+
     fn intersect_interval(&mut self, lo: i64, hi: i64) {
         let (dlo, dhi) = self.decl.unwrap_or((i64::MIN, i64::MAX));
+        // `DEFAULT_INT_MAX` is a sampling default for an integer whose width the
+        // model never declared, not a bound it declared. Intersecting against it
+        // turned `x in [9600..115200]` into `9600..1023` — an empty domain — and
+        // reported a conflict for a perfectly satisfiable model. So while the
+        // placeholder is untouched, the constraint's own upper bound is used
+        // instead of the placeholder's, capped only by what the type can hold;
+        // the lower bound is kept, since the placeholder's floor of 0 is the
+        // type's floor as well.
+        let cur_hi = match self.soft_hi.take() {
+            Some(ceiling) => ceiling.min(dhi),
+            None => self.hi,
+        };
+        let cur_lo = self.lo;
         // Narrow to the request *and* to the declared type: a constraint can
         // only ever narrow a domain, never widen it past its declared width.
-        let nlo = self.lo.max(lo).max(dlo);
-        let nhi = self.hi.min(hi).min(dhi);
+        let nlo = cur_lo.max(lo).max(dlo);
+        let nhi = cur_hi.min(hi).min(dhi);
         if nlo <= nhi {
             self.lo = nlo;
             self.hi = nhi;
@@ -898,6 +959,8 @@ fn solve_impl(
         if let Some(d) = vars.get_mut(k) {
             d.lo = *v;
             d.hi = *v;
+            // A binding is a real bound: a later constraint must not widen it.
+            d.soft_hi = None;
         }
     }
     let (mut constraints, mut soft_constraints) =
@@ -1066,6 +1129,7 @@ fn solve_impl(
                                 d.lo = l.max(I32_MIN);
                                 d.hi = h.min(I32_MAX);
                                 d.forbidden.clear();
+                                d.soft_hi = None;
                                 if d.lo > d.hi {
                                     d.lo = l.min(h).max(I32_MIN);
                                     d.hi = l.max(h).min(I32_MAX);
@@ -1187,7 +1251,7 @@ fn solve_impl(
     // A class whose domain became empty has contradictory constraints; report it
     // rather than silently assigning a value that satisfies nothing.
     for (root, d) in &class_domain {
-        if d.lo > d.hi {
+        if d.is_empty() {
             let name = vars.keys().find(|k| uf.find(k) == *root).cloned().unwrap_or_else(|| root.clone());
             unsupported.push(format!("conflicting constraints on `{}`", name));
         }
@@ -1239,6 +1303,7 @@ fn solve_impl(
                     allowed: None,
                 is_enum: false,
                 decl: None,
+                soft_hi: None,
             });
             match dist_by_root.get(&root) {
                 Some(items) => pick_weighted(items, &mut rng).unwrap_or_else(|| pick(&d, &mut rng)),
@@ -2578,6 +2643,7 @@ fn expand_field(
                     allowed: None,
                 is_enum: false,
                 decl: None,
+                soft_hi: None,
             },
         );
         return;
@@ -2619,6 +2685,20 @@ fn expand_field(
                 (true, Some(b)) if b >= 64 => Some((i64::MIN, i64::MAX)),
                 (true, Some(b)) => Some((0, (1i64 << b.clamp(1, 63)) - 1)),
             };
+            // The `DEFAULT_INT_MAX` seed is a placeholder, not a declared
+            // bound, so it is flagged for `intersect_interval` to replace. The
+            // ceiling is the widest value the type itself can hold, so a
+            // constraint on a `uint` may reach 4294967290 and one on an `int`
+            // may not.
+            let soft_hi = if width.is_none() && fixed.is_none() {
+                Some(
+                    keyword_range(&field.type_name)
+                        .map(|(_, hi)| hi)
+                        .unwrap_or(DEFAULT_WIDEN_MAX),
+                )
+            } else {
+                None
+            };
             out.insert(
                 path,
                 Domain {
@@ -2628,6 +2708,7 @@ fn expand_field(
                     allowed: None,
                     is_enum: false,
                     decl,
+                    soft_hi,
                 },
             );
         }
@@ -2646,6 +2727,7 @@ fn expand_field(
                     allowed: None,
                     is_enum: true,
                     decl: None,
+                    soft_hi: None,
                 },
             );
         }
@@ -3207,5 +3289,136 @@ impl UnionFind {
         if ra != rb {
             self.parent.insert(rb, ra);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Regression tests for the default-cap domain bug.
+//
+// An integer whose width the model never declared is seeded with
+// `0 ..= DEFAULT_INT_MAX`. That ceiling used to be intersected with the
+// constraint like a declared bound, so any constraint whose range started above
+// 0 and ended above 65535 produced an empty domain and a *spurious* "conflicting
+// constraints" report, while the assignment it printed was perfectly valid.
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod domain_tests {
+    use crate::{compile_pss, engine};
+
+    /// Solve `src` as root action `a` and return `(satisfied, total, fields,
+    /// unsatisfied)`.
+    fn solve(src: &str) -> (usize, usize, Vec<(String, i64)>, Vec<String>) {
+        let m = compile_pss(src).unwrap();
+        let s = engine::run_scenario(&m, "a", 1);
+        let step = &s.steps[0];
+        (
+            step.satisfied,
+            step.total,
+            step.fields.clone(),
+            step.unsatisfied.clone(),
+        )
+    }
+
+    fn value(fields: &[(String, i64)], name: &str) -> i64 {
+        fields
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| *v)
+            .unwrap_or_else(|| panic!("no value for `{}`", name))
+    }
+
+    fn assert_no_conflict(src: &str, lo: i64, hi: i64) {
+        let (sat, total, fields, bad) = solve(src);
+        assert!(
+            !bad.iter().any(|b| b.contains("conflicting constraints")),
+            "spurious conflict for `{}`: {:?}",
+            src,
+            bad
+        );
+        assert_eq!(sat, total, "all constraints should be satisfied for `{}`", src);
+        let v = value(&fields, "x");
+        assert!(
+            (lo..=hi).contains(&v),
+            "value {} outside [{}, {}] for `{}`",
+            v,
+            lo,
+            hi,
+            src
+        );
+    }
+
+    #[test]
+    fn range_above_the_default_cap_is_not_a_conflict() {
+        assert_no_conflict(
+            "component c { action a { rand uint x; constraint x in [9600..115200]; } };",
+            9600,
+            115200,
+        );
+        assert_no_conflict(
+            "component c { action a { rand uint x; constraint x in [65535..65536]; } };",
+            65535,
+            65536,
+        );
+        assert_no_conflict(
+            "component c { action a { rand uint x; constraint x in [0..100000]; } };",
+            0,
+            100000,
+        );
+        assert_no_conflict(
+            "component c { action a { rand uint x; constraint x in [0..65536]; } };",
+            0,
+            65536,
+        );
+    }
+
+    #[test]
+    fn set_above_the_default_cap_is_not_a_conflict() {
+        let src = "component c { action a { rand uint x; \
+                   constraint x in {9600, 19200, 38400, 115200}; } };";
+        let (sat, total, fields, bad) = solve(src);
+        assert!(!bad.iter().any(|b| b.contains("conflicting constraints")), "{:?}", bad);
+        assert_eq!(sat, total);
+        let v = value(&fields, "x");
+        assert!(
+            [9600, 19200, 38400, 115200].contains(&v),
+            "{} is not a member of the set",
+            v
+        );
+    }
+
+    #[test]
+    fn values_above_2_31_are_not_a_conflict_for_uint() {
+        assert_no_conflict(
+            "component c { action a { rand uint x; constraint x in [4294967290..4294967295]; } };",
+            4294967290,
+            4294967295,
+        );
+    }
+
+    #[test]
+    fn widening_does_not_drop_an_earlier_constraint() {
+        // The second constraint really does contradict the first: widening the
+        // default cap must not make the solver forget the first range.
+        let (sat, total, _fields, bad) = solve(
+            "component c { action a { rand uint x; constraint x in [9600..115200]; \
+             constraint x in [0..100]; } };",
+        );
+        assert!(bad.iter().any(|b| b.contains("conflicting constraints")), "{:?}", bad);
+        assert!(sat < total, "a contradictory model must not look satisfied");
+    }
+
+    #[test]
+    fn contradictory_ranges_still_report_a_conflict() {
+        let (sat, total, _fields, bad) = solve(
+            "component c { action a { rand uint x; constraint x in [1..5]; \
+             constraint x in [10..20]; } };",
+        );
+        assert!(
+            bad.iter().any(|b| b.contains("conflicting constraints on `x`")),
+            "a genuinely empty domain must still be reported: {:?}",
+            bad
+        );
+        assert!(sat < total, "a contradictory model must not look satisfied");
     }
 }
