@@ -184,3 +184,28 @@ pub fn ordered_type_keys(model: &crate::ir::Model) -> Vec<String> {
     }
     out
 }
+
+/// Pick the `exec body` to emit for this target.
+///
+/// An action may carry several target templates, one per language
+/// (`exec body C = """…"""`, `exec body SV = """…"""`). Prefer the one written
+/// for this backend, then an untagged braced body, then anything — so a model
+/// with a single template still emits it everywhere.
+pub fn pick_body<'a>(
+    action: &'a crate::ir::Action,
+    langs: &[&str],
+) -> Option<&'a crate::ast::ExecBlock> {
+    let bodies: Vec<&crate::ast::ExecBlock> =
+        action.execs.iter().filter(|e| e.kind == "body").collect();
+    for e in &bodies {
+        if let Some(l) = &e.lang {
+            if langs.iter().any(|w| l.eq_ignore_ascii_case(w)) {
+                return Some(e);
+            }
+        }
+    }
+    if let Some(e) = bodies.iter().find(|e| e.lang.is_none()) {
+        return Some(e);
+    }
+    bodies.first().copied()
+}

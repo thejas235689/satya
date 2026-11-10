@@ -5,7 +5,7 @@
 //! The output is a single self-contained C file: type definitions, one function
 //! per action, and a `main()` that replays the solved schedule.
 
-use super::Backend;
+use super::{pick_body, Backend};
 use super::BackendOptions;
 use crate::ast::{ExecStmt, Expr};
 use crate::engine::{Scenario, Step, StepMode};
@@ -153,7 +153,7 @@ fn emit_action(s: &mut String, model: &Model, action: &Action, step: &Step) {
     }
     // Translate the `body` exec block, if present.
     let field_names: Vec<String> = action.fields.iter().map(|f| f.name.clone()).collect();
-    if let Some(exec) = action.execs.iter().find(|e| e.kind == "body") {
+    if let Some(exec) = pick_body(action, &["c", "cpp"]) {
         for st in &exec.stmts {
             emit_exec_stmt(s, st, "    ", &field_names);
         }

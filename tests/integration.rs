@@ -3382,3 +3382,32 @@ component c {
     let out = get("c").unwrap().emit(&braced, &bscenario, &BackendOptions::default()).unwrap();
     assert_eq!(out.matches("self->y = 1").count(), 1, "braced body duplicated:\n{}", out);
 }
+
+#[test]
+fn each_backend_picks_the_template_written_for_it() {
+    // An action may carry several target templates, one per language. Both are
+    // `exec body`, so taking the first one meant the C backend emitted the
+    // SystemVerilog text (found on a real DMA+UART model).
+    let src = r#"
+component c {
+  action a {
+    exec body SV = """
+      sv_sequence_item seq = new();
+    """;
+    exec body C = """
+      c_program_channel();
+    """;
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+
+    let c_out = get("c").unwrap().emit(&m, &s, &BackendOptions::default()).unwrap();
+    assert!(c_out.contains("c_program_channel();"), "C backend took the wrong template:\n{}", c_out);
+    assert!(!c_out.contains("sv_sequence_item"), "C backend emitted SV code:\n{}", c_out);
+
+    let sv_out = get("uvm").unwrap().emit(&m, &s, &BackendOptions::default()).unwrap();
+    assert!(sv_out.contains("sv_sequence_item"), "UVM backend took the wrong template:\n{}", sv_out);
+    assert!(!sv_out.contains("c_program_channel"), "UVM backend emitted C code:\n{}", sv_out);
+}

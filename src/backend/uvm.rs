@@ -4,6 +4,7 @@
 //! sequences are one *output* of a backend-agnostic scenario, not the model's
 //! reason for existing.
 
+use super::pick_body;
 use std::collections::BTreeSet;
 
 use super::{render_sv, Backend, BackendOptions};
@@ -147,7 +148,7 @@ fn emit_action_sequence(
         }
     }
     // Translate the action's `exec body`, if present.
-    if let Some(exec) = action.execs.iter().find(|e| e.kind == "body") {
+    if let Some(exec) = pick_body(action, &["sv", "systemverilog", "verilog"]) {
         if !exec.stmts.is_empty() {
             s.push_str("    // exec body (translated from the PSS model)\n");
             for st in &exec.stmts {

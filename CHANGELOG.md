@@ -13,6 +13,41 @@ approximated.
 
 ---
 
+## 0.53.0 — 2026-11-09
+
+Each backend picks the template written for it
+
+Found on a real DMA + UART SoC model, which carries two templates on the same
+action:
+
+```pss
+exec body SV = """ m2m_xfer_seq xseq; ... """
+exec body C  = """ dma_program_channel(...); ... """
+```
+
+Both are `exec body`, so `parse_exec` recorded them identically and the backends
+took the **first** one — the C backend emitted SystemVerilog, and the UVM backend
+would have emitted C if the order were reversed. The language name was read and
+thrown away.
+
+**Fixed:** `ExecBlock` now carries `lang` (`None` for a braced body, which is
+language-neutral PSS), and a shared `pick_body` helper chooses by target —
+`C`/`cpp` for the C backend, `SV`/`systemverilog`/`verilog` for UVM — falling
+back to an untagged body, then to anything, so a model with a single template
+still emits it everywhere.
+
+Verified on the SoC model: the C backend now emits `dma_program_channel(...)`
+and UVM emits `m2m_xfer_seq xseq;`.
+
+**Still not implemented:** `{{ expr }}` substitution. The templates above carry
+`{{size}}`, `{{kind}}` and `{{src_buff.mem_seg.base}}`, and all three are emitted
+verbatim. That is the next piece, and it is what would make these templates
+actually bind to the solved values.
+
+**Verification:** 142 tests (1 new, asserting each backend takes its own
+template and not the other's); proof unchanged at 114 pass / 48 fail; corpus
+97/97 · 7/7 · 114/114; conformance all pass.
+
 ## 0.52.0 — 2026-11-09
 
 Target-code templates are emitted at last

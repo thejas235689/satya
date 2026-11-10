@@ -1503,20 +1503,24 @@ impl Parser {
     fn parse_exec(&mut self) -> PssResult<ExecBlock> {
         self.expect_ident_named("exec")?;
         let kind = self.expect_ident()?;
-        let (body, stmts) = if self.at_punct("{") {
+        let (body, stmts, lang) = if self.at_punct("{") {
             let toks = self.capture_braced_tokens()?;
             let text = toks.iter().map(token_text).collect::<Vec<_>>().join(" ");
             let (stmts, err) = parse_exec_stmts(&toks);
             if let Some(e) = err {
                 return Err(e);
             }
-            (text, stmts)
+            (text, stmts, None)
         } else if matches!(self.peek().kind, TokKind::Ident(_)) && self.peek_at(1).is_punct("=") {
             // `exec body C = """..."""` — a target-language template (PSS 22.2).
             // The language name is advisory here: the text is passed through to
             // whichever backend emits target code. It used to fall into the
             // empty branch below, so the body was discarded at parse time.
-            let _lang = self.bump();
+            let lang = match self.peek().kind.clone() {
+                TokKind::Ident(name) => Some(name),
+                _ => None,
+            };
+            self.bump();
             self.expect_punct("=")?;
             let text = match self.peek().kind.clone() {
                 TokKind::Str(text) => {
@@ -1533,12 +1537,12 @@ impl Parser {
                 }
             };
             self.eat_punct(";");
-            (text, Vec::new())
+            (text, Vec::new(), lang)
         } else {
             self.eat_punct(";");
-            (String::new(), Vec::new())
+            (String::new(), Vec::new(), None)
         };
-        Ok(ExecBlock { kind, body, stmts })
+        Ok(ExecBlock { kind, lang, body, stmts })
     }
 
     /// Parse the body of an `if` inside an `exec` block.

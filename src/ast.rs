@@ -138,6 +138,11 @@ pub struct ConstraintBlock {
 pub struct ExecBlock {
     /// e.g. `init_up`, `init_down`, `pre_solve`, `post_solve`, `body`, `pre_body`.
     pub kind: String,
+    /// Target language named in `exec body <lang> = """…"""` (PSS 22.2), e.g.
+    /// `C` or `SV`. `None` for a braced body, which is language-neutral PSS.
+    /// Backends use it to pick the template written for them — an action may
+    /// carry several, one per target.
+    pub lang: Option<String>,
     /// Raw body text, kept verbatim for backends that pass it through.
     pub body: String,
     /// The body parsed into simple statements where possible.
