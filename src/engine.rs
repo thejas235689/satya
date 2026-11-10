@@ -153,6 +153,11 @@ struct Engine<'a> {
     seed: u64,
     steps: Vec<Step>,
     warnings: Vec<String>,
+    /// Action handles in scope, innermost last: `(name, component, action)`.
+    /// An activity may traverse a handle (`xfer0;`, `xfers[i];`) rather than an
+    /// action name, so the name has to be resolved against the enclosing
+    /// action's declarations before falling back to an unresolved step.
+    handle_scopes: Vec<Vec<(String, String, String)>>,
     group_counter: u32,
     pools: Vec<PoolState>,
     /// Element type -> the pool a static `bind <pool> *;` names, so an
@@ -259,6 +264,7 @@ pub fn run_scenario(model: &Model, root_action: &str, seed: u64) -> Scenario {
         seed,
         steps: Vec::new(),
         warnings: Vec::new(),
+        handle_scopes: Vec::new(),
         group_counter: 0,
         pools: Vec::new(),
         pool_binds: HashMap::new(),
@@ -397,7 +403,10 @@ impl<'a> Engine<'a> {
             // count, for instance — are available while walking the activity.
             let report = solver::solve(self.model, action, self.seed ^ (depth as u64) ^ 0x5EED);
             let ctx = report.assignment.values;
+            let handles = self.handles_of(action, &component);
+            self.handle_scopes.push(handles);
             self.walk_activity(act, component, depth + 1, mode, group, &ctx);
+            self.handle_scopes.pop();
             // An activity that produced nothing and said nothing is the worst
             // outcome for a test tool: the model runs, reports success, and
             // tests nothing. This catches the silent cases — a `foreach` over a
@@ -1010,7 +1019,15 @@ impl<'a> Engine<'a> {
         let action_name = self.apply_override(&comp, &path.segments.join("."), &action_name);
         match self.model.find_action(Some(&comp), &action_name).cloned() {
             Some(act) => self.walk_action(&act, comp, depth, mode, group, false),
-            None => self.push_unresolved(&action_name, comp, path, depth, mode, group),
+            None => match self.resolve_handle(&action_name) {
+                Some((hcomp, hact)) => {
+                    match self.model.find_action(Some(&hcomp), &hact).cloned() {
+                        Some(act) => self.walk_action(&act, hcomp, depth, mode, group, false),
+                        None => self.push_unresolved(&action_name, comp, path, depth, mode, group),
+                    }
+                }
+                None => self.push_unresolved(&action_name, comp, path, depth, mode, group),
+            },
         }
     }
 
@@ -1038,8 +1055,50 @@ impl<'a> Engine<'a> {
                     self.record_step(&act, comp, depth, mode, group, constraints, bindings);
                 }
             }
-            None => self.push_unresolved(&action_name, comp, path, depth, mode, group),
+                        None => match self.resolve_handle(&action_name) {
+                Some((hcomp, hact)) => match self.model.find_action(Some(&hcomp), &hact).cloned() {
+                    Some(act) => {
+                        if act.activity.is_some() {
+                            self.walk_action(&act, hcomp, depth, mode, group, false);
+                        } else {
+                            self.record_step(&act, hcomp, depth, mode, group, constraints, bindings);
+                        }
+                    }
+                    None => self.push_unresolved(&action_name, comp, path, depth, mode, group),
+                },
+                None => self.push_unresolved(&action_name, comp, path, depth, mode, group),
+            },
         }
+    }
+
+    /// The action handles declared by `action`, as `(name, component, action)`.
+    fn handles_of(&self, action: &Action, owner: &str) -> Vec<(String, String, String)> {
+        let mut out = Vec::new();
+        for f in &action.fields {
+            let ty = f.type_name.as_str();
+            let (comp, name) = match ty.rsplit_once("::") {
+                Some((c, n)) => (c.to_string(), n.to_string()),
+                None => (owner.to_string(), ty.to_string()),
+            };
+            // Only a type that names an action is a handle; a buffer or struct
+            // field with the same shape is not.
+            if self.model.find_action(Some(&comp), &name).is_some()
+                || self.model.find_action(Some(owner), &name).is_some()
+            {
+                out.push((f.name.clone(), comp, name));
+            }
+        }
+        out
+    }
+
+    /// Resolve a traversed name against the handle scopes, innermost first.
+    fn resolve_handle(&self, name: &str) -> Option<(String, String)> {
+        for scope in self.handle_scopes.iter().rev() {
+            if let Some((_, comp, act)) = scope.iter().find(|(n, _, _)| n == name) {
+                return Some((comp.clone(), act.clone()));
+            }
+        }
+        None
     }
 
     fn push_unresolved(

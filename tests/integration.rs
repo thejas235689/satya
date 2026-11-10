@@ -3502,3 +3502,47 @@ component c {
     assert_eq!(s.steps.len(), 2);
     assert!(s.warnings.is_empty(), "unexpected warnings: {:?}", s.warnings);
 }
+
+#[test]
+fn an_activity_can_traverse_an_action_handle() {
+    // `xfer0;` and `cfg with { … }` name a *handle* declared in the action body,
+    // not an action. Both used to be `[UNRESOLVED]` (or vanish silently),
+    // because the traversal name was only looked up as an action name.
+    let simple = r#"
+component sub_c { action t { } }
+component pss_top {
+  sub_c s0;
+  action run { sub_c::t x; activity { x; } }
+};
+"#;
+    let m = compile_pss(simple).unwrap();
+    let s = engine::run_scenario(&m, "run", 1);
+    assert_eq!(s.steps.len(), 1, "handle traversal produced no step");
+    assert!(!s.steps[0].unresolved, "handle traversal left unresolved");
+    assert_eq!(s.steps[0].action, "t", "resolved to the wrong action");
+
+    // A handle carrying inline constraints goes through a different path.
+    let constrained = r#"
+component sub_c { action t { input uint v; } }
+component pss_top {
+  sub_c s0;
+  action run { sub_c::t x; activity { x with { x.v == 3; }; } }
+};
+"#;
+    let m = compile_pss(constrained).unwrap();
+    let s = engine::run_scenario(&m, "run", 1);
+    assert_eq!(s.steps.len(), 1);
+    assert!(!s.steps[0].unresolved, "constrained handle traversal left unresolved");
+
+    // A struct field of the same shape must not be mistaken for a handle.
+    let not_a_handle = r#"
+component c {
+  action t { }
+  action run { rand int n; activity { n; } }
+};
+"#;
+    let m = compile_pss(not_a_handle).unwrap();
+    let s = engine::run_scenario(&m, "run", 1);
+    assert!(s.steps.is_empty() || s.steps[0].unresolved,
+            "a plain field was treated as an action handle");
+}

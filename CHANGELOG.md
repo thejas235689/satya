@@ -13,6 +13,50 @@ approximated.
 
 ---
 
+## 0.56.0 — 2026-11-09
+
+Activities can traverse action handles
+
+The blocker behind four of five user models. A traversal names a **handle**
+declared in the action body, not an action:
+
+```pss
+action run {
+    i2c_c::write_registers cfg;
+    activity { cfg with { cfg.slave_addr == 0x50; }; }
+}
+```
+
+`dispatch` looked the name up only as an action, so `cfg` (and `fill`, `check`,
+`xfer0`) came back `[UNRESOLVED]` — or, for an array of handles, produced an
+empty activity and said nothing.
+
+**Fixed:** the engine keeps a stack of handle scopes. `walk_action` pushes the
+handles declared by the action being walked (`(name, component, action)`,
+derived from its fields whose type names an action) and pops it afterwards;
+`dispatch` and `dispatch_constrained` consult it when the action lookup fails.
+A field that does not name an action — a buffer, a struct, a plain int — is
+correctly not treated as a handle.
+
+A model with `fill_pattern fill; verify_pattern check;` now yields two resolved
+steps with no warnings, and `cfg with { … }` resolves to a concrete
+`write_registers` step.
+
+**Not fixed, and visible in the same models:**
+
+- `{{ … }}` substitution in target code.
+- An inline `with { }` on a handle still writes its constraints against the
+  handle name (`cfg.slave_addr == 0x50`), which no longer matches the field
+  (`slave_addr`), so the constraint is dropped rather than applied. In the i2c
+  model `slave_addr` solved to 201 instead of 0x50.
+- `foreach` over an array of handles still produces nothing — but it now warns
+  (0.55.0) instead of running silently.
+- Resource pools still create zero instances.
+
+**Verification:** 146 tests (1 new, covering a plain handle, a handle with
+inline constraints, and a plain field that must not be mistaken for one); proof
+unchanged at 114 pass / 48 fail; corpus 97/97 · 7/7 · 114/114.
+
 ## 0.55.0 — 2026-11-09
 
 `reg` with a range width, and no more silent empty activities
