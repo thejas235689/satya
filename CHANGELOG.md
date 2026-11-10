@@ -13,6 +13,40 @@ approximated.
 
 ---
 
+## 0.57.0 — 2026-11-09
+
+56x faster seed sweeps: `--seeds N`
+
+Measured first, and the measurement said the code was not the problem:
+
+```
+200x satya solve   4.70s
+200x satya parse   4.71s
+200x satya gen     4.79s
+200x satya help    4.48s     <- does no work at all
+```
+
+`help` costs the same as a solve, so ~22 ms per invocation is process startup —
+fork, exec, dynamic linking — not parsing or solving. Optimising the solver
+would have bought nothing.
+
+**Added `--seeds N`** to `solve` and `gen`, which runs seeds 1..=N in a single
+process. Every sweep in this project — the proof harness, the DMA and ALU vector
+generators, `rand_cov_check` — was launching the binary once per seed.
+
+| 200 seeds | time |
+|---|---|
+| one process per seed | 5.175s |
+| `--seeds 200` | **0.093s** |
+
+**56x**, and the values are identical to the per-seed runs, so determinism is
+unaffected. Multi-seed output separates runs with `--- seed N ---` (trace) and
+`/* --- seed N --- */` (generated code).
+
+**Verification:** 146 tests unchanged; proof 114 pass / 48 fail; corpus
+97/97 · 7/7 · 114/114; `--seeds 3` produces exactly three sections and seed 2's
+solved values match a separate `--seed 2` run.
+
 ## 0.56.0 — 2026-11-09
 
 Activities can traverse action handles

@@ -94,11 +94,24 @@ fn run(args: &[String]) -> PssResult<()> {
             let model = load_models(&files)?;
             let action = pick_action(&model, flag(rest, "--action"))?;
             let seed = flag(rest, "--seed").and_then(|s| s.parse().ok()).unwrap_or(1);
-            let scenario = engine::run_scenario(&model, &action, seed);
-            let text = backend::get("trace")
-                .unwrap()
-                .emit(&model, &scenario, &BackendOptions::default())?;
-            write_out(flag(rest, "-o").or_else(|| flag(rest, "--out")), &text)?;
+            // `--seeds N` runs seeds 1..=N in one process. Every sweep — the
+            // proof harness, the vector generators, rand_cov_check — used to
+            // launch the binary once per seed, and process startup (about 22 ms)
+            // dominated the actual work.
+            let seeds: Vec<u64> = match flag(rest, "--seeds").and_then(|s| s.parse::<u64>().ok()) {
+                Some(n) => (1..=n.max(1)).collect(),
+                None => vec![seed],
+            };
+            let be = backend::get("trace").unwrap();
+            let mut out = String::new();
+            for s in &seeds {
+                let scenario = engine::run_scenario(&model, &action, *s);
+                if seeds.len() > 1 {
+                    out.push_str(&format!("--- seed {} ---\n", s));
+                }
+                out.push_str(&be.emit(&model, &scenario, &BackendOptions::default())?);
+            }
+            write_out(flag(rest, "-o").or_else(|| flag(rest, "--out")), &out)?;
             Ok(())
         }
         "gen" => {
@@ -113,12 +126,22 @@ fn run(args: &[String]) -> PssResult<()> {
                     backend_name,
                     backend::names().join(", ")
                 )))?;
-            let scenario = engine::run_scenario(&model, &action, seed);
             let opts = BackendOptions {
                 top_sequence_name: flag(rest, "--top-sequence").map(|s| s.to_string()),
                 uvm_factory: true,
             };
-            let text = be.emit(&model, &scenario, &opts)?;
+            let seeds: Vec<u64> = match flag(rest, "--seeds").and_then(|s| s.parse::<u64>().ok()) {
+                Some(n) => (1..=n.max(1)).collect(),
+                None => vec![seed],
+            };
+            let mut text = String::new();
+            for s in &seeds {
+                let scenario = engine::run_scenario(&model, &action, *s);
+                if seeds.len() > 1 {
+                    text.push_str(&format!("/* --- seed {} --- */\n", s));
+                }
+                text.push_str(&be.emit(&model, &scenario, &opts)?);
+            }
             write_out(flag(rest, "-o").or_else(|| flag(rest, "--out")), &text)?;
             Ok(())
         }
@@ -160,6 +183,7 @@ fn positional_files(args: &[String]) -> Vec<String> {
     const VALUE_FLAGS: &[&str] = &[
         "--action",
         "--seed",
+        "--seeds",
         "--backend",
         "-o",
         "--out",
