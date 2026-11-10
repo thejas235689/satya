@@ -3455,3 +3455,50 @@ component c {
     let v = s.steps[0].fields.iter().find(|(k, _)| k == "v").map(|(_, v)| *v).unwrap_or(0);
     assert_ne!(v, 0, "component constraint on a scalar not enforced");
 }
+
+#[test]
+fn a_reg_declaration_accepts_a_range_width() {
+    // `reg bit[31:0] R[4];` used to fail on the `:` inside the width: `reg` was
+    // read as a type name, so `bit` became the member name and `[31:0]` was
+    // parsed as an array bound. Registers are not modelled, but they must parse.
+    for src in [
+        "component c { reg bit[31:0] R; action a { } };",
+        "component c { reg bit[31:0] R[4]; action a { } };",
+        "component c { reg uint R[4]; action a { } };",
+        "component c { reg bit[31] R[4]; action a { } };",
+    ] {
+        assert!(compile_pss(src).is_ok(), "failed to parse: {}", src);
+    }
+}
+
+#[test]
+fn an_activity_that_produces_no_steps_warns() {
+    // A `foreach` over an array of action handles produced an empty scenario and
+    // reported nothing at all. Silence over a model that tests nothing is the
+    // worst outcome, so any activity that yields no steps must say so.
+    let src = r#"
+component c {
+  action t { }
+  action run { c::t xs[2]; activity { foreach (xs[i]) { xs[i]; } } }
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "run", 1);
+    assert_eq!(s.steps.len(), 0, "expected no steps for this model");
+    assert!(
+        s.warnings.iter().any(|w| w.contains("produced no steps")),
+        "expected a warning about the empty activity, got: {:?}", s.warnings
+    );
+
+    // A normal activity must not warn.
+    let ok = r#"
+component c {
+  action t { }
+  action run { rand int a[2]; activity { foreach (a[i]) { do t; } } }
+};
+"#;
+    let m = compile_pss(ok).unwrap();
+    let s = engine::run_scenario(&m, "run", 1);
+    assert_eq!(s.steps.len(), 2);
+    assert!(s.warnings.is_empty(), "unexpected warnings: {:?}", s.warnings);
+}

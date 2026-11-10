@@ -824,6 +824,36 @@ impl Parser {
     // ---- members -------------------------------------------------------
 
     fn try_parse_member(&mut self) -> PssResult<Option<Member>> {
+        // `reg <type> NAME;` / `reg <type> NAME[N];` — a register declaration
+        // (PSS 24.7). Without this, `reg` is read as a type name and the real
+        // type becomes the member name, so `reg bit[31:0] R;` failed on the `:`
+        // inside the width. Registers are not modelled, but they must parse and
+        // exist as fields so target code can name them.
+        if self.at_ident("reg") {
+            self.bump();
+            let ty = self.parse_type_ref()?;
+            let name = self.expect_ident()?;
+            let array = if self.at_punct("[") {
+                self.bump();
+                let e = self.parse_expr(0)?;
+                self.expect_punct("]")?;
+                Some(e)
+            } else {
+                None
+            };
+            self.eat_punct(";");
+            return Ok(Some(Member {
+                kind: MemberKind::Plain,
+                is_static: false,
+                ty,
+                name,
+                array,
+                args: Vec::new(),
+                init: None,
+                inline_constraint: None,
+            }));
+        }
+
         let mut kind = MemberKind::Plain;
         let mut is_static = false;
         loop {

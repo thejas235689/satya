@@ -391,11 +391,24 @@ impl<'a> Engine<'a> {
             // it is walked and they are applied to the steps it produced.
             let binds = collect_binds(act);
             let first_step = self.steps.len();
+            let steps_before = self.steps.len();
+            let warns_before = self.warnings.len();
             // Solve the container action first so its random fields — a repeat
             // count, for instance — are available while walking the activity.
             let report = solver::solve(self.model, action, self.seed ^ (depth as u64) ^ 0x5EED);
             let ctx = report.assignment.values;
             self.walk_activity(act, component, depth + 1, mode, group, &ctx);
+            // An activity that produced nothing and said nothing is the worst
+            // outcome for a test tool: the model runs, reports success, and
+            // tests nothing. This catches the silent cases — a `foreach` over a
+            // collection the engine does not model, or a traversal it dropped.
+            if self.steps.len() == steps_before && self.warnings.len() == warns_before {
+                self.warnings.push(format!(
+                    "activity of `{}` produced no steps (its traversals could not be resolved \
+                     to anything in this model)",
+                    action.name
+                ));
+            }
             if !binds.is_empty() {
                 self.apply_binds(&binds, action, first_step);
             }

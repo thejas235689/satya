@@ -13,6 +13,50 @@ approximated.
 
 ---
 
+## 0.55.0 — 2026-11-09
+
+`reg` with a range width, and no more silent empty activities
+
+Two defects from a set of user models.
+
+### `reg bit[31:0] R[4];` now parses
+
+`reg` was read as a *type name*, so `bit` became the member name and `[31:0]`
+was parsed as an array bound — failing on the `:` inside the width. Any
+component whose register block used a range width was unparseable:
+
+```
+reg bit[31:0] R;     error: expected `]`, found `:`
+reg bit[31]   R[4];  ok        <- single-number width worked, range did not
+```
+
+`try_parse_member` now recognises `reg <type> NAME;` and `reg <type> NAME[N];`
+directly. Registers are still not modelled, but they parse and exist as fields,
+so target code can name them. A DMA model with four `reg bit[31:0] …[4]` blocks
+went from a parse error to a solved scenario (`channel=1 length=520`).
+
+### An activity that produces no steps now says so
+
+A `foreach` over an **array of action handles** produced an empty scenario and
+reported nothing:
+
+```
+steps: 0   concrete: 0   warnings: 0
+```
+
+The single-handle form at least warned. The array form vanished entirely, which
+is the worst outcome for a test tool — a clean run over a model that tests
+nothing.
+
+`walk_action` now compares the step and warning counts around the activity walk
+and, if both are unchanged, reports `activity of <name> produced no steps`. This
+is a safety net rather than a fix for handle arrays: it converts every silent
+empty activity, present and future, into a visible one. Two user models that
+previously ran "clean" now report it.
+
+**Verification:** 145 tests (2 new); proof unchanged at 114 pass / 48 fail;
+corpus 97/97 · 7/7 · 114/114; conformance all pass.
+
 ## 0.54.0 — 2026-11-09
 
 Component attributes are solved
