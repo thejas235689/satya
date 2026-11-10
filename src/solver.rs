@@ -2498,6 +2498,19 @@ fn collect_variables(model: &Model, action: &Action) -> BTreeMap<String, Domain>
     for f in &action.fields {
         expand_field(model, f, "", 0, &mut visited, &mut out);
     }
+    // A component's own `rand` attributes are part of the scenario state, so an
+    // action that runs in that component randomises them too. They used to be
+    // ignored entirely: `rand bit[31:0] data[4];` at component scope produced no
+    // variables at all, and the component's constraints never ran.
+    if let Some(owner) = &action.owner {
+        if let Some(comp) = model.components.get(owner) {
+            for f in &comp.fields {
+                if matches!(f.kind, crate::ir::FieldKind::Rand) {
+                    expand_field(model, f, "", 0, &mut visited, &mut out);
+                }
+            }
+        }
+    }
     out
 }
 
@@ -2699,6 +2712,25 @@ fn collect_constraints(
             defaults.push((c.expr.clone(), 0));
         } else {
             regular.push(c.expr.clone());
+        }
+    }
+
+    // A component's constraints govern its attributes, which the action now
+    // randomises (see `collect_variables`), so they apply here too.
+    if let Some(owner) = &action.owner {
+        if let Some(comp) = model.components.get(owner) {
+            for c in &comp.constraints {
+                if c.is_disable {
+                    continue;
+                }
+                if c.is_soft {
+                    if include_soft {
+                        soft.push(c.expr.clone());
+                    }
+                } else {
+                    regular.push(c.expr.clone());
+                }
+            }
         }
     }
 

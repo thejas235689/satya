@@ -3411,3 +3411,47 @@ component c {
     assert!(sv_out.contains("sv_sequence_item"), "UVM backend took the wrong template:\n{}", sv_out);
     assert!(!sv_out.contains("c_program_channel"), "UVM backend emitted C code:\n{}", sv_out);
 }
+
+#[test]
+fn component_rand_attributes_are_solved() {
+    // A component's own `rand` attributes are scenario state, so an action that
+    // runs in that component randomises them. They used to be ignored entirely:
+    // `rand bit[31:0] data[4];` at component scope produced no variables, and
+    // the component's constraints never ran.
+    let src = r#"
+component pss_top {
+    rand bit [31:0] data[4];
+    constraint {
+        foreach (data[i]) {
+            data[i] != 0;
+        }
+    }
+    action run { }
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "run", 1);
+    let step = &s.steps[0];
+
+    for i in 0..4 {
+        let key = format!("data[{}]", i);
+        let v = step.fields.iter().find(|(k, _)| *k == key).map(|(_, v)| *v);
+        let v = v.unwrap_or_else(|| panic!("{} was not solved; fields: {:?}", key, step.fields));
+        assert_ne!(v, 0, "{} violated the component constraint (got 0)", key);
+    }
+    assert_eq!(step.satisfied, step.total, "component constraint not counted");
+    assert!(step.total >= 1, "component constraint never reached the solver");
+
+    // A component-level constraint on a scalar is enforced too.
+    let scalar = r#"
+component c {
+    rand bit[31:0] v;
+    constraint { v != 0; }
+    action a { }
+};
+"#;
+    let m = compile_pss(scalar).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let v = s.steps[0].fields.iter().find(|(k, _)| k == "v").map(|(_, v)| *v).unwrap_or(0);
+    assert_ne!(v, 0, "component constraint on a scalar not enforced");
+}

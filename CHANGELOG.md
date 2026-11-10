@@ -13,6 +13,43 @@ approximated.
 
 ---
 
+## 0.54.0 — 2026-11-09
+
+Component attributes are solved
+
+Found on a user's model: a component-level `rand bit[31:0] data[4];` with a
+`foreach` constraint produced **no variables at all**.
+
+```
+solved: (nothing)          constraints: 0/0
+```
+
+Only *action-level* fields were randomised. A component's own `rand` attributes
+and its `constraint { }` blocks were collected by the parser, stored on the
+component, and never passed to the solver — so the model ran, reported no
+warnings, and tested nothing.
+
+**Fixed:** `collect_variables` now adds the owning component's `rand` fields
+(`action.owner` → `model.components[..].fields`), and `collect_constraints` adds
+its constraint blocks at the action's own level, honouring `disable` and `soft`
+as it does for the action's. The same model now gives:
+
+```
+solved: data.size=4 data[0]=1851100229 data[1]=325696897 data[2]=1244623368 data[3]=50170368
+constraints: 4/4 satisfied
+```
+
+All four elements non-zero, so the `foreach` constraint is genuinely enforced
+rather than skipped.
+
+**Not fixed, and visible in the same model:** `{{data[i]}}` in the target-code
+template is still emitted verbatim, so the generated C carries the placeholder
+rather than the solved values.
+
+**Verification:** 143 tests (1 new, covering a component-level array under
+`foreach` and a component-level scalar constraint); proof unchanged at 114 pass /
+48 fail; conformance all pass.
+
 ## 0.53.0 — 2026-11-09
 
 Each backend picks the template written for it
