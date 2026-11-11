@@ -1576,6 +1576,31 @@ impl Parser {
     }
 
     /// Parse the body of an `if` inside an `exec` block.
+    /// A statement body: either a `{ … }` block or a single statement
+    /// (`repeat (4) b = b + 3;`, `if (c) r = 1; else r = 2;`). The single form
+    /// used to return an empty body, so the statement became a *sibling* of the
+    /// control construct and ran exactly once — `repeat (4)` with a
+    /// single-statement body executed it once, and `if` took the else branch.
+    fn parse_exec_body(&mut self) -> Vec<ExecStmt> {
+        if self.at_punct("{") {
+            return self.parse_exec_block();
+        }
+        if self.at_eof() || self.at_punct("}") || self.at_punct(";") {
+            return Vec::new();
+        }
+        let before = self.pos;
+        match self.try_parse_exec_stmt() {
+            Some(st) => vec![st],
+            None => {
+                if self.pos == before {
+                    Vec::new()
+                } else {
+                    Vec::new()
+                }
+            }
+        }
+    }
+
     fn parse_exec_block(&mut self) -> Vec<ExecStmt> {
         if !self.at_punct("{") {
             return Vec::new();
@@ -1656,11 +1681,11 @@ impl Parser {
                 self.bump();
                 let count = self.parse_expr(0).ok()?;
                 self.expect_punct(")").ok()?;
-                let body = self.parse_exec_block();
+                let body = self.parse_exec_body();
                 self.eat_punct(";");
                 return Some(ExecStmt::Repeat { count, body });
             }
-            let body = self.parse_exec_block();
+            let body = self.parse_exec_body();
             if self.eat_ident("while") {
                 self.expect_punct("(").ok()?;
                 let cond = self.parse_expr(0).ok()?;
@@ -1770,9 +1795,9 @@ impl Parser {
             self.expect_punct("(").ok()?;
             let cond = self.parse_expr(0).ok()?;
             self.expect_punct(")").ok()?;
-            let then = self.parse_exec_block();
+            let then = self.parse_exec_body();
             let els = if self.eat_ident("else") {
-                self.parse_exec_block()
+                self.parse_exec_body()
             } else {
                 Vec::new()
             };

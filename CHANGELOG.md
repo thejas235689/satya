@@ -13,6 +13,31 @@ approximated.
 
 ---
 
+## 0.59.0 — 2026-11-11
+
+Single-statement bodies of `repeat` and `if`
+
+Two of the 46 remaining proof failures, and they shared a cause.
+
+`repeat (4) b = b + 3;` and `if (5 > 3) r = 1; else r = 2;` both gave the wrong
+answer because `parse_exec_block` returns an empty body when there is no `{`.
+The statement then became a **sibling** of the control construct: the repeat ran
+once (b=3, expected 12) and the `if` fell through to the else branch (r=2,
+expected 1).
+
+`parse_exec_body` now accepts either a braced block or a single statement, and
+`repeat`, `repeat … while`, `if` and `else` use it. Proof rows 94 and 97 flip to
+PASS: **114 → 116 pass, 48 → 46 fail**.
+
+**The other 46 are not one cause.** I checked all of them: 44 distinct constructs,
+each a separate semantic feature — maps, `chandle`, `ref`, state objects,
+`forall` expansion, monitor traversal, executor components, address-space
+claims, floats, file operations, `symbol` expansion, compound assignment,
+`match` range arms, and more. There is no batch fix; each needs its own work.
+
+**Verification:** 149 tests (1 new); corpus 97/97 · 7/7 · 114/114; conformance
+all pass.
+
 ## 0.58.0 — 2026-11-09
 
 The spurious conflict, and two engine fixes

@@ -3635,3 +3635,23 @@ component c { action t { } action run { c::t xs[3]; activity { foreach (xs[i]) {
     let m = compile_pss(three).unwrap();
     assert_eq!(engine::run_scenario(&m, "run", 1).steps.len(), 3);
 }
+
+#[test]
+fn a_control_statement_body_may_be_a_single_statement() {
+    // `repeat (4) b = b + 3;` used to parse the body as empty, so the
+    // assignment became a *sibling* of the repeat and ran once. `if` had the
+    // same shape and took the wrong branch. Both forms are legal PSS.
+    let m = compile_pss("component c { action a { int b; exec body { repeat (4) b = b + 3; } }; };").unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    assert_eq!(s.steps.len(), 1);
+    // The exec body runs during the walk; check via the C backend, which
+    // renders the translated statements.
+    let c = get("c").unwrap().emit(&m, &s, &BackendOptions::default()).unwrap();
+    assert!(c.contains("repeat") || c.contains("for"), "repeat body lost:\n{}", c);
+
+    // The block form must still work.
+    let m = compile_pss("component c { action a { int b; exec body { repeat (4) { b = b + 3; } } }; };").unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let c = get("c").unwrap().emit(&m, &s, &BackendOptions::default()).unwrap();
+    assert!(c.contains("repeat") || c.contains("for"), "block form broke:\n{}", c);
+}
