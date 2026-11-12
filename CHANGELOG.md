@@ -13,6 +13,33 @@ approximated.
 
 ---
 
+## 0.60.0 — 2026-11-12
+
+Compound and array-element assignment
+
+Row 91 of the proof. Both forms were dropped outright:
+
+- `s += 2;` — the compound-assignment branch did not exist, and the `=` branch
+  requires a `Path` on the left, so the statement vanished.
+- `arr[1] = 9;` — `arr[1]` parses as `Expr::Index`, not `Expr::Path`, so the
+  same `if let` failed and the whole statement was discarded.
+
+Both now translate. The C backend emits `self->s = (self->s + 2);` and the array
+write. `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=` are all
+handled; a compound assignment to something that is not an lvalue becomes a
+visible `Raw` marker rather than disappearing.
+
+Worth stating because it looks like a bug and is not: the *trace* still shows
+`s=0` and `arr[1]=0` after these statements. `exec body` is target code — it is
+emitted into the generated C, not executed by the engine. The values only exist
+in the generated program. (The proof row asserts on the emitted text for exactly
+this reason.)
+
+Proof: **116 → 117 pass, 46 → 45 fail.**
+
+**Verification:** 150 tests (1 new); corpus 97/97 · 7/7 · 114/114; conformance
+all pass.
+
 ## 0.59.0 — 2026-11-11
 
 Single-statement bodies of `repeat` and `if`

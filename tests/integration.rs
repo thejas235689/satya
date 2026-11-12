@@ -3655,3 +3655,28 @@ fn a_control_statement_body_may_be_a_single_statement() {
     let c = get("c").unwrap().emit(&m, &s, &BackendOptions::default()).unwrap();
     assert!(c.contains("repeat") || c.contains("for"), "block form broke:\n{}", c);
 }
+
+#[test]
+fn compound_and_array_element_assignment_are_emitted() {
+    // `exec body` is target code: it is translated into the generated C, not
+    // run by the engine. Both forms used to be dropped entirely — `s += 2;`
+    // because the LHS of a compound assignment is not a `Path` in the `=`
+    // branch, and `arr[1] = 9;` because `arr[1]` parses as `Expr::Index`.
+    let src = r#"
+component c {
+  action a {
+    int s; int r; int arr[4];
+    exec body { r = 41; s = r + 1; s += 2; arr[1] = 9; }
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let c = get("c").unwrap().emit(&m, &s, &BackendOptions::default()).unwrap();
+
+    assert!(c.contains("self->r = 41;"), "plain assignment lost:\n{}", c);
+    assert!(c.contains("self->s = (self->s + 2);"),
+            "`+=` was dropped:\n{}", c);
+    assert!(c.contains("arr[1]") && c.contains("= 9"),
+            "array-element assignment was dropped:\n{}", c);
+}

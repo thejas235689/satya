@@ -1811,6 +1811,37 @@ impl Parser {
                 return None;
             }
         };
+        // Compound assignment (`s += 2;`) and assignment to an array element
+        // (`arr[1] = 9;`). Both used to be dropped: the LHS of `+=` is not a
+        // `Path` in the `=` branch, and `arr[1]` parses as `Expr::Index`, so
+        // `if let Expr::Path(..)` failed and the statement vanished.
+        const COMPOUND: &[(&str, &str)] = &[
+            ("+=", "+"), ("-=", "-"), ("*=", "*"), ("/=", "/"), ("%=", "%"),
+            ("&=", "&"), ("|=", "|"), ("^=", "^"), ("<<=", "<<"), (">>=", ">>"),
+        ];
+        if let Some((_, op)) = COMPOUND.iter().find(|(p, _)| self.at_punct(p)) {
+            let op = op.to_string();
+            self.bump();
+            let rhs = match self.parse_expr(0) {
+                Ok(r) => r,
+                Err(er) => {
+                    if self.exec_err.is_none() {
+                        self.exec_err = Some(er);
+                    }
+                    self.pos = save;
+                    return None;
+                }
+            };
+            self.exec_semi();
+            let lhs = exec_assign_target(&e);
+            return match lhs {
+                Some(path) => Some(ExecStmt::Assign(
+                    path.clone(),
+                    Expr::Binary(op, Box::new(Expr::Path(path)), Box::new(rhs)),
+                )),
+                None => Some(ExecStmt::Raw("<compound assignment to a non-lvalue>".into())),
+            };
+        }
         if self.at_punct("=") {
             self.bump();
             match self.parse_expr(0) {
@@ -1823,7 +1854,7 @@ impl Parser {
                     } else {
                         self.exec_semi();
                     }
-                    if let Expr::Path(path) = e {
+                    if let Some(path) = exec_assign_target(&e) {
                         return Some(ExecStmt::Assign(path, rhs));
                     }
                 }
@@ -4175,6 +4206,27 @@ fn expand_action(a: &mut ActionDecl, outer: &VarScope, table: &StructTable) {
 }
 
 /// Parse a sequence of `exec`-body statements from captured tokens.
+/// The variable an assignment writes to: a plain path, or an array element
+/// rendered as `name[index]` so it matches how elements are stored.
+fn exec_assign_target(e: &Expr) -> Option<Path> {
+    match e {
+        Expr::Path(p) => Some(p.clone()),
+        Expr::Index(base, idx) => {
+            let b = match base.as_ref() {
+                Expr::Path(p) => p.segments.join("."),
+                _ => return None,
+            };
+            let i = match idx.as_ref() {
+                Expr::Int(n) => n.to_string(),
+                Expr::Path(p) => p.segments.join("."),
+                _ => return None,
+            };
+            Some(Path { segments: vec![format!("{}[{}]", b, i)] })
+        }
+        _ => None,
+    }
+}
+
 fn parse_exec_stmts(toks: &[Token]) -> (Vec<ExecStmt>, Option<PssError>) {
     let mut t: Vec<Token> = toks.to_vec();
     t.push(Token {
