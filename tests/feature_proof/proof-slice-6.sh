@@ -722,8 +722,10 @@ else
     verdict A137 "addr-value-solve"
 fi
 
-# A138 — addr_value_abs: the handle's absolute address, so it must track
-# addr_value for two handles at different addresses (0x410 and 0xC00).
+# A138 — addr_value_abs: PSS 21.13.7 (Syntax 152) makes it a *boolean* —
+# "returns 'true' if the absolute address value is available for the specified
+# address handle", available when the handle is in a transparent region. The
+# address itself is addr_value, which must still track the two handles.
 solve_model "$TMP/a138.pss"
 if [ "$RC" -ne 0 ]; then
     fail_item A138 "addr-value-abs" "solve failed: $(firstline "$OUT")"
@@ -731,8 +733,8 @@ else
     printf '%s' "$OUT" >"$TMP/out.txt"
     want av0 $((0x410))
     want av1 $((0xC00))
-    want abs0 $((0x410))
-    want abs1 $((0xC00))
+    want abs0 1
+    want abs1 1
     verdict A138 "addr-value-abs"
 fi
 

@@ -1529,12 +1529,13 @@ fn address_handles_carry_absolute_addresses() {
     assert_eq!(get("addr0"), 0x410, "0x400 + 0x10");
     assert_eq!(get("addr1"), 0x414, "handle plus an offset");
     assert_eq!(get("addr2"), 0x420);
-    // PSS 24.10.7: the handle's absolute address. A region added to an address
-    // space is transparent, so the absolute address is the handle's address —
-    // the same value `addr_value` gives. (This assertion used to expect 1, an
-    // "address is known" flag; docs/SEMANTICS.md is the specification and
-    // documents the address, so the expectation follows the document.)
-    assert_eq!(get("abs0"), 0x410, "the handle's absolute address");
+    // PSS 21.13.7 (Syntax 152): "the solve function addr_value_abs() returns
+    // 'true' if the absolute address value is available for the specified
+    // address handle". It is a boolean, and a region added to an address space
+    // is transparent, so it is available. The address is `addr_value`, above.
+    // (0.51.0 changed this to expect the address itself on the strength of
+    // SEMANTICS.md; the standard says otherwise, so it is a flag again.)
+    assert_eq!(get("abs0"), 1, "absolute address availability");
 }
 
 #[test]

@@ -542,8 +542,14 @@ pub fn eval(expr: &Expr, values: &BTreeMap<String, i64>, env: &Env) -> Option<i6
                 // It used to return a constant 1 (an "address known" flag), so
                 // every handle reported 1 instead of where it points.
                 "addr_value_abs" => {
+                    // PSS 21.13.7 (Syntax 152): "returns 'true' if the absolute
+                    // address value is available for the specified address
+                    // handle. The absolute address value is available if hndl is
+                    // within a transparent region". It is a *boolean*, not the
+                    // address — `addr_value` returns the address.
                     let h = arg(0)?;
-                    values.get(&format!("__h.{}.addr", h)).copied()
+                    let known = values.get(&format!("__h.{}.abs", h)).copied().unwrap_or(0);
+                    Some(if known != 0 { 1 } else { 0 })
                 }
                 "get_tag" => {
                     // The tag is a string and the engine has no string values,

@@ -13,6 +13,39 @@ approximated.
 
 ---
 
+## 0.61.0 — 2026-11-13
+
+The standard settles `addr_value_abs` — and my 0.51.1 call was wrong
+
+PSS 3.1, 21.13.7 (Syntax 152), verbatim:
+
+> The solve function addr_value_abs() returns 'true' if the absolute address
+> value is available for the specified address handle. The absolute address
+> value is available if hndl is within a transparent region…
+
+It is a **boolean**. `addr_value` returns the address.
+
+The history of this one row is a lesson in trusting the wrong source:
+
+- The code returned a constant 1, and `SEMANTICS.md` claimed it returned the
+  address. The unit test asserted 1.
+- In 0.51.0 I "settled" the disagreement in favour of the documentation —
+  changed the code to return the address, changed the test to expect 0x410, and
+  removed the flag as dead. The reasoning was "the docs are the spec here".
+- The documentation was wrong. The standard says boolean.
+
+**Restored in 0.61.0:** `addr_value_abs` returns 1 when the absolute address is
+available (a handle in a transparent region), `addr_value` returns the address
+(1040 and 3072 for the two test handles). The flag is back, and set from
+transparency rather than being a bare constant. The unit test, proof row A138
+and `SEMANTICS.md` all now cite the clause.
+
+**Not modelled:** an *opaque* region should give 0. Every region here is added
+to an address space and therefore transparent, so the 0 case cannot arise yet.
+
+**Verification:** 150 tests; proof 117 pass / 45 fail (A138 passes on the
+corrected assertion).
+
 ## 0.60.0 — 2026-11-12
 
 Compound and array-element assignment
