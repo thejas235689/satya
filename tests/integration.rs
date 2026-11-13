@@ -3723,3 +3723,30 @@ component C {
     assert_eq!(get("typedef_bits"), Some(24), "sizeof_s of a typedef alias");
     assert_eq!(get("struct_bits"), Some(8), "sizeof_s of a bit-field struct");
 }
+
+#[test]
+fn an_enum_uses_its_declared_values() {
+    // PSS 12.4: `enum e { A = 5, B, C }` has values 5, 6, 7 — a variant without
+    // an explicit value takes the previous one + 1. The parser read `= value`
+    // and discarded it, so every variant evaluated to its position.
+    let m = compile_pss("enum e { A = 5, B, C }; component c { action a { rand e x; } };").unwrap();
+    assert_eq!(m.enum_values.get("A"), Some(&5));
+    assert_eq!(m.enum_values.get("B"), Some(&6), "auto-increment after a declared value");
+    assert_eq!(m.enum_values.get("C"), Some(&7));
+
+    for seed in 1..=6u64 {
+        let s = engine::run_scenario(&m, "a", seed);
+        let x = s.steps[0].fields.iter().find(|(k, _)| k == "x").map(|(_, v)| *v).unwrap();
+        assert!((5..=7).contains(&x), "seed {}: x={} is outside the declared values", seed, x);
+    }
+
+    // A base type does not change the values.
+    let m = compile_pss(
+        "enum wide_e : bit[8] { W0 = 200, W1 = 201 }; component c { action a { rand wide_e w; } };"
+    ).unwrap();
+    for seed in 1..=6u64 {
+        let s = engine::run_scenario(&m, "a", seed);
+        let w = s.steps[0].fields.iter().find(|(k, _)| k == "w").map(|(_, v)| *v).unwrap();
+        assert!(w == 200 || w == 201, "seed {}: w={}", seed, w);
+    }
+}

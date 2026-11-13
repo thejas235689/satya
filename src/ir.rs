@@ -205,6 +205,9 @@ pub struct Model {
     pub imports: Vec<String>,
     /// `typedef` aliases, so `sizeof_s<alias>` resolves (PSS 12.2, 24.10.2).
     pub typedefs: std::collections::HashMap<String, crate::ast::TypeRef>,
+    /// Declared enum variant values, `Enum::VARIANT` -> value (PSS 12.4).
+    /// Variants without an explicit value take the previous one + 1.
+    pub enum_values: std::collections::HashMap<String, i64>,
 }
 
 impl Model {
@@ -243,6 +246,25 @@ impl Model {
         lw.collect(file.items.iter(), None);
         lw.finish();
         lw.model.typedefs = file.typedefs.clone();
+        // Enum variant values: an explicit `= v`, otherwise previous + 1.
+        for item in &file.items {
+            if let crate::ast::Item::Enum(e) = item {
+                let mut next: i64 = 0;
+                for (i, v) in e.variants.iter().enumerate() {
+                    let declared = e
+                        .values
+                        .get(i)
+                        .and_then(|o| o.as_ref())
+                        .and_then(|x| x.eval_const(&|_| None));
+                    let val = declared.unwrap_or(next);
+                    next = val + 1;
+                    lw.model.enum_values.insert(v.clone(), val);
+                    lw.model
+                        .enum_values
+                        .insert(format!("{}::{}", e.name, v), val);
+                }
+            }
+        }
         lw.model.covergroups = file.covergroups.clone();
         lw.model.monitors = file.monitors.clone();
         for f in &file.functions {

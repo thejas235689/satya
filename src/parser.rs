@@ -697,15 +697,20 @@ impl Parser {
             }
         }
         let mut variants = Vec::new();
+        let mut values = Vec::new();
         if self.eat_punct("{") {
             while !self.at_punct("}") && !self.at_eof() {
                 if let Some(id) = self.peek().ident() {
                     variants.push(id.to_string());
                     self.bump();
-                    // Optional `= value`
-                    if self.eat_punct("=") {
-                        let _ = self.parse_expr(0)?;
-                    }
+                    // Optional `= value` (PSS 12.4). It used to be parsed and
+                    // discarded, so every variant took its position instead.
+                    let v = if self.eat_punct("=") {
+                        Some(self.parse_expr(0)?)
+                    } else {
+                        None
+                    };
+                    values.push(v);
                 } else {
                     self.bump();
                 }
@@ -719,6 +724,7 @@ impl Parser {
         Ok(EnumDecl {
             name: name.leaf(),
             variants,
+            values,
             is_extend,
             base,
         })

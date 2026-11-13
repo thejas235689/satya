@@ -103,6 +103,11 @@ pub struct Member {
 pub struct EnumDecl {
     pub name: String,
     pub variants: Vec<String>,
+    /// Declared value per variant, parallel to `variants` (PSS 12.4). A `None`
+    /// entry takes the previous variant's value + 1, or 0 for the first. These
+    /// used to be parsed and discarded, so every variant evaluated to its
+    /// position.
+    pub values: Vec<Option<Expr>>,
     pub is_extend: bool,
     pub base: Option<Path>,
 }

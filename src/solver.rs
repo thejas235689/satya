@@ -269,7 +269,9 @@ impl<'a> Env<'a> {
         let mut variants = HashMap::new();
         for vars in model.enums.values() {
             for (i, v) in vars.iter().enumerate() {
-                variants.entry(v.clone()).or_insert(i as i64);
+                // A declared `= value` wins (PSS 12.4); otherwise position.
+                let declared = model.enum_values.get(v).copied().unwrap_or(i as i64);
+                variants.entry(v.clone()).or_insert(declared);
             }
         }
         let mut type_bits = HashMap::new();
@@ -2735,10 +2737,19 @@ fn expand_field(
             );
         }
         TypeCategory::Enum(variants) => {
-            let hi = (variants.len().saturating_sub(1)) as i64;
-            let (lo, hi) = match fixed {
-                Some(v) => (v, v),
-                None => (0, hi),
+            // An enum's values are its declared ones (PSS 12.4), not its
+            // positions: `enum e { A = 5, B, C }` has 5, 6, 7. The domain was
+            // 0..len-1, so every variant evaluated to its position.
+            let vals: Vec<i64> = variants
+                .iter()
+                .enumerate()
+                .map(|(i, v)| model.enum_values.get(v).copied().unwrap_or(i as i64))
+                .collect();
+            let vmin = vals.iter().copied().min().unwrap_or(0);
+            let vmax = vals.iter().copied().max().unwrap_or(0);
+            let (lo, hi, allowed) = match fixed {
+                Some(v) => (v, v, None),
+                None => (vmin, vmax, Some(vals)),
             };
             out.insert(
                 path,
@@ -2746,7 +2757,7 @@ fn expand_field(
                     lo,
                     hi,
                     forbidden: HashSet::new(),
-                    allowed: None,
+                    allowed,
                     is_enum: true,
                     decl: None,
                     soft_hi: None,

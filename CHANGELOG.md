@@ -13,6 +13,36 @@ approximated.
 
 ---
 
+## 0.65.0 — 2026-11-13
+
+Enums use their declared values
+
+`enum e { A = 5, B, C }` gave every variant its **position**: `x` solved to 0, 1
+or 2 instead of 5, 6 or 7. Two separate places threw the values away:
+
+- the parser read `= value` and discarded it (`let _ = self.parse_expr(0)?;`)
+- the domain for an enum-typed field was built as `0 .. len-1`
+
+`EnumDecl` now carries the values, `Model.enum_values` holds them (an
+auto-incrementing variant takes the previous value + 1, per 12.4), and the
+domain is built from the declared values with `allowed` set to exactly them.
+
+```
+enum e { A = 5, B, C }              x ∈ {5, 6, 7}      (was {0, 1, 2})
+enum wide_e : bit[8] { W0=200, … }  w ∈ {200, 201}     (was {0, 1})
+```
+
+**Row 11 still fails, and here is why:** its second half is
+`s in { A, C }` — membership over a literal list, which is row 21 and is not
+implemented. The enum half of the row is now correct; the row needs both fixes
+before it flips. Proof stays at **119 pass / 43 fail**, and the release says so
+rather than claiming a row it did not close.
+
+**Also:** `Cargo.toml` said 0.63.0 while the previous tag was v0.64.0 — the
+licence commit did not bump the version. Corrected here.
+
+**Verification:** 153 tests (1 new); proof 119 pass / 43 fail.
+
 ## 0.63.0 — 2026-11-13
 
 `sizeof_s` of a typedef alias
