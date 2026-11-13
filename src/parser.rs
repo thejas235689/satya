@@ -1572,6 +1572,12 @@ impl Parser {
             self.eat_punct(";");
             (String::new(), Vec::new(), None)
         };
+        // PSS 21.8 (Syntax 118): "The function fatal() shall terminate the
+        // solving or execution flow at the nearest possible point." For target
+        // code that means nothing after it is reachable, so the statements
+        // after a `fatal(...)` call are dropped. They used to be emitted, so a
+        // generated program carried on past a fatal.
+        let stmts = truncate_after_fatal(stmts);
         Ok(ExecBlock { kind, lang, body, stmts })
     }
 
@@ -4208,6 +4214,20 @@ fn expand_action(a: &mut ActionDecl, outer: &VarScope, table: &StructTable) {
 /// Parse a sequence of `exec`-body statements from captured tokens.
 /// The variable an assignment writes to: a plain path, or an array element
 /// rendered as `name[index]` so it matches how elements are stored.
+/// Drop everything after the first `fatal(...)` call (PSS 21.8).
+fn truncate_after_fatal(mut stmts: Vec<ExecStmt>) -> Vec<ExecStmt> {
+    fn is_fatal(st: &ExecStmt) -> bool {
+        match st {
+            ExecStmt::Call(name, _) => name == "fatal",
+            _ => false,
+        }
+    }
+    if let Some(i) = stmts.iter().position(is_fatal) {
+        stmts.truncate(i + 1);
+    }
+    stmts
+}
+
 fn exec_assign_target(e: &Expr) -> Option<Path> {
     match e {
         Expr::Path(p) => Some(p.clone()),

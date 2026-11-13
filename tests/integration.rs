@@ -3681,3 +3681,17 @@ component c {
     assert!(c.contains("arr[1]") && c.contains("= 9"),
             "array-element assignment was dropped:\n{}", c);
 }
+
+#[test]
+fn statements_after_fatal_are_dropped() {
+    // PSS 21.8 (Syntax 118): "The function fatal() shall terminate the solving
+    // or execution flow at the nearest possible point." Statements after it
+    // used to be emitted, so a generated program carried on past a fatal.
+    let m = compile_pss(
+        "component c { action a { int b; exec body { fatal(1, \"boom\"); b = 2; } }; };"
+    ).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let c = get("c").unwrap().emit(&m, &s, &BackendOptions::default()).unwrap();
+    assert!(c.contains("fatal"), "the fatal call itself was lost:\n{}", c);
+    assert!(!c.contains("self->b = 2"), "statement after fatal was emitted:\n{}", c);
+}

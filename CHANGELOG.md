@@ -13,6 +13,48 @@ approximated.
 
 ---
 
+## 0.62.0 — 2026-11-13
+
+`fatal()` terminates; the other three need more than a patch
+
+Working from the PSS 3.1 text, clause by clause, on the four items I listed.
+
+### Fixed: `fatal()` now terminates (row 110)
+
+21.8 (Syntax 118): "The function fatal() shall terminate the solving or
+execution flow at the nearest possible point." Statements after a `fatal(...)`
+call were still emitted, so a generated program carried on past a fatal:
+
+```c
+/* foreign call: fatal(1, 0) */
+self->b = 2;          <- unreachable, now dropped
+```
+
+The exec statement list is truncated after the first `fatal` call, which covers
+both backends. Proof: **117 → 118 pass, 45 → 44 fail.**
+
+### Clause numbers corrected
+
+The sequence/concat clauses are **16.3.2** and **16.3.3** in 3.1, not 19.3.2 /
+19.3.3 — 19.3 is "Compile has" in this revision. Both behaviours were verified
+against the new text and are already correct: `sequence` matches across a gap,
+`concat` does not, and every concat realization is a sequence realization.
+
+### Reproduced but NOT fixed
+
+- **`match` range arms (98).** `match (5) { [4..7] { r = 2; } default { r = 9; } }`
+  emits *both* branches. The arms are not reaching the `switch` emitter at all,
+  so this is a parser problem, not the backend's arm selection.
+- **`compile has` (104).** 19.3: true "if a type or constant has been previously
+  declared". The parser returns a constant `true` and has no symbol table at
+  that point, so `compile has(NoSuchThing)` takes the enabled branch.
+- **`forall` (58).** Needs an instance tree the engine does not have. Structural.
+
+Each is recorded here rather than attempted, because a half-fix in any of the
+three produces a wrong answer with no complaint.
+
+**Verification:** 151 tests (1 new); proof 118 pass / 44 fail.
+
 ## 0.61.0 — 2026-11-13
 
 The standard settles `addr_value_abs` — and my 0.51.1 call was wrong
