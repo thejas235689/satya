@@ -13,6 +13,30 @@ approximated.
 
 ---
 
+## 0.63.0 — 2026-11-13
+
+`sizeof_s` of a typedef alias
+
+A132. `typedef bit[24] word24_t;` then `sizeof_s<word24_t>::nbits` gave **0**.
+
+The parser collected typedef aliases into a map of its own, and the map never
+left the parser: `ir::Model` had no field for it, so the solver had no way to
+resolve an alias. The chain was broken in three places, and each had to be
+joined:
+
+- `ast::SourceFile` now carries `typedefs`
+- `Model` carries them through lowering (and the JSON frontend starts empty)
+- `Env` derives a width per alias — the declared width for `bit[N]`, or the
+  width of the aliased named type — and indexes it by leaf name so a
+  package-qualified spelling resolves too
+
+`sizeof_s<word24_t>::nbits` is 24, and the bit-field struct beside it still
+gives 8.
+
+Proof: **118 → 119 pass, 44 → 43 fail.**
+
+**Verification:** 152 tests (1 new); proof 119 pass / 43 fail.
+
 ## 0.62.0 — 2026-11-13
 
 `fatal()` terminates; the other three need more than a patch

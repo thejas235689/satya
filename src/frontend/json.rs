@@ -68,6 +68,7 @@ pub fn model_from_json(src: &str) -> PssResult<Model> {
         qual_index: HashMap::new(),
         duplicates: Vec::new(),
         imports: Vec::new(),
+        typedefs: std::collections::HashMap::new(),
     };
 
     if let Some(pkgs) = obj_get(obj, "packages").and_then(|v| v.as_arr()) {

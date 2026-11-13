@@ -247,6 +247,7 @@ impl Parser {
             covergroups: std::mem::take(&mut self.covergroups),
             monitors: std::mem::take(&mut self.monitors),
             functions: std::mem::take(&mut self.functions),
+            typedefs: self.typedefs.clone(),
         };
         // `p = '{x : 3, y : 4};` / `p = '{3, 4};` name structure members, not
         // array elements (PSS 8.5.2). Resolve them once the whole file — and so

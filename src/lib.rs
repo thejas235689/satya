@@ -56,6 +56,8 @@ pub fn compile_files(paths: &[String]) -> PssResult<ir::Model> {
     let mut covergroups: Vec<ast::Covergroup> = Vec::new();
     let mut monitors: Vec<ast::Monitor> = Vec::new();
     let mut functions: Vec<ast::Function> = Vec::new();
+    let mut typedefs: std::collections::HashMap<String, ast::TypeRef> =
+        std::collections::HashMap::new();
     for path in expand_projects(paths)? {
         let src = std::fs::read_to_string(&path)
             .map_err(|e| PssError::plain(format!("cannot read `{}`: {}", path, e)))?;
@@ -67,12 +69,14 @@ pub fn compile_files(paths: &[String]) -> PssResult<ir::Model> {
         covergroups.extend(file.covergroups);
         monitors.extend(file.monitors);
         functions.extend(file.functions);
+        typedefs.extend(file.typedefs);
     }
     ir::Model::lower(&ast::SourceFile {
         items,
         covergroups,
         monitors,
         functions,
+        typedefs,
     })
 }
 

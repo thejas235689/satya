@@ -307,6 +307,22 @@ impl<'a> Env<'a> {
             let leaf = name.rsplit("::").next().unwrap_or(name).to_string();
             type_bits.entry(leaf).or_insert(32);
         }
+        // `typedef bit[24] word24_t;` — the alias was kept only in the parser,
+        // so `sizeof_s<word24_t>` evaluated to 0 (PSS 12.2, 24.10.2).
+        for (alias, target) in &model.typedefs {
+            let n = match &target.width {
+                Some(w) => w.eval_const(&|_| None).unwrap_or(0),
+                None => {
+                    let tname = target.path.segments.join("::");
+                    type_bits.get(&tname).copied().unwrap_or(0)
+                }
+            };
+            if n > 0 {
+                type_bits.insert(alias.clone(), n);
+                let leaf = alias.rsplit("::").next().unwrap_or(alias).to_string();
+                type_bits.entry(leaf).or_insert(n);
+            }
+        }
         Env {
             seed: 0,
             type_bits,

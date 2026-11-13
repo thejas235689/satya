@@ -203,6 +203,8 @@ pub struct Model {
     pub functions: std::collections::HashMap<String, crate::ast::Function>,
     /// `import pkg::*;` / `import pkg::name;` at file scope.
     pub imports: Vec<String>,
+    /// `typedef` aliases, so `sizeof_s<alias>` resolves (PSS 12.2, 24.10.2).
+    pub typedefs: std::collections::HashMap<String, crate::ast::TypeRef>,
 }
 
 impl Model {
@@ -240,6 +242,7 @@ impl Model {
         }
         lw.collect(file.items.iter(), None);
         lw.finish();
+        lw.model.typedefs = file.typedefs.clone();
         lw.model.covergroups = file.covergroups.clone();
         lw.model.monitors = file.monitors.clone();
         for f in &file.functions {

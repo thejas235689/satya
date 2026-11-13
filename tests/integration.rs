@@ -3695,3 +3695,31 @@ fn statements_after_fatal_are_dropped() {
     assert!(c.contains("fatal"), "the fatal call itself was lost:\n{}", c);
     assert!(!c.contains("self->b = 2"), "statement after fatal was emitted:\n{}", c);
 }
+
+#[test]
+fn sizeof_s_resolves_a_typedef_alias() {
+    // PSS 12.2 + 24.10.2: `typedef bit[24] word24_t;` then
+    // `sizeof_s<word24_t>::nbits` is 24. The alias map lived only inside the
+    // parser, so the solver had never seen it and the answer was 0.
+    let src = r#"
+package p {
+  typedef bit[24] word24_t;
+  struct ctrl_s { bit[1] en; bit[3] mode; bit[4] rsvd; };
+}
+component C {
+  action a {
+    int typedef_bits; int struct_bits;
+    exec pre_solve {
+      typedef_bits = sizeof_s<word24_t>::nbits;
+      struct_bits  = sizeof_s<ctrl_s>::nbits;
+    }
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    assert!(m.typedefs.contains_key("word24_t"), "typedef did not reach the model");
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| s.steps[0].fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v);
+    assert_eq!(get("typedef_bits"), Some(24), "sizeof_s of a typedef alias");
+    assert_eq!(get("struct_bits"), Some(8), "sizeof_s of a bit-field struct");
+}

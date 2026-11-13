@@ -301,6 +301,9 @@ pub struct SourceFile {
     pub monitors: Vec<Monitor>,
     /// `function` / `task` declarations anywhere in the file (PSS 22.1).
     pub functions: Vec<Function>,
+    /// `typedef <type> NAME;` aliases (PSS 12.2), keyed by name. They were kept
+    /// only inside the parser, so `sizeof_s<alias>` could not resolve one.
+    pub typedefs: std::collections::HashMap<String, TypeRef>,
 }
 
 // ---------------------------------------------------------------------------
