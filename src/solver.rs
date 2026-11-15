@@ -423,6 +423,26 @@ pub fn eval(expr: &Expr, values: &BTreeMap<String, i64>, env: &Env) -> Option<i6
                 _ => Some(v),
             }
         }
+        // `x in {a, b, c}` and `x in [lo..hi]` as *expressions* (8.5.9). They
+        // existed only as constraint atoms, so in an exec body
+        // `h = (2 in [1,2,3]);` evaluated to nothing and h kept its default.
+        Expr::InSet(x, items) => {
+            let v = eval(x, values, env)?;
+            for it in items {
+                if let Some(y) = eval(it, values, env) {
+                    if y == v {
+                        return Some(1);
+                    }
+                }
+            }
+            Some(0)
+        }
+        Expr::InRange(x, lo, hi) => {
+            let v = eval(x, values, env)?;
+            let a = eval(lo, values, env)?;
+            let b = eval(hi, values, env)?;
+            Some(if v >= a.min(b) && v <= a.max(b) { 1 } else { 0 })
+        }
         Expr::Binary(op, a, b) => {
             // Array operators whose operands are collections rather than values
             // (PSS 7.9.2.1): set membership and element-wise equality.

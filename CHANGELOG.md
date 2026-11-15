@@ -13,6 +13,35 @@ approximated.
 
 ---
 
+## 0.66.0 — 2026-11-15
+
+Membership as an expression, and packaged enum values
+
+Two proof rows, three causes — and the first two attempts were wrong.
+
+### Row 21: `x in [...]` as an expression
+
+`h = (2 in [1,2,3]);` in an exec body left `h` at its default. My first guess was
+`array_contains`, which only understands a *variable* on the right; I added a
+literal-list branch, it never fired, and I reverted it — the parser does not
+produce `Binary("in", …)` for this at all. It produces `Expr::InSet` /
+`Expr::InRange`, which existed **only as constraint atoms** and had no arm in
+the expression evaluator.
+
+Adding those two arms is the fix. `2 in [1,2,3]` → 1, `9 in [1,2,3]` → 0,
+`5 in [4..7]` → 1.
+
+### Row 11: enums inside a package
+
+`enum seq_e { A = 5, B, C }` inside `package p { }` still gave positions. The
+lowering walked only `file.items` at top level, so a packaged enum never
+registered its values — the 0.65.0 fix covered top-level enums only. It now
+walks into packages.
+
+Proof: **119 → 121 pass, 43 → 41 fail** (rows 11 and 21).
+
+**Verification:** 155 tests (2 new); proof 121 pass / 41 fail.
+
 ## 0.65.0 — 2026-11-13
 
 Enums use their declared values

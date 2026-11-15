@@ -3750,3 +3750,46 @@ fn an_enum_uses_its_declared_values() {
         assert!(w == 200 || w == 201, "seed {}: w={}", seed, w);
     }
 }
+
+#[test]
+fn membership_is_evaluated_as_an_expression() {
+    // `x in {a, b}` and `x in [lo..hi]` existed only as constraint atoms, so
+    // in an exec body `h = (2 in [1,2,3]);` evaluated to nothing and h kept its
+    // default. Both forms must evaluate to 1/0.
+    let m = compile_pss(r#"
+component c {
+  action a {
+    int hit; int miss; int rng;
+    exec pre_solve {
+      hit  = (2 in [1, 2, 3]);
+      miss = (9 in [1, 2, 3]);
+      rng  = (5 in [4..7]);
+    }
+  };
+};
+"#).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| s.steps[0].fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v);
+    assert_eq!(get("hit"), Some(1), "2 in [1,2,3]");
+    assert_eq!(get("miss"), Some(0), "9 in [1,2,3]");
+    assert_eq!(get("rng"), Some(1), "5 in [4..7]");
+}
+
+#[test]
+fn an_enum_inside_a_package_keeps_its_values() {
+    // The lowering walked only top-level items, so an enum declared inside
+    // `package p { }` never registered its variant values and fell back to
+    // positions.
+    let m = compile_pss(r#"
+package p {
+  enum seq_e { A = 5, B, C };
+}
+component c { action a { rand p::seq_e s; } };
+"#).unwrap();
+    assert_eq!(m.enum_values.get("A"), Some(&5), "packaged enum values not lowered");
+    for seed in 1..=4u64 {
+        let s = engine::run_scenario(&m, "a", seed);
+        let v = s.steps[0].fields.iter().find(|(k, _)| k == "s").map(|(_, v)| *v).unwrap();
+        assert!((5..=7).contains(&v), "seed {}: s={}", seed, v);
+    }
+}

@@ -247,8 +247,22 @@ impl Model {
         lw.finish();
         lw.model.typedefs = file.typedefs.clone();
         // Enum variant values: an explicit `= v`, otherwise previous + 1.
-        for item in &file.items {
-            if let crate::ast::Item::Enum(e) = item {
+        // Enums nested in a package must be reached too — an enum declared
+        // inside `package p { }` was skipped, so its variants fell back to
+        // their positions.
+        let mut all_enums: Vec<&crate::ast::EnumDecl> = Vec::new();
+        fn walk<'a>(items: &'a [crate::ast::Item], out: &mut Vec<&'a crate::ast::EnumDecl>) {
+            for it in items {
+                match it {
+                    crate::ast::Item::Enum(e) => out.push(e),
+                    crate::ast::Item::Package(p) => walk(&p.items, out),
+                    _ => {}
+                }
+            }
+        }
+        walk(&file.items, &mut all_enums);
+        for e in all_enums {
+            {
                 let mut next: i64 = 0;
                 for (i, v) in e.variants.iter().enumerate() {
                     let declared = e
