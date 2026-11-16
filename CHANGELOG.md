@@ -13,6 +13,41 @@ approximated.
 
 ---
 
+## 0.67.0 — 2026-11-16
+
+A declaration inside an exec body is a scoped local
+
+Row 90. `ExecStmt` had `Assign`, `Call`, `If`, `Repeat`, `RepeatWhile`,
+`Foreach`, `Match` — and **no declaration node**. So
+
+```pss
+exec post_solve { int t = 7; r = t + 1; }
+```
+
+parsed as an *assignment* to `t`, indistinguishable from writing the component
+field, and clobbered it:
+
+```
+before:  r=8  t=7     <- t lost its init_up value of 1
+after:   r=8  t=1
+```
+
+**Added `ExecStmt::Decl { name, init }`.** The parser produces it for a
+type-led statement (`int`, `uint`, `longint`, `ulongint`, `bool`, `string`,
+`float32`, `float64`, `chandle`), including width suffixes (`bit[8] x`) and
+array dimensions (`int m[2][2] = …`). The engine keeps a scope stack: a
+declaration records what it shadows, and leaving the block restores it — so a
+nested `{ int t = 9; }` does not leak either. Both backends emit a real C/SV
+declaration rather than `self->t = 7;`.
+
+Two existing tests caught the edge cases: the multi-declarator form
+(`int e = 1, f = e + 1, g;`) and a brace-initialised 2-D array
+(`int m[2][2] = {{1,2},{3,4}};`), both of which the first attempt broke.
+
+Proof: **121 → 122 pass, 41 → 40 fail** (row 90; rows 89 and 91 still pass).
+
+**Verification:** 156 tests (1 new); proof 122 pass / 40 fail.
+
 ## 0.66.0 — 2026-11-15
 
 Membership as an expression, and packaged enum values

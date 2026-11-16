@@ -1816,6 +1816,64 @@ impl Parser {
             };
             return Some(ExecStmt::If(cond, then, els));
         }
+        // A declaration: `<type> name;` or `<type> name = expr;` (PSS 22.5).
+        // Without this it parsed as an assignment to a field of the same name,
+        // so `int t = 7;` overwrote the component field `t`.
+        {
+            const TYPES: &[&str] = &[
+                "int", "uint", "longint", "ulongint", "bool", "string",
+                "float32", "float64", "chandle",
+            ];
+            let is_type = match self.peek().kind.clone() {
+                TokKind::Ident(id) => TYPES.contains(&id.as_str()),
+                _ => false,
+            };
+            let next_is_name = matches!(self.peek_at(1).kind, TokKind::Ident(_))
+                || self.peek_at(1).is_punct("[");
+            if is_type && next_is_name {
+                let save = self.pos;
+                self.bump();
+                // Optional width: `bit[8] x;`
+                if self.at_punct("[") {
+                    self.bump();
+                    let _ = self.parse_expr(0);
+                    self.eat_punct("]");
+                }
+                if let TokKind::Ident(name) = self.peek().kind.clone() {
+                    self.bump();
+                    // Array dimensions follow the name: `int m[2][2] = …`.
+                    while self.at_punct("[") {
+                        self.bump();
+                        let _ = self.parse_expr(0);
+                        self.eat_punct("]");
+                    }
+                    let init = if self.eat_punct("=") {
+                        match self.parse_expr(0) {
+                            Ok(e) => Some(e),
+                            Err(er) => {
+                                if self.exec_err.is_none() {
+                                    self.exec_err = Some(er);
+                                }
+                                self.pos = save;
+                                return None;
+                            }
+                        }
+                    } else {
+                        None
+                    };
+                    // Further declarators after a comma (`int e = 1, f = e + 1, g;`)
+                    // are legal; the first one carries the declaration.
+                    if self.at_punct(",") {
+                        self.skip_to_semicolon();
+                        self.eat_punct(";");
+                    } else {
+                        self.exec_semi();
+                    }
+                    return Some(ExecStmt::Decl { name, init });
+                }
+                self.pos = save;
+            }
+        }
         let save = self.pos;
         let e = match self.parse_expr(0) {
             Ok(e) => e,

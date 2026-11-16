@@ -244,6 +244,14 @@ fn emit_step(step: &Step, indent: &str) -> String {
 
 fn emit_exec_stmt(s: &mut String, st: &ExecStmt, indent: &str, fields: &[String]) {
     match st {
+        ExecStmt::Decl { name, init } => {
+            // A declaration inside an exec body is a real C local, scoped to
+            // the block the emitter is currently inside.
+            match init {
+                Some(e) => s.push_str(&format!("{}long long {} = {};\n", indent, name, c_expr_self(e, fields))),
+                None => s.push_str(&format!("{}long long {} = 0;\n", indent, name)),
+            }
+        }
         ExecStmt::Assign(path, rhs) => {
             if contains_call(rhs) {
                 // The right-hand side calls a foreign function that has no C

@@ -159,6 +159,10 @@ pub struct ExecBlock {
 pub enum ExecStmt {
     /// `lhs = rhs;`
     Assign(Path, Expr),
+    /// `int t = 7;` — a declaration inside an exec body (PSS 22.5). It scopes a
+    /// local to the enclosing block. Without its own node it parsed as an
+    /// assignment, so `int t = 7;` overwrote the component field `t`.
+    Decl { name: String, init: Option<Expr> },
     /// `f(a, b);`
     Call(String, Vec<Expr>),
     /// `if (cond) { .. } else { .. }`

@@ -3793,3 +3793,40 @@ component c { action a { rand p::seq_e s; } };
         assert!((5..=7).contains(&v), "seed {}: s={}", seed, v);
     }
 }
+
+#[test]
+fn a_declaration_in_an_exec_body_is_scoped_to_its_block() {
+    // PSS 22.5: `int t = 7;` declares a local. It has no node of its own
+    // before this, so it parsed as an assignment and overwrote the component
+    // field `t`, which `init_up` had set to 1.
+    let m = compile_pss(r#"
+component c {
+  int t;
+  exec init_up { t = 1; }
+  action a { int r; exec post_solve { int t = 7; r = t + 1; } };
+};
+"#).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| s.steps[0].fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v);
+    assert_eq!(get("r"), Some(8), "the local supplies the initialiser");
+    assert_eq!(get("t"), Some(1), "the component field must not be clobbered");
+
+    // The same declaration outside any shadowing field still works.
+    let m = compile_pss("component c { action a { int r; exec post_solve { int q = 4; r = q * 2; } }; };").unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let r = s.steps[0].fields.iter().find(|(k, _)| k == "r").map(|(_, v)| *v);
+    assert_eq!(r, Some(8), "a local with no shadowed field");
+
+    // A declaration inside a nested block is scoped to that block.
+    let m = compile_pss(r#"
+component c {
+  int t;
+  exec init_up { t = 1; }
+  action a { int r; exec post_solve { { int t = 9; } r = t + 1; } };
+};
+"#).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |n: &str| s.steps[0].fields.iter().find(|(k, _)| k == n).map(|(_, v)| *v);
+    assert_eq!(get("t"), Some(1), "nested block must not leak");
+    assert_eq!(get("r"), Some(2), "after the block, `t` is the field again");
+}

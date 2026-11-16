@@ -158,6 +158,10 @@ struct Engine<'a> {
     /// action name, so the name has to be resolved against the enclosing
     /// action's declarations before falling back to an unresolved step.
     handle_scopes: Vec<Vec<(String, String, String)>>,
+    /// Names declared by `ExecStmt::Decl` in each enclosing exec block, with the
+    /// value they shadowed. Restored when the block ends, so a local never
+    /// leaks into the component field of the same name.
+    decl_scopes: Vec<Vec<(String, Option<i64>)>>,
     /// Action-handle *arrays* in scope, innermost last: `(name, bound)` for a
     /// field like `c::t xs[2];`. Such a field has a declared extent but no
     /// `.size` entry (the solver records sizes only for arrays it owns), so
@@ -270,6 +274,7 @@ pub fn run_scenario(model: &Model, root_action: &str, seed: u64) -> Scenario {
         steps: Vec::new(),
         warnings: Vec::new(),
         handle_scopes: Vec::new(),
+        decl_scopes: Vec::new(),
         handle_array_scopes: Vec::new(),
         group_counter: 0,
         pools: Vec::new(),
@@ -1290,13 +1295,35 @@ impl<'a> Engine<'a> {
     /// Syntax 89-101). Returns how the block finished, so `break`, `continue`
     /// and `return` propagate out of loops.
     fn exec_stmts(&mut self, stmts: &[ExecStmt], values: &mut BTreeMap<String, i64>) -> Flow {
-        for st in stmts {
-            match self.exec_one(st, values) {
-                Flow::Normal => {}
-                other => return other,
+        self.decl_scopes.push(Vec::new());
+        let flow = {
+            let mut f = Flow::Normal;
+            for st in stmts {
+                match self.exec_one(st, values) {
+                    Flow::Normal => {}
+                    other => {
+                        f = other;
+                        break;
+                    }
+                }
+            }
+            f
+        };
+        // Leaving the block: a declared local stops existing, and whatever it
+        // shadowed is visible again.
+        if let Some(decls) = self.decl_scopes.pop() {
+            for (name, prior) in decls.into_iter().rev() {
+                match prior {
+                    Some(v) => {
+                        values.insert(name, v);
+                    }
+                    None => {
+                        values.remove(&name);
+                    }
+                }
             }
         }
-        Flow::Normal
+        flow
     }
 
     /// Run a user `function` / `task` body (PSS 22.1), binding its parameters
@@ -1415,6 +1442,24 @@ impl<'a> Engine<'a> {
 
     fn exec_one(&mut self, st: &ExecStmt, values: &mut BTreeMap<String, i64>) -> Flow {
         match st {
+            ExecStmt::Decl { name, init } => {
+                // Record what this shadows so the block can restore it, then
+                // evaluate the initialiser into the local.
+                let prior = values.get(name).copied();
+                if let Some(scope) = self.decl_scopes.last_mut() {
+                    scope.push((name.clone(), prior));
+                }
+                let v = match init {
+                    Some(e) => {
+                    let model = self.model;
+                    let seed = self.seed;
+                    eval_value(e, values, model, seed).unwrap_or(0)
+                }
+                    None => 0,
+                };
+                values.insert(name.clone(), v);
+                Flow::Normal
+            }
             ExecStmt::Assign(path, rhs) => {
                 let base = path.segments.join(".");
                 // A string assignment is carried in the string store rather than

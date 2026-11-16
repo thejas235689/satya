@@ -176,6 +176,12 @@ fn emit_action_sequence(
 fn emit_exec_sv(s: &mut String, st: &crate::ast::ExecStmt, indent: &str) {
     use crate::ast::ExecStmt;
     match st {
+        ExecStmt::Decl { name, init } => {
+            match init {
+                Some(e) => s.push_str(&format!("{}int {} = {};\n", indent, name, render_sv(e))),
+                None => s.push_str(&format!("{}int {} = 0;\n", indent, name)),
+            }
+        }
         ExecStmt::Assign(path, rhs) => {
             s.push_str(&format!(
                 "{}{} = {};\n",
