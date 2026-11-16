@@ -13,6 +13,40 @@ approximated.
 
 ---
 
+## 0.68.0 — 2026-11-16
+
+float32 and chandle; row 9 is a rendering bug, not a value bug
+
+### float32 stores a binary32 word (rows 10, 112)
+
+`f32 = 6.0` stored `4618441417868443648` — the **binary64** image — where a
+float32 must store its IEEE-754 binary32 pattern, `1086324736` (0x40C00000).
+`f32 = 20.14` gives 1101078200 (0x41A11EB8). `float64` is unchanged.
+
+A prerequisite came with it: `-6.0` was the two's-complement negation of 6.0's
+bit pattern (0xBFE8… = −0.75), so narrowing a negative literal would have stored
+a silently wrong word. `-<literal>` now flips the sign bit.
+
+### chandle compares (row 13)
+
+`h == h` was 0 — a chandle carried no value at all. Each chandle attribute now
+gets a distinct opaque id before `pre_solve`: `h == h` is 1, two different
+chandles give 0, and ids are seed-stable.
+
+### Row 9 is not a value-model bug
+
+`bit[64]` / `uint64` is **already correct**: `bad64` holds 0xFFFF_FFFF_FFFF_FFFF,
+its constraint is satisfied 1/1, and `bad64&0xFFFF == bad64>>48 == 65535`. What
+fails is **rendering**: values are `i64` and the JSON/trace backends format them
+signed, so 2^64−1 prints as −1. No change in the solver can print it as
+18446744073709551615 without inventing a wrong number — 2^64−1 has no
+non-negative `i64` image. The fix belongs in the renderer, with a width or
+unsignedness flag on the field, and is left for that work rather than guessed at.
+
+Proof: **122 → 125 pass, 40 → 37 fail** (rows 10, 13, 112).
+
+**Verification:** 158 tests (2 new); proof 125 pass / 37 fail.
+
 ## 0.67.0 — 2026-11-16
 
 A declaration inside an exec body is a scoped local

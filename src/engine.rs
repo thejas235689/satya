@@ -37,6 +37,15 @@ impl StepMode {
     }
 }
 
+/// The width of the IEEE-754 word a floating-point value is stored in. The
+/// engine carries every float as a binary64 image; a `float32` attribute stores
+/// the binary32 image instead (PSS 6.1.1, `float_pkg`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FloatKind {
+    F32,
+    F64,
+}
+
 /// A flow object allocated to (or consumed by) a step.
 #[derive(Debug, Clone)]
 pub struct FlowRecord {
@@ -1396,6 +1405,155 @@ impl<'a> Engine<'a> {
         bits
     }
 
+    /// The declared type name of an assignment target, resolved through one
+    /// level of struct field exactly as `exec_target_bits` resolves a width.
+    fn exec_target_type(&self, segments: &[String]) -> Option<String> {
+        let action = self.exec_action.as_ref()?;
+        let first = segments.first()?;
+        let f = action.fields.iter().find(|f| &f.name == first)?;
+        let mut ty = f.type_name.clone();
+        for seg in &segments[1..] {
+            let dt = self.lookup_type(&ty)?;
+            let nf = dt.fields.iter().find(|x| &x.name == seg)?;
+            ty = nf.type_name.clone();
+        }
+        Some(ty)
+    }
+
+    /// The storage width (32 or 64) of a floating-point type, resolving
+    /// typedefs. `None` for anything that is not a float.
+    fn float_width_of(&self, ty: &str) -> Option<u32> {
+        let mut name = ty.to_string();
+        for _ in 0..4 {
+            let leaf = name.rsplit("::").next().unwrap_or(&name).to_string();
+            match leaf.as_str() {
+                "float32" => return Some(32),
+                "float64" => return Some(64),
+                _ => {}
+            }
+            let next = self
+                .model
+                .typedefs
+                .get(&name)
+                .or_else(|| self.model.typedefs.get(&leaf))
+                .map(|t| t.name());
+            name = next?;
+        }
+        None
+    }
+
+    /// How a floating-point expression's stored image is to be read: a
+    /// `float32` attribute holds a binary32 pattern, everything else in this
+    /// engine (a `float64` attribute, a float literal, a `float_pkg` result) is
+    /// a binary64 pattern. `None` means the expression is not a float at all.
+    fn rhs_float_kind(&self, e: &Expr) -> Option<FloatKind> {
+        match e {
+            Expr::Float(_) => Some(FloatKind::F64),
+            Expr::Unary(op, x) if op == "-" || op == "+" => self.rhs_float_kind(x),
+            Expr::Path(p) => {
+                match self
+                    .exec_target_type(&p.segments)
+                    .and_then(|t| self.float_width_of(&t))
+                {
+                    Some(32) => Some(FloatKind::F32),
+                    Some(_) => Some(FloatKind::F64),
+                    None => None,
+                }
+            }
+            // The `float_pkg` functions take and return binary64 images.
+            Expr::Call(name, _) => matches!(
+                name.as_str(),
+                "to_float"
+                    | "log"
+                    | "log10"
+                    | "exp"
+                    | "sqrt"
+                    | "round"
+                    | "floor"
+                    | "ceil"
+                    | "sin"
+                    | "cos"
+                    | "tan"
+                    | "asin"
+                    | "acos"
+                    | "atan"
+                    | "sinh"
+                    | "cosh"
+                    | "tanh"
+                    | "asinh"
+                    | "acosh"
+                    | "atanh"
+                    | "pow"
+                    | "hypot"
+            )
+            .then_some(FloatKind::F64),
+            _ => None,
+        }
+    }
+
+    /// Give every `chandle` attribute in scope a distinct opaque handle value
+    /// (PSS 6.4). A chandle is an opaque pointer to a foreign object: it has no
+    /// arithmetic meaning, but it must still compare equal to itself and
+    /// unequal to a *different* handle. It used to carry no value at all, so
+    /// `h == h` evaluated to nothing and read back as 0.
+    fn seed_chandles(&mut self, action: &Action, values: &mut BTreeMap<String, i64>) {
+        let mut paths: Vec<String> = Vec::new();
+        let mut visited: Vec<String> = Vec::new();
+        for f in &action.fields {
+            Self::collect_chandles(&self.model, f, "", 0, &mut visited, &mut paths);
+        }
+        for p in paths {
+            if values.contains_key(&p) {
+                continue;
+            }
+            // Allocated from the same handle table `make_handle_from_*` uses, so
+            // a chandle value is unique and never collides with a real handle.
+            let idx = self.handle_seq;
+            self.handle_seq += 1;
+            values.insert(format!("__h.{}.addr", idx), 0);
+            values.insert(format!("__h.{}.abs", idx), 1);
+            values.insert(format!("__h.{}.tag", idx), 0);
+            values.insert(p, idx);
+        }
+    }
+
+    /// Collect the paths of `chandle` attributes, descending into struct-typed
+    /// members one level at a time.
+    fn collect_chandles(
+        model: &Model,
+        f: &Field,
+        prefix: &str,
+        depth: usize,
+        visited: &mut Vec<String>,
+        out: &mut Vec<String>,
+    ) {
+        if depth > 4 {
+            return;
+        }
+        let path = if prefix.is_empty() {
+            f.name.clone()
+        } else {
+            format!("{}.{}", prefix, f.name)
+        };
+        let leaf = f.type_name.rsplit("::").next().unwrap_or(&f.type_name);
+        if leaf == "chandle" {
+            out.push(path);
+            return;
+        }
+        if let crate::ir::TypeCategory::Struct(key) = &f.category {
+            if let Some(t) = model.types.get(key) {
+                if visited.contains(&t.name) {
+                    return;
+                }
+                visited.push(t.name.clone());
+                for sub in &t.fields {
+                    Self::collect_chandles(model, sub, &path, depth + 1, visited, out);
+                }
+                visited.pop();
+            }
+        }
+    }
+
     /// Evaluate an expression as a string, if it is one (PSS 7.2, 8.6.3).
     ///
     /// Handles a literal, a string variable, concatenation with `+`, and the
@@ -1588,6 +1746,26 @@ impl<'a> Engine<'a> {
                     }
                 }
                 if let Some(v) = eval_value(rhs, values, self.model, self.seed) {
+                    // A `float32` attribute stores a 32-bit IEEE-754 word, so the
+                    // value it holds is the **binary32** pattern (PSS 6.1.1;
+                    // `float_pkg`'s storage type is 4 bytes): 6.0 stores
+                    // 0x40C00000 = 1086324736, not the binary64 image
+                    // 0x4018000000000000 = 4618441417868443648. `float64`
+                    // storage is unchanged. Assigning between the two widths
+                    // converts, so a value copied from a `float32` attribute is
+                    // not mistaken for a binary64 image.
+                    let target_w = self
+                        .exec_target_type(&path.segments)
+                        .and_then(|t| self.float_width_of(&t));
+                    let v = match (target_w, self.rhs_float_kind(rhs)) {
+                        (Some(32), Some(FloatKind::F64)) => {
+                            (f64::from_bits(v as u64) as f32).to_bits() as i64
+                        }
+                        (Some(64), Some(FloatKind::F32)) => {
+                            (f32::from_bits(v as u32) as f64).to_bits() as i64
+                        }
+                        _ => v,
+                    };
                     // A sized field holds its declared width: assigning 200 to a
                     // `bit[4]` leaves 8 (PSS 7.2). This was not applied, so an
                     // over-wide value was stored verbatim.
@@ -2581,6 +2759,9 @@ impl<'a> Engine<'a> {
         for (k, v) in bindings {
             pre.insert(k.clone(), *v);
         }
+        // A `chandle` attribute carries an opaque handle from the start, so it
+        // is readable (and comparable) in `exec` before any assignment.
+        self.seed_chandles(action, &mut pre);
         for e in action.execs.iter().filter(|e| e.kind == "pre_solve") {
             self.exec_stmts(&e.stmts, &mut pre);
         }

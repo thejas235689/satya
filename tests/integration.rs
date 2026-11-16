@@ -3830,3 +3830,32 @@ component c {
     assert_eq!(get("t"), Some(1), "nested block must not leak");
     assert_eq!(get("r"), Some(2), "after the block, `t` is the field again");
 }
+
+#[test]
+fn float32_stores_a_binary32_word() {
+    // PSS float_pkg: a float32 value is stored as its IEEE-754 binary32 bit
+    // pattern in a 32-bit word. It used to store the binary64 image instead.
+    let m = compile_pss("component c { action a { float32 f; exec post_solve { f = 6.0; } }; };").unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let f = s.steps[0].fields.iter().find(|(k, _)| k == "f").map(|(_, v)| *v).unwrap();
+    assert_eq!(f, 1086324736, "6.0f is 0x40C00000");
+
+    let m = compile_pss("component c { action a { float64 d; exec post_solve { d = 6.0; } }; };").unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let d = s.steps[0].fields.iter().find(|(k, _)| k == "d").map(|(_, v)| *v).unwrap();
+    assert_eq!(d, 4618441417868443648, "float64 keeps the binary64 image");
+}
+
+#[test]
+fn a_chandle_equals_itself() {
+    // A chandle carries an opaque handle; `h == h` must be true.
+    let m = compile_pss("component c { action a { chandle h; int e; exec post_solve { e = (h == h); } }; };").unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let e = s.steps[0].fields.iter().find(|(k, _)| k == "e").map(|(_, v)| *v).unwrap();
+    assert_eq!(e, 1, "h == h");
+
+    let m = compile_pss("component c { action a { chandle h; chandle g; int e; exec post_solve { e = (h == g); } }; };").unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let e = s.steps[0].fields.iter().find(|(k, _)| k == "e").map(|(_, v)| *v).unwrap();
+    assert_eq!(e, 0, "two distinct chandles differ");
+}

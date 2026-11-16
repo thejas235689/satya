@@ -403,6 +403,16 @@ pub fn eval(expr: &Expr, values: &BTreeMap<String, i64>, env: &Env) -> Option<i6
             Some((b >> lo) & mask)
         }
         Expr::Unary(op, e) => {
+            // Negating a *floating-point* literal negates the value, not the
+            // bit pattern: `-6.0` is 0xC018_0000_0000_0000, while the
+            // two's-complement negation of 6.0's pattern is 0xBFE8_…, which
+            // reads back as -0.75. A float value is carried as its binary64
+            // image (see `Expr::Float` above), so the sign is flipped here.
+            if op == "-" {
+                if let Expr::Float(f) = **e {
+                    return Some((-f).to_bits() as i64);
+                }
+            }
             let v = eval(e, values, env)?;
             match op.as_str() {
                 "-" => Some(-v),
