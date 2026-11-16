@@ -1841,9 +1841,12 @@ impl<'a> Engine<'a> {
                 for (guard, body) in arms {
                     let hit = match guard {
                         None => true,
-                        Some(g) => match (v, eval_value(g, values, self.model, self.seed)) {
-                            (Some(a), Some(b)) => a == b,
-                            _ => false,
+                        // A guard may be a single value, a range (`[4..7]`) or a
+                        // set (`{1, 2}`). Comparing by equality only meant a
+                        // range arm could never be selected (PSS 11.4.6).
+                        Some(g) => match v {
+                            Some(a) => range_matches(g, a, values, self.model),
+                            None => false,
                         },
                     };
                     if hit {

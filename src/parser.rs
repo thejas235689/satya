@@ -1748,12 +1748,18 @@ impl Parser {
                 }
                 let guard = if self.eat_ident("default") {
                     None
+                } else if self.at_punct("[") || self.at_punct("{") {
+                    // A range or set arm: `[4..7]:`, `{1, 2}:` (PSS 11.4.6).
+                    // Parsed as a plain expression this did not produce an
+                    // open_range_list, so a range arm never matched.
+                    Some(self.parse_range_or_set().ok()?)
                 } else {
                     let g = self.parse_expr(0).ok()?;
                     Some(g)
                 };
                 self.expect_punct(":").ok()?;
-                let body = self.parse_exec_block();
+                // An arm body may be a single statement (LRM Example 275).
+                let body = self.parse_exec_body();
                 arms.push((guard, body));
             }
             self.expect_punct("}").ok()?;

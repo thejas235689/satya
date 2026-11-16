@@ -3859,3 +3859,42 @@ fn a_chandle_equals_itself() {
     let e = s.steps[0].fields.iter().find(|(k, _)| k == "e").map(|(_, v)| *v).unwrap();
     assert_eq!(e, 0, "two distinct chandles differ");
 }
+
+#[test]
+fn match_selects_a_range_arm() {
+    // PSS 11.4.6: an arm's guard is an open_range_list, so `[4..7]` must match a
+    // subject of 5. The engine compared subject == guard by equality, so a
+    // range arm could never be selected and the default always won.
+    let m = compile_pss(r#"
+component c {
+  function int range(int x) {
+    int res; res = 0;
+    match (x) { [4..7]: { res = 2; } default: { res = 4; } }
+    return res;
+  }
+  action a { int g; exec post_solve { g = range(5); } };
+};
+"#).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let g = s.steps[0].fields.iter().find(|(k, _)| k == "g").map(|(_, v)| *v).unwrap();
+    assert_eq!(g, 2, "the [4..7] arm must match 5");
+
+    // The LRM Example 275 form: unbraced arm bodies.
+    let m = compile_pss(r#"
+component c {
+  function int lrm(int a) {
+    int res;
+    match (a) {
+      [0..3]:  res = 1;
+      [4..7]:  res = 2;
+      default: res = 4;
+    }
+    return res;
+  }
+  action a { int l; exec post_solve { l = lrm(5); } };
+};
+"#).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let l = s.steps[0].fields.iter().find(|(k, _)| k == "l").map(|(_, v)| *v).unwrap();
+    assert_eq!(l, 2, "an unbraced arm body must run");
+}

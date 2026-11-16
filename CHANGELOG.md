@@ -13,6 +13,34 @@ approximated.
 
 ---
 
+## 0.69.0 — 2026-11-16
+
+`match` selects a range arm
+
+Row 98, three causes in one construct:
+
+1. **The guard was parsed as a plain expression.** `[4..7]` is an
+   `open_range_list` (11.4.6), not an expression, so it never became the node
+   the matcher understands. It is now parsed with `parse_range_or_set`.
+2. **The engine compared `subject == guard` by equality** and never consulted
+   `range_matches`, which already existed for exactly this purpose. A range arm
+   therefore could never be selected and the default always won.
+3. **An unbraced arm body was dropped** — `[4..7]: res = 2;` (the LRM Example
+   275 form) used `parse_exec_block`, which returns empty without `{`. It now
+   uses the single-statement body parser added in 0.59.0.
+
+```
+match (5) { [4..7]: { res = 2; } default: { res = 4; } }   res = 2  (was 4)
+LRM Example 275 unbraced form                               res = 2  (was 4)
+```
+
+**Known approximation:** when more than one arm matches, the standard says one
+is chosen *randomly* (11.4.6.d). This takes the first match.
+
+Proof: **125 → 126 pass, 37 → 36 fail**.
+
+**Verification:** 159 tests (1 new); proof 126 pass / 36 fail.
+
 ## 0.68.0 — 2026-11-16
 
 float32 and chandle; row 9 is a rendering bug, not a value bug
