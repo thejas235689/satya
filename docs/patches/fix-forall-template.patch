@@ -1,0 +1,660 @@
+diff --git a/src/frontend/json.rs b/src/frontend/json.rs
+index fe29e46..35ea81b 100644
+--- a/src/frontend/json.rs
++++ b/src/frontend/json.rs
+@@ -177,6 +177,8 @@ pub fn model_from_json(src: &str) -> PssResult<Model> {
+                                 is_default: false,
+                                 is_disable: false,
+                     is_soft: false,
++                    is_forall: false,
++                    forall_binding: None,
+                             });
+                         }
+                     }
+@@ -381,6 +383,8 @@ fn build_constraints(obj: &[(String, Json)]) -> PssResult<Vec<Constraint>> {
+                     is_default: false,
+                     is_disable: false,
+                     is_soft: false,
++                    is_forall: false,
++                    forall_binding: None,
+                 });
+             }
+         }
+diff --git a/src/ir.rs b/src/ir.rs
+index 9fa780b..4192d37 100644
+--- a/src/ir.rs
++++ b/src/ir.rs
+@@ -81,6 +81,14 @@ pub struct Constraint {
+     /// `constraint soft ...` (PSS 16.1.4): honoured when it can be, dropped
+     /// when it conflicts with a hard constraint.
+     pub is_soft: bool,
++    /// `constraint forall (it : T) { ... }` (PSS 16.1.8). The body is kept in
++    /// `expr`; without the binding the solver cannot tell which attributes it
++    /// means, so the flag and the binding travel with it.
++    pub is_forall: bool,
++    /// The `(variable, type)` a `forall` binds, as declared. The type is
++    /// mangled the way a field's is (`pair_s<bit[8],4>`), so it compares
++    /// directly against `Field::type_name`.
++    pub forall_binding: Option<(String, String)>,
+ }
+ 
+ #[derive(Debug, Clone)]
+@@ -468,6 +476,19 @@ fn type_arg_bits(a: &str) -> Option<i64> {
+     }
+ }
+ 
++/// The template argument bound to `e` when `e` is a bare parameter name, so a
++/// width (`bit[W]`) or an extent (`arr[N]`) can be taken from it.
++fn param_arg<'a>(e: &crate::ast::Expr, params: &[String], args: &'a [String]) -> Option<&'a String> {
++    match e {
++        crate::ast::Expr::Path(p) => {
++            let name = p.segments.join(".");
++            let pos = params.iter().position(|x| *x == name)?;
++            args.get(pos)
++        }
++        _ => None,
++    }
++}
++
+ /// Evaluate a `bit[N]` width with the template's value parameters substituted.
+ fn substituted_width(
+     w: &crate::ast::Expr,
+@@ -864,6 +885,19 @@ impl Lowerer {
+     }
+ 
+     fn category_of(&self, type_name: &str) -> TypeCategory {
++        // A template instantiation (`pair_s<bit[8],4>`) is a type of its own,
++        // built by `instantiate_types` under its mangled name. Resolving it as
++        // written fails — no raw type is called that — so it used to land in
++        // `Unknown`, and every member of the instance stayed out of the solve:
++        // `constraint small.f == 200;` bound nothing and the counter still read
++        // `2/2 satisfied` (audit row 25). The base is what decides the category;
++        // the mangled name is the key the instantiated type is stored under.
++        if let Some((base, _)) = type_name.split_once('<') {
++            let base_key = self.resolve_type_key(base);
++            if self.raw_types.contains_key(&base_key) {
++                return TypeCategory::Struct(type_name.to_string());
++            }
++        }
+         let key = self.resolve_type_key(type_name);
+         let leaf = key.rsplit("::").next().unwrap_or(&key).to_string();
+         let leaf = leaf.as_str();
+@@ -955,6 +989,11 @@ impl Lowerer {
+                     is_default: c.is_default,
+                     is_disable: c.is_disable,
+                     is_soft: c.is_soft,
++                    is_forall: c.is_forall,
++                    forall_binding: c
++                        .forall_binding
++                        .as_ref()
++                        .map(|(v, ty)| (v.clone(), mangle_type(ty))),
+                 });
+             }
+             out.extend(inner);
+@@ -984,6 +1023,8 @@ impl Lowerer {
+                         is_default: true,
+                         is_disable: f == "default_disable",
+                         is_soft: false,
++                        is_forall: false,
++                        forall_binding: None,
+                     });
+                 }
+                 None
+@@ -1082,6 +1123,27 @@ impl Lowerer {
+                         f.bits = Some(bits);
+                     }
+                 }
++                // A *type* parameter used as the width: `rand bit[W] f;` with
++                // `W = bit[8]`. `substituted_width` only parses a numeric
++                // argument, so the width stayed unsubstituted and the member
++                // fell back to a one-bit `bit` — `small.f` could then never
++                // hold 200 (audit row 25).
++                if f.bits.is_none() {
++                    if let Some(w) = &m.ty.width {
++                        if let Some(a) = param_arg(w, &params, &args) {
++                            f.bits = type_arg_bits(a);
++                        }
++                    }
++                }
++                // A value parameter used as an array extent: `int arr[N];`.
++                if f.array.is_none() {
++                    let extent = m.array.as_ref().or_else(|| m.ty.const_args.first());
++                    if let Some(e) = extent {
++                        if let Some(a) = param_arg(e, &params, &args) {
++                            f.array = a.trim().parse::<i64>().ok();
++                        }
++                    }
++                }
+                 if let Some(inline) = &f.inline_constraint {
+                     constraints.push(Constraint {
+                         name: None,
+@@ -1089,6 +1151,8 @@ impl Lowerer {
+                         is_default: false,
+                         is_disable: false,
+                 is_soft: false,
++                is_forall: false,
++                forall_binding: None,
+                     });
+                 }
+                 fields.push(f);
+@@ -1125,6 +1189,8 @@ impl Lowerer {
+                                 is_default: false,
+                                 is_disable: false,
+                 is_soft: false,
++                is_forall: false,
++                forall_binding: None,
+                             });
+                         }
+                         fields.push(f);
+@@ -1141,6 +1207,8 @@ impl Lowerer {
+                         is_default: false,
+                         is_disable: false,
+                 is_soft: false,
++                is_forall: false,
++                forall_binding: None,
+                     });
+                 }
+                 if let Some(existing) = fields.iter_mut().find(|x| x.name == f.name) {
+@@ -1322,6 +1390,8 @@ impl Lowerer {
+                     is_default: false,
+                     is_disable: false,
+                 is_soft: false,
++                is_forall: false,
++                forall_binding: None,
+                 });
+             }
+             fields.push(f);
+diff --git a/src/solver.rs b/src/solver.rs
+index 36be20d..3257dcd 100644
+--- a/src/solver.rs
++++ b/src/solver.rs
+@@ -17,7 +17,7 @@
+ use std::collections::{BTreeMap, HashMap, HashSet};
+ 
+ use crate::ast::Expr;
+-use crate::ir::{Action, Field, FieldKind, Model, TypeCategory};
++use crate::ir::{Action, Constraint, Field, FieldKind, Model, TypeCategory};
+ 
+ /// Upper bound applied to a bare `int` field when no width is declared. It is
+ /// a *default* for sampling, not a bound the model declared: see
+@@ -1017,7 +1017,7 @@ fn solve_impl(
+             d.soft_hi = None;
+         }
+     }
+-    let (mut constraints, mut soft_constraints) =
++    let (mut constraints, mut soft_constraints, forall_unevaluated) =
+         collect_constraints(model, action, &vars, extra, allow_soft);
+     let directives = take_directives(&mut constraints, &env);
+     // Soft atoms come after the hard ones, so `soft_from` marks where they
+@@ -1034,7 +1034,9 @@ fn solve_impl(
+ 
+     // Apply relational atoms.
+     let mut unsupported = Vec::new();
+-    let mut unevaluated: Vec<String> = Vec::new();
++    // A `forall` whose body could not be placed on any instance was already
++    // reported by the collection pass; it is never counted as satisfied.
++    let mut unevaluated: Vec<String> = forall_unevaluated;
+     for atom in &atoms {
+         match atom {
+             Atom::Rel(var, Op::Eq, rhs) => {
+@@ -2818,6 +2820,228 @@ fn expand_field(
+     }
+ }
+ 
++// ---------------------------------------------------------------------------
++// `forall` instance domains (PSS 16.1.8)
++// ---------------------------------------------------------------------------
++
++/// True when two type names denote the same type. A `forall` may name a type by
++/// its qualified or its leaf name (`p::elem_s` vs `elem_s`), and a field carries
++/// the mangled form (`pair_s<bit[8],4>`), so both spellings are compared.
++fn same_type(a: &str, b: &str) -> bool {
++    if a == b {
++        return true;
++    }
++    let la = a.rsplit("::").next().unwrap_or(a);
++    let lb = b.rsplit("::").next().unwrap_or(b);
++    la == lb
++}
++
++/// True when `ty` names a type the model defines, so an empty instance domain
++/// can be told apart from a typo.
++fn type_known(model: &Model, ty: &str) -> bool {
++    let key = model.resolve(ty);
++    model.types.contains_key(&key)
++        || model.types.keys().any(|k| same_type(k, ty))
++        || model.components.keys().any(|k| same_type(k, ty))
++        || model.enums.keys().any(|k| same_type(k, ty))
++        || matches!(
++            ty.rsplit("::").next().unwrap_or(ty),
++            "int" | "bit" | "bool" | "byte" | "shortint" | "longint" | "integer" | "uint"
++                | "float32" | "float64"
++        )
++}
++
++/// Every instance of type `ty` in the instance domain of `action`: the
++/// action's own attributes, at any depth, plus the random attributes of the
++/// component the action runs in — the same tree `collect_variables` walks, so
++/// every path returned here is one the solver owns.
++fn forall_instances(model: &Model, action: &Action, ty: &str) -> Vec<String> {
++    let mut out: Vec<String> = Vec::new();
++    let mut visited: Vec<String> = Vec::new();
++    for f in &action.fields {
++        collect_instances(model, f, "", 0, ty, &mut visited, &mut out);
++    }
++    if let Some(owner) = &action.owner {
++        if let Some(comp) = model.components.get(owner) {
++            for f in &comp.fields {
++                if matches!(f.kind, crate::ir::FieldKind::Rand) {
++                    collect_instances(model, f, "", 0, ty, &mut visited, &mut out);
++                }
++            }
++        }
++    }
++    out
++}
++
++fn collect_instances(
++    model: &Model,
++    field: &Field,
++    prefix: &str,
++    depth: usize,
++    ty: &str,
++    visited: &mut Vec<String>,
++    out: &mut Vec<String>,
++) {
++    if depth > MAX_EXPAND_DEPTH {
++        return;
++    }
++    let path = if prefix.is_empty() {
++        field.name.clone()
++    } else {
++        format!("{}.{}", prefix, field.name)
++    };
++    // An array of the type: each element is an instance.
++    if let Some(n) = field.array {
++        let n = n.clamp(0, MAX_ARRAY);
++        let elem_ty = field
++            .elem_type
++            .clone()
++            .unwrap_or_else(|| field.type_name.clone());
++        if same_type(&elem_ty, ty) {
++            for i in 0..n {
++                out.push(format!("{}[{}]", path, i));
++            }
++        }
++        if let TypeCategory::Struct(tname) = category_for(model, &elem_ty) {
++            if visited.contains(&tname) {
++                return;
++            }
++            if let Some(t) = model.types.get(&tname) {
++                visited.push(tname.clone());
++                for i in 0..n {
++                    let elem = format!("{}[{}]", path, i);
++                    for sub in &t.fields {
++                        collect_instances(model, sub, &elem, depth + 1, ty, visited, out);
++                    }
++                }
++                visited.pop();
++            }
++        }
++        return;
++    }
++    if same_type(&field.type_name, ty) {
++        out.push(path.clone());
++    }
++    if let TypeCategory::Struct(tname) = &field.category {
++        if visited.contains(tname) {
++            return;
++        }
++        if let Some(t) = model.types.get(tname) {
++            visited.push(tname.clone());
++            for sub in &t.fields {
++                collect_instances(model, sub, &path, depth + 1, ty, visited, out);
++            }
++            visited.pop();
++        }
++    }
++}
++
++/// Replace the binding variable of a `forall` with an instance path: at
++/// instance `e`, `it.size` becomes `e.size`. A reference whose attribute the
++/// solver does not own is left alone, so the caller can report it.
++fn subst_binding(e: &Expr, var: &str, path: &str, vars: &BTreeMap<String, Domain>) -> Expr {
++    let go = |x: &Expr| Box::new(subst_binding(x, var, path, vars));
++    match e {
++        Expr::Path(p) => {
++            if p.segments.first().map(|s| s == var).unwrap_or(false) {
++                let mut full = path.to_string();
++                for s in p.segments.iter().skip(1) {
++                    full.push('.');
++                    full.push_str(s);
++                }
++                if vars.contains_key(&full) {
++                    return Expr::Path(crate::ast::Path::new(
++                        full.split('.').map(|s| s.to_string()).collect(),
++                    ));
++                }
++            }
++            e.clone()
++        }
++        Expr::Unary(op, x) => Expr::Unary(op.clone(), go(x)),
++        Expr::Binary(op, a, b) => Expr::Binary(op.clone(), go(a), go(b)),
++        Expr::Ternary(a, b, c) => Expr::Ternary(go(a), go(b), go(c)),
++        Expr::InRange(v, lo, hi) => Expr::InRange(go(v), go(lo), go(hi)),
++        Expr::InSet(v, items) => {
++            Expr::InSet(go(v), items.iter().map(|i| subst_binding(i, var, path, vars)).collect())
++        }
++        Expr::Cast(t, x) => Expr::Cast(t.clone(), go(x)),
++        Expr::Call(f, args) => Expr::Call(
++            f.clone(),
++            args.iter().map(|a| subst_binding(a, var, path, vars)).collect(),
++        ),
++        other => other.clone(),
++    }
++}
++
++/// True when `e` still refers to `name` — the binding of a `forall` the
++/// substitution could not resolve.
++fn mentions(e: &Expr, name: &str) -> bool {
++    match e {
++        Expr::Path(p) => p.segments.first().map(|s| s == name).unwrap_or(false),
++        Expr::Unary(_, x) | Expr::Cast(_, x) => mentions(x, name),
++        Expr::Binary(_, a, b) => mentions(a, name) || mentions(b, name),
++        Expr::Ternary(a, b, c) => mentions(a, name) || mentions(b, name) || mentions(c, name),
++        Expr::InRange(v, lo, hi) => mentions(v, name) || mentions(lo, name) || mentions(hi, name),
++        Expr::InSet(v, items) => {
++            mentions(v, name) || items.iter().any(|i| mentions(i, name))
++        }
++        Expr::Call(_, args) => args.iter().any(|a| mentions(a, name)),
++        _ => false,
++    }
++}
++
++/// Expand one `forall (it : T) { body }` constraint into the body written once
++/// per instance of `T` in scope, with the bound variable substituted by the
++/// instance path (PSS 16.1.8).
++///
++/// A body that cannot be placed on an instance is returned as an error, not
++/// dropped: an atom naming an attribute the solver has no domain for is
++/// treated as satisfied by `check_atom`, so a body left with its binding
++/// variable free would report success while enforcing nothing.
++fn expand_forall(
++    model: &Model,
++    action: &Action,
++    vars: &BTreeMap<String, Domain>,
++    c: &Constraint,
++) -> Result<Vec<Expr>, String> {
++    let (var, ty) = match &c.forall_binding {
++        Some((v, t)) => (v.clone(), t.clone()),
++        None => {
++            return Err(format!(
++                "forall constraint without a binding: {}",
++                render_expr(&c.expr)
++            ))
++        }
++    };
++    let instances = forall_instances(model, action, &ty);
++    if instances.is_empty() {
++        if !type_known(model, &ty) {
++            return Err(format!(
++                "forall ({} : {}) names a type the model does not define",
++                var, ty
++            ));
++        }
++        // Nothing of the type is in this scope, so the body constrains no
++        // instance. That is vacuously true, and nothing is claimed for it.
++        return Ok(Vec::new());
++    }
++    let mut out = Vec::new();
++    for path in instances {
++        let e = subst_binding(&c.expr, &var, &path, vars);
++        if mentions(&e, &var) {
++            return Err(format!(
++                "forall ({} : {}) body does not bind at `{}`: {}",
++                var,
++                ty,
++                path,
++                render_expr(&c.expr)
++            ));
++        }
++        out.push(e);
++    }
++    Ok(out)
++}
++
+ // ---------------------------------------------------------------------------
+ // Constraint collection
+ // ---------------------------------------------------------------------------
+@@ -2839,12 +3063,15 @@ fn collect_constraints(
+     vars: &BTreeMap<String, Domain>,
+     extra: &[Expr],
+     include_soft: bool,
+-) -> (Vec<Expr>, Vec<Expr>) {
++) -> (Vec<Expr>, Vec<Expr>, Vec<String>) {
+     let mut regular: Vec<Expr> = Vec::new();
+     let mut soft: Vec<Expr> = Vec::new();
+     // (expr, level): level 0 = the action's own context, 1 = a data type's.
+     let mut defaults: Vec<(Expr, u8)> = Vec::new();
+     let mut disabled: Vec<String> = Vec::new();
++    // A `forall` that cannot be placed on its instances is reported here, not
++    // dropped and not counted as satisfied.
++    let mut unevaluated: Vec<String> = Vec::new();
+ 
+     for c in &action.constraints {
+         if c.is_disable {
+@@ -2853,6 +3080,13 @@ fn collect_constraints(
+             }
+             continue;
+         }
++        if c.is_forall {
++            match expand_forall(model, action, vars, c) {
++                Ok(es) => regular.extend(es),
++                Err(why) => unevaluated.push(why),
++            }
++            continue;
++        }
+         if c.is_soft {
+             // A soft constraint is a preference: it is included while it can be
+             // satisfied, and dropped when it conflicts with a hard one.
+@@ -2874,6 +3108,13 @@ fn collect_constraints(
+                 if c.is_disable {
+                     continue;
+                 }
++                if c.is_forall {
++                    match expand_forall(model, action, vars, c) {
++                        Ok(es) => regular.extend(es),
++                        Err(why) => unevaluated.push(why),
++                    }
++                    continue;
++                }
+                 if c.is_soft {
+                     if include_soft {
+                         soft.push(c.expr.clone());
+@@ -2893,7 +3134,17 @@ fn collect_constraints(
+     // Constraints declared on the types of this action's struct fields.
+     let mut visited: Vec<String> = Vec::new();
+     for f in &action.fields {
+-        collect_type_constraints(model, f, "", 0, &mut visited, vars, &mut regular, &mut defaults);
++        collect_type_constraints(
++            model,
++            f,
++            "",
++            0,
++            &mut visited,
++            vars,
++            &mut regular,
++            &mut defaults,
++            &mut unevaluated,
++        );
+     }
+ 
+     // Resolve the defaults: drop disabled ones, keep one per attribute.
+@@ -2922,7 +3173,7 @@ fn collect_constraints(
+     for (_, (_, e)) in chosen {
+         regular.push(e);
+     }
+-    (regular, soft)
++    (regular, soft, unevaluated)
+ }
+ 
+ /// The attribute a default constraint targets: the left-hand side of an
+@@ -2948,6 +3199,7 @@ fn collect_type_constraints(
+     vars: &BTreeMap<String, Domain>,
+     out: &mut Vec<Expr>,
+     defaults: &mut Vec<(Expr, u8)>,
++    unevaluated: &mut Vec<String>,
+ ) {
+     if depth > MAX_EXPAND_DEPTH {
+         return;
+@@ -2965,6 +3217,15 @@ fn collect_type_constraints(
+             visited.push(tname.clone());
+             let locals: HashSet<String> = t.fields.iter().map(|f| f.name.clone()).collect();
+             for c in &t.constraints {
++                // A `forall` declared on a type has no instance domain here:
++                // report it rather than pass the free body off as satisfied.
++                if c.is_forall {
++                    unevaluated.push(format!(
++                        "forall constraint on `{}` in type `{}` is not expanded",
++                        path, tname
++                    ));
++                    continue;
++                }
+                 let e = prefix_paths(&c.expr, &path, &locals, vars);
+                 if c.is_default {
+                     defaults.push((e, 1));
+@@ -2973,7 +3234,9 @@ fn collect_type_constraints(
+                 }
+             }
+             for sub in &t.fields {
+-                collect_type_constraints(model, sub, &path, depth + 1, visited, vars, out, defaults);
++                collect_type_constraints(
++                    model, sub, &path, depth + 1, visited, vars, out, defaults, unevaluated,
++                );
+             }
+             visited.pop();
+         }
+diff --git a/tests/feature_proof/proof-slice-3.sh b/tests/feature_proof/proof-slice-3.sh
+index 1cd0b01..6560354 100755
+--- a/tests/feature_proof/proof-slice-3.sh
++++ b/tests/feature_proof/proof-slice-3.sh
+@@ -737,17 +737,26 @@ done
+ verdict 57 "foreach constraint" "$R"
+ 
+ # ------------------------------------------------------------ construct 58 ---
++# fa_a carries `forall (it : elem_s) { it.size < 5; }` over its one instance of
++# elem_s, so the body must land on `e.size` and hold on every seed. The second
++# assertion compares against fa_b, the same model without the forall: an
++# expanded body must move the value where the unconstrained solve picks one
++# outside the body's range. (This block used to require the two models to agree
++# on all 20 seeds, which no enforced forall can satisfy — the contradiction
++# recorded in docs/proposed/README.md.)
+ R=""
+-bad=0; same=0
++bad=0; bites=0
+ for s in $(seq 1 20); do
+     va=$(vals m58 fa_a "$s" 'e.size')
+     vb=$(vals m58 fa_b "$s" 'e.size')
+     [ "${va% }" = "-" ] && bad=$((bad + 1))
+-    [ "${va% }" = "${vb% }" ] && same=$((same + 1))
++    [ "${va% }" != "${vb% }" ] && bites=$((bites + 1))
+     { [ "${va% }" != "-" ] && [ "${va% }" -lt 5 ]; } || bad=$((bad + 1))
+ done
+ [ "$bad" = 0 ] || add "forall (it : elem_s) { it.size < 5; } not expanded: e.size >= 5 on $bad of 20 seeds"
+-[ "$same" = 20 ] || add "forall model differs from the unconstrained one on $((20 - same)) seeds"
++# fa_b is unconstrained over 0..100, so an enforced body must differ from it on
++# nearly every seed; agreeing on most seeds means the body was dropped.
++[ "$bites" -ge 10 ] || add "forall model equals the unconstrained one on $((20 - bites)) of 20 seeds: the body is not enforced"
+ verdict 58 "forall constraint" "$R"
+ 
+ # ------------------------------------------------------------ construct 59 ---
+diff --git a/tests/integration.rs b/tests/integration.rs
+index 9b4e3b5..2f89b2b 100644
+--- a/tests/integration.rs
++++ b/tests/integration.rs
+@@ -3898,3 +3898,85 @@ component c {
+     let l = s.steps[0].fields.iter().find(|(k, _)| k == "l").map(|(_, v)| *v).unwrap();
+     assert_eq!(l, 2, "an unbraced arm body must run");
+ }
++
++#[test]
++fn forall_expands_over_the_instances_in_scope() {
++    // Audit row 58. `forall (it : elem_s) { it.size < 5; }` was dropped: the
++    // body reached the solver with `it` free, and an atom on an attribute with
++    // no domain is treated as satisfied by `check_atom` — so the counter read
++    // `2/2 satisfied` while `e.size` solved anywhere in 0..100.
++    let src = r#"
++package p {
++  struct elem_s { rand int size; };
++  component c {
++    action a {
++      rand elem_s e;
++      constraint e.size in [0..100];
++      constraint forall (it : elem_s) { it.size < 5; };
++    };
++    action b { rand elem_s e; constraint e.size in [0..100]; };
++  };
++};
++"#;
++    let m = compile_pss(src).unwrap();
++    let mut moved = 0;
++    for seed in 1..=20u64 {
++        let a = engine::run_scenario(&m, "a", seed);
++        let b = engine::run_scenario(&m, "b", seed);
++        let va = a.steps[0].fields.iter().find(|(k, _)| k == "e.size").map(|(_, v)| *v).unwrap();
++        let vb = b.steps[0].fields.iter().find(|(k, _)| k == "e.size").map(|(_, v)| *v).unwrap();
++        assert!(va < 5, "seed {seed}: the forall body did not hold: e.size={va}");
++        if va != vb {
++            moved += 1;
++        }
++    }
++    assert!(moved >= 10, "the forall model matched the unconstrained one on {} of 20 seeds", 20 - moved);
++}
++
++#[test]
++fn a_forall_body_that_cannot_bind_is_reported_not_satisfied() {
++    // The failure mode this project keeps removing: a quantifier that enforces
++    // nothing while reporting success. A body naming an attribute the solver
++    // does not own must be reported as not evaluated.
++    let src = r#"
++package p {
++  struct elem_s { rand int size; };
++  component c {
++    action a { rand elem_s e; constraint forall (it : elem_s) { it.nosuch < 5; }; };
++  };
++};
++"#;
++    let m = compile_pss(src).unwrap();
++    let s = engine::run_scenario(&m, "a", 1);
++    assert!(
++        !s.steps[0].unevaluated.is_empty(),
++        "an unbindable forall body must be reported as not evaluated"
++    );
++    assert_eq!(s.steps[0].total, 0, "it must not be counted as a satisfied constraint");
++}
++
++#[test]
++fn a_templated_field_is_expanded_and_constrained() {
++    // Audit row 25. `pair_s<bit[8],4> small;` was categorised `Unknown`, so no
++    // member of the instantiation entered the solve: `small.f == 200` bound
++    // nothing and `small.f` was absent from the assignment.
++    let src = r#"
++package p {
++  struct pair_s<bit[W], int N> { rand bit[W] f; rand int g; int arr[N]; };
++  component c {
++    action a {
++      pair_s<bit[8], 4> small;
++      constraint small.f == 200;
++      constraint small.g == 33;
++    };
++  };
++};
++"#;
++    let m = compile_pss(src).unwrap();
++    let s = engine::run_scenario(&m, "a", 1);
++    let get = |k: &str| s.steps[0].fields.iter().find(|(n, _)| n == k).map(|(_, v)| *v);
++    assert_eq!(get("small.f"), Some(200), "the templated field must bind");
++    assert_eq!(get("small.g"), Some(33));
++    // `int arr[N]` with N = 4 is a four-element array, so element 3 exists.
++    assert_eq!(get("small.arr[3]"), Some(0), "the extent N must be substituted");
++}

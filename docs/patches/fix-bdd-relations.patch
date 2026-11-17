@@ -1,0 +1,466 @@
+diff --git a/src/bdd/prove.rs b/src/bdd/prove.rs
+index f1e51a0..280c1c1 100644
+--- a/src/bdd/prove.rs
++++ b/src/bdd/prove.rs
+@@ -176,38 +176,79 @@ fn translate(b: &mut Bdd, e: &Expr, vars: &[Var]) -> Option<u32> {
+                 Some(b.or(nx, y))
+             }
+             "==" | "!=" | "<" | "<=" | ">" | ">=" => {
+-                // Arithmetic on one side (`x + y == 7`) is not a plain
+-                // comparison; handle it before falling back.
+-                if comparison_sides(a, c, vars).is_none() {
+-                    let (lhs, k) = match (a.as_ref(), c.as_ref()) {
+-                        (_, Expr::Int(n)) => (a.as_ref(), *n),
+-                        (Expr::Int(n), _) => (c.as_ref(), *n),
+-                        _ => return None,
++                // Three shapes are recognised, in order of specificity.
++                //
++                // 1. `var OP const` (or `const OP var`). This is the cheapest
++                //    circuit, and the only one that can answer for a constant
++                //    that falls outside the encoded domain (`x < 100` on a
++                //    [0..7] variable is a tautology, not an overflow), so it is
++                //    tried first and keeps its exact previous encoding.
++                if let Some((v, k)) = comparison_sides(a, c, vars) {
++                    let node = match op.as_str() {
++                        "==" => eq_const(b, v, k)?,
++                        "!=" => {
++                            let q = eq_const(b, v, k)?;
++                            b.not(q)
++                        }
++                        "<" => lt_const(b, v, k)?,
++                        "<=" => {
++                            let q = lt_const(b, v, k + 1)?;
++                            q
++                        }
++                        ">" => {
++                            let q = lt_const(b, v, k + 1)?;
++                            b.not(q)
++                        }
++                        // `>=` must be the negation of `<`; falling through to
++                        // the `<` arm silently turned `x >= 0` into `x < 0`.
++                        _ => {
++                            let q = lt_const(b, v, k)?;
++                            b.not(q)
++                        }
+                     };
+-                    let width = vars.iter().map(|v| v.bits).max().unwrap_or(1) + 2;
+-                    let q = eq_arith(b, lhs, k, vars, width)?;
+-                    return Some(if op == "==" { q } else { b.not(q) });
++                    return Some(node);
+                 }
+-                let (v, k) = comparison_sides(a, c, vars)?;
++                // 2. `arith == const` / `arith != const`, e.g. `x + y == 7`.
++                //    `const_of` folds a constant expression on either side, so
++                //    `x + y == 2 + 5` lands here too.
++                if op == "==" || op == "!=" {
++                    let width = width_for(vars);
++                    if let Some(k) = const_of(c) {
++                        let q = eq_arith(b, a, k, vars, width)?;
++                        return Some(if op == "==" { q } else { b.not(q) });
++                    }
++                    if let Some(k) = const_of(a) {
++                        let q = eq_arith(b, c, k, vars, width)?;
++                        return Some(if op == "==" { q } else { b.not(q) });
++                    }
++                }
++                // 3. A general comparison between two arithmetic expressions:
++                //    `x < y`, `x == y`, `x + y == z`, and the same against a
++                //    folded constant. Both sides become two's-complement bit
++                //    vectors of a common width and are compared MSB-first.
++                //    Anything `bits_of` cannot build (`*`, `/`, a call, a
++                //    string) returns `None` here, so the proof still abstains.
++                let width = width_for(vars);
++                if !fits_width(a, width) || !fits_width(c, width) {
++                    return None;
++                }
++                let xb = bits_of(b, a, vars, width)?;
++                let yb = bits_of(b, c, vars, width)?;
+                 let node = match op.as_str() {
+-                    "==" => eq_const(b, v, k)?,
++                    "==" => eq_bits(b, &xb, &yb),
+                     "!=" => {
+-                        let q = eq_const(b, v, k)?;
++                        let q = eq_bits(b, &xb, &yb);
+                         b.not(q)
+                     }
+-                    "<" => lt_const(b, v, k)?,
++                    "<" => lt_bits(b, &xb, &yb),
++                    // `x <= y` is `!(y < x)`; `>=` is `!(x < y)`.
+                     "<=" => {
+-                        let q = lt_const(b, v, k + 1)?;
+-                        q
+-                    }
+-                    ">" => {
+-                        let q = lt_const(b, v, k + 1)?;
++                        let q = lt_bits(b, &yb, &xb);
+                         b.not(q)
+                     }
+-                    // `>=` must be the negation of `<`; falling through to the
+-                    // `<` arm silently turned `x >= 0` into `x < 0`.
++                    ">" => lt_bits(b, &yb, &xb),
+                     _ => {
+-                        let q = lt_const(b, v, k)?;
++                        let q = lt_bits(b, &xb, &yb);
+                         b.not(q)
+                     }
+                 };
+@@ -269,17 +310,13 @@ fn bits_of(b: &mut Bdd, e: &Expr, vars: &[Var], width: u32) -> Option<Vec<u32>>
+         }
+         Expr::Path(p) => {
+             let v = find(vars, p)?;
+-            let mut out = Vec::new();
+-            for i in 0..width {
+-                if i < v.bits {
+-                    let f = crate::bdd::FALSE_NODE;
+-                    let t = crate::bdd::TRUE_NODE;
+-                    out.push(b.mk(v.base + i, f, t));
+-                } else {
+-                    out.push(crate::bdd::FALSE_NODE);
+-                }
+-            }
+-            Some(out)
++            // The bits are of the variable's *value*, not of its encoding:
++            // two variables with different lower bounds (`x in [2..9]` and
++            // `y in [0..7]`) must compare as values, so the offset `lo` is
++            // folded in here with the same ripple adder. Leaving it out made
++            // `x + y == k` compare encoded sums against an unencoded k, which
++            // is only correct when every `lo` is zero.
++            Some(var_value_bits(b, v, width))
+         }
+         Expr::Binary(op, a, c) if op == "+" || op == "-" => {
+             let x = bits_of(b, a, vars, width)?;
+@@ -314,6 +351,130 @@ fn bits_of(b: &mut Bdd, e: &Expr, vars: &[Var], width: u32) -> Option<Vec<u32>>
+     }
+ }
+ 
++/// Two's-complement bits of a variable's actual value, `width` bits wide.
++///
++/// The variable is stored as `enc = value - lo`, which is unsigned and fits in
++/// `v.bits`; adding `lo` back with the adder gives the value modulo `2^width`,
++/// which is exactly its two's-complement encoding.
++fn var_value_bits(b: &mut Bdd, v: &Var, width: u32) -> Vec<u32> {
++    let mut enc = Vec::with_capacity(width as usize);
++    for i in 0..width {
++        if i < v.bits {
++            let f = crate::bdd::FALSE_NODE;
++            let t = crate::bdd::TRUE_NODE;
++            enc.push(b.mk(v.base + i, f, t));
++        } else {
++            enc.push(crate::bdd::FALSE_NODE);
++        }
++    }
++    add_const(b, &enc, v.lo, width)
++}
++
++/// `bits + k`, two's complement, modulo `2^width`.
++fn add_const(b: &mut Bdd, bits: &[u32], k: i64, width: u32) -> Vec<u32> {
++    if k == 0 {
++        return bits.to_vec();
++    }
++    let mut carry = crate::bdd::FALSE_NODE;
++    let mut out = Vec::with_capacity(width as usize);
++    for i in 0..width as usize {
++        let kb = if (k >> i) & 1 == 1 {
++            crate::bdd::TRUE_NODE
++        } else {
++            crate::bdd::FALSE_NODE
++        };
++        let partial = b.xor(bits[i], kb);
++        let sum = b.xor(partial, carry);
++        let c1 = b.and(bits[i], kb);
++        let c2 = b.and(carry, partial);
++        out.push(sum);
++        carry = b.or(c1, c2);
++    }
++    out
++}
++
++/// The two's-complement width used for a general comparison: enough to hold a
++/// sum or a difference of any two values in range, plus a sign bit. It is
++/// derived from the domains, not from the expression, so both sides of a
++/// comparison always share one width.
++fn width_for(vars: &[Var]) -> u32 {
++    let m = vars
++        .iter()
++        .map(|v| v.lo.abs().max(v.hi.abs()))
++        .max()
++        .unwrap_or(1)
++        .max(1);
++    let span = m.saturating_mul(2).saturating_add(1);
++    let mut bits = 2u32;
++    // `bits` is signed, so the representable span is 2^(bits-1).
++    while bits < 62 && (1i64 << (bits - 1)) <= span {
++        bits += 1;
++    }
++    bits
++}
++
++/// Can every literal in `e` be represented in a signed `width`-bit vector?
++///
++/// A literal that does not fit would silently wrap in [`bits_of`], which is
++/// how a comparator turns into a lie, so the translation abstains instead.
++fn fits_width(e: &Expr, width: u32) -> bool {
++    let lim = 1i64 << (width - 1);
++    match e {
++        Expr::Int(n) => *n > -lim && *n < lim,
++        Expr::Unary(op, a) if op == "-" => fits_width(a, width),
++        Expr::Binary(_, a, c) => fits_width(a, width) && fits_width(c, width),
++        _ => true,
++    }
++}
++
++/// The BDD for `x == y` between two bit vectors.
++fn eq_bits(b: &mut Bdd, x: &[u32], y: &[u32]) -> u32 {
++    let mut acc = crate::bdd::TRUE_NODE;
++    for i in 0..x.len().min(y.len()) {
++        let differ = b.xor(x[i], y[i]);
++        let same = b.not(differ);
++        acc = b.and(acc, same);
++    }
++    acc
++}
++
++/// Unsigned `x < y`, MSB first: `x < y` iff at the highest bit where they
++/// differ, `x` has a 0 and `y` a 1.
++fn ult_bits(b: &mut Bdd, x: &[u32], y: &[u32]) -> u32 {
++    let mut eq_prefix = crate::bdd::TRUE_NODE;
++    let mut acc = crate::bdd::FALSE_NODE;
++    for i in (0..x.len()).rev() {
++        let nx = b.not(x[i]);
++        let smaller_here = b.and(nx, y[i]);
++        let term = b.and(eq_prefix, smaller_here);
++        acc = b.or(acc, term);
++        let differ = b.xor(x[i], y[i]);
++        let same = b.not(differ);
++        eq_prefix = b.and(eq_prefix, same);
++    }
++    acc
++}
++
++/// Signed `x < y` in two's complement.
++///
++/// Flipping the sign bit of both operands maps the signed order onto the
++/// unsigned one, which avoids the overflow a `x - y` sign test would need to
++/// guard against.
++fn lt_bits(b: &mut Bdd, x: &[u32], y: &[u32]) -> u32 {
++    let w = x.len().min(y.len());
++    if w == 0 {
++        return crate::bdd::FALSE_NODE;
++    }
++    let top = w - 1;
++    let mut xf = x[..w].to_vec();
++    let mut yf = y[..w].to_vec();
++    let nx = b.not(xf[top]);
++    xf[top] = nx;
++    let ny = b.not(yf[top]);
++    yf[top] = ny;
++    ult_bits(b, &xf, &yf)
++}
++
+ /// `expr == const` where `expr` may be arithmetic.
+ fn eq_arith(b: &mut Bdd, e: &Expr, k: i64, vars: &[Var], width: u32) -> Option<u32> {
+     let bits = bits_of(b, e, vars, width)?;
+@@ -676,6 +837,203 @@ component c {
+         }
+     }
+ 
++    /// Build an action's constraint set into one BDD, under declaration order or
++    /// the reverse variable order.
++    ///
++    /// Ranks are contiguous (`0..n_bits`) rather than spaced, so the result can
++    /// also be handed to `sat_count`, which walks ranks level by level.
++    fn circuit(m: &Model, a: &Action, reverse: bool) -> (Bdd, Vec<Var>, u32) {
++        let vars = eligible(m, a).expect("eligible");
++        let total: u32 = vars.iter().map(|v| v.bits).sum();
++        let mut b = Bdd::new();
++        for v in vars.iter() {
++            let rank_base = if reverse {
++                total - v.base - v.bits
++            } else {
++                v.base
++            };
++            for k in 0..v.bits {
++                b.set_order(v.base + k, rank_base + k);
++            }
++        }
++        let mut acc = crate::bdd::TRUE_NODE;
++        for c in &a.constraints {
++            let node = translate(&mut b, &c.expr, &vars)
++                .unwrap_or_else(|| panic!("constraint must translate: {}", crate::solver::render_expr(&c.expr)));
++            acc = b.and(acc, node);
++        }
++        (b, vars, acc)
++    }
++
++    /// Does the circuit accept this assignment? Conjunction with the equality
++    /// circuit for each named value, so the answer is exact.
++    fn accepts(b: &mut Bdd, vars: &[Var], acc: u32, assign: &[(&str, i64)]) -> bool {
++        let mut conj = acc;
++        for (name, val) in assign {
++            let v = vars
++                .iter()
++                .find(|v| v.name.rsplit('.').next() == Some(*name))
++                .expect("variable is eligible");
++            let w = eq_const(b, v, *val).expect("eq_const");
++            conj = b.and(conj, w);
++        }
++        !b.is_false(conj)
++    }
++
++    #[test]
++    fn variable_comparisons_agree_with_direct_evaluation() {
++        // The acceptance criterion for variable-to-variable comparison: for every
++        // assignment in the domain, the BDD's satisfying set must equal direct
++        // evaluation of the PSS expression. Verified the same way `apply` and
++        // `sat_count` are.
++        for op in ["<", "<=", "==", "!=", ">", ">="] {
++            let m = model_of(&format!(
++                "component c {{ action a {{ rand int x in [0..7]; rand int y in [0..7]; constraint x {} y; }} }};",
++                op
++            ));
++            let a = m.find_action(Some("c"), "a").unwrap().clone();
++            let (mut b, vars, acc) = circuit(&m, &a, false);
++            for x in 0i64..=7 {
++                for y in 0i64..=7 {
++                    let want = match op {
++                        "<" => x < y,
++                        "<=" => x <= y,
++                        "==" => x == y,
++                        "!=" => x != y,
++                        ">" => x > y,
++                        _ => x >= y,
++                    };
++                    assert_eq!(
++                        accepts(&mut b, &vars, acc, &[("x", x), ("y", y)]),
++                        want,
++                        "`x {} y` with x={} y={}",
++                        op, x, y
++                    );
++                }
++            }
++        }
++    }
++
++    #[test]
++    fn variable_comparisons_agree_across_different_domains() {
++        // `x` and `y` are encoded as offsets from their own lower bounds, so a
++        // comparator over the raw encodings would be wrong here. This is the
++        // test that catches it.
++        for op in ["<", "<=", "==", "!=", ">", ">="] {
++            let m = model_of(&format!(
++                "component c {{ action a {{ rand int x in [2..9]; rand int y in [-3..4]; constraint x {} y; }} }};",
++                op
++            ));
++            let a = m.find_action(Some("c"), "a").unwrap().clone();
++            let (mut b, vars, acc) = circuit(&m, &a, false);
++            for x in 2i64..=9 {
++                for y in -3i64..=4 {
++                    let want = match op {
++                        "<" => x < y,
++                        "<=" => x <= y,
++                        "==" => x == y,
++                        "!=" => x != y,
++                        ">" => x > y,
++                        _ => x >= y,
++                    };
++                    assert_eq!(
++                        accepts(&mut b, &vars, acc, &[("x", x), ("y", y)]),
++                        want,
++                        "`x {} y` with x={} y={}",
++                        op, x, y
++                    );
++                }
++            }
++        }
++    }
++
++    #[test]
++    fn sum_of_two_variables_equals_a_third_agrees_with_direct_evaluation() {
++        let m = model_of(
++            "component c { action a { rand int x in [0..7]; rand int y in [0..7]; rand int z in [0..7]; constraint x + y == z; } };",
++        );
++        let a = m.find_action(Some("c"), "a").unwrap().clone();
++        let (mut b, vars, acc) = circuit(&m, &a, false);
++        let mut hits = 0;
++        for x in 0i64..=7 {
++            for y in 0i64..=7 {
++                for z in 0i64..=7 {
++                    let want = x + y == z;
++                    let got = accepts(&mut b, &vars, acc, &[("x", x), ("y", y), ("z", z)]);
++                    assert_eq!(got, want, "x + y == z with x={} y={} z={}", x, y, z);
++                    if got {
++                        hits += 1;
++                    }
++                }
++            }
++        }
++        // 36 pairs satisfy x + y <= 7, and z is determined by each.
++        assert_eq!(hits, 36, "x + y == z has 36 satisfying assignments on 0..7");
++        // And the count agrees with `sat_count`, which is the other way the
++        // engine is checked.
++        assert_eq!(b.sat_count(acc, vars.iter().map(|v| v.bits).sum()), 36);
++    }
++
++    #[test]
++    fn a_three_variable_model_shows_an_order_difference() {
++        // `x + y == z` relates the three variables, which is what variable
++        // ordering can act on: the same function, two orders, different graphs.
++        let m = model_of(
++            "component c { action a { rand int x in [0..7]; rand int y in [0..7]; rand int z in [0..7]; constraint x + y == z; } };",
++        );
++        let a = m.find_action(Some("c"), "a").unwrap().clone();
++        let (mut bd, vd, ad) = circuit(&m, &a, false);
++        let (mut br, vr, ar) = circuit(&m, &a, true);
++        assert_ne!(
++            bd.node_count(),
++            br.node_count(),
++            "the two orderings must give different node counts"
++        );
++        // Both orders describe the same function, checked by enumeration — a
++        // smaller diagram must not be a different (wrong) one.
++        for x in 0i64..=7 {
++            for y in 0i64..=7 {
++                for z in 0i64..=7 {
++                    let want = x + y == z;
++                    let got = accepts(&mut bd, &vd, ad, &[("x", x), ("y", y), ("z", z)]);
++                    assert_eq!(got, want, "declaration order x={} y={} z={}", x, y, z);
++                    let got = accepts(&mut br, &vr, ar, &[("x", x), ("y", y), ("z", z)]);
++                    assert_eq!(got, want, "reverse order x={} y={} z={}", x, y, z);
++                }
++            }
++        }
++        match prove_order(&m, &a) {
++            Proof::Restricting(v) => assert!(v[0].contains("node(s)"), "{:?}", v),
++            other => panic!("expected Restricting, got {:?}", other),
++        }
++    }
++
++    #[test]
++    fn relations_outside_the_translator_still_abstain() {
++        // Multiplication of two variables, division and a product on one side are
++        // outside the circuit, so the prover must decline rather than guess.
++        for c in ["x * y == 6", "x / y == 2", "x * 2 == 4"] {
++            let m = model_of(&format!(
++                "component c {{ action a {{ rand int x in [0..7]; rand int y in [0..7]; constraint {}; }} }};",
++                c
++            ));
++            let a = m.find_action(Some("c"), "a").unwrap().clone();
++            assert!(
++                matches!(prove_sat(&m, &a), Proof::NotProved(_)),
++                "`{}` must abstain, not guess",
++                c
++            );
++            assert!(matches!(prove_order(&m, &a), Proof::NotProved(_)));
++        }
++        // A variable compared to something that is not a variable or a constant
++        // is outside the encoding too.
++        let m = model_of(
++            "component c { action a { rand int x in [0..7]; rand int y in [0..7]; constraint x < y * y; } };",
++        );
++        let a = m.find_action(Some("c"), "a").unwrap().clone();
++        assert!(matches!(prove_sat(&m, &a), Proof::NotProved(_)));
++    }
++
+     #[test]
+     fn ordering_reports_node_counts_and_abstains_on_arithmetic() {
+         let m = model_of("component c { action a { rand int x in [0..7]; constraint x >= 3; } };");

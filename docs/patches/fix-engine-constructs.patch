@@ -1,0 +1,137 @@
+diff --git a/src/engine.rs b/src/engine.rs
+index b8aabe2..c821608 100644
+--- a/src/engine.rs
++++ b/src/engine.rs
+@@ -432,9 +432,28 @@ impl<'a> Engine<'a> {
+             let first_step = self.steps.len();
+             let steps_before = self.steps.len();
+             let warns_before = self.warnings.len();
++            // A composite action's own `exec` blocks run around its activity,
++            // exactly as a leaf action's run around its solve (PSS 22.1). They
++            // used to be skipped entirely: `record_step` is the only place
++            // that ran execs, and a container never reaches it.
++            let comp_name = component.clone();
++            let mut pre: BTreeMap<String, i64> = BTreeMap::new();
++            let has_pre = action.execs.iter().any(|e| e.kind == "pre_solve");
++            if has_pre {
++                self.exec_action = Some(action.clone());
++                self.exec_component = Some(comp_name.clone());
++                for e in action.execs.iter().filter(|e| e.kind == "pre_solve") {
++                    self.exec_stmts(&e.stmts, &mut pre);
++                }
++            }
+             // Solve the container action first so its random fields — a repeat
+             // count, for instance — are available while walking the activity.
+-            let report = solver::solve(self.model, action, self.seed ^ (depth as u64) ^ 0x5EED);
++            let seed = self.seed ^ (depth as u64) ^ 0x5EED;
++            let report = if has_pre {
++                solver::solve_with(self.model, action, seed, &[], &pre)
++            } else {
++                solver::solve(self.model, action, seed)
++            };
+             let ctx = report.assignment.values;
+             let handles = self.handles_of(action, &component);
+             let handle_arrays = self.handle_arrays_of(action, &component);
+@@ -443,6 +462,23 @@ impl<'a> Engine<'a> {
+             self.walk_activity(act, component, depth + 1, mode, group, &ctx);
+             self.handle_array_scopes.pop();
+             self.handle_scopes.pop();
++            // `exec post_solve` and `exec pre_body` of the composite action run
++            // once its activity has completed, in the action's own scope.
++            if action
++                .execs
++                .iter()
++                .any(|e| e.kind == "post_solve" || e.kind == "pre_body")
++            {
++                let mut solved = ctx.clone();
++                self.exec_action = Some(action.clone());
++                self.exec_component = Some(comp_name);
++                for e in action.execs.iter().filter(|e| e.kind == "post_solve") {
++                    self.exec_stmts(&e.stmts, &mut solved);
++                }
++                for e in action.execs.iter().filter(|e| e.kind == "pre_body") {
++                    self.exec_stmts(&e.stmts, &mut solved);
++                }
++            }
+             // An activity that produced nothing and said nothing is the worst
+             // outcome for a test tool: the model runs, reports success, and
+             // tests nothing. This catches the silent cases — a `foreach` over a
+@@ -754,10 +790,10 @@ impl<'a> Engine<'a> {
+     ) {
+         match stmt {
+             ActivityStmt::Do(path) => {
+-                self.dispatch(path, component, depth, mode, group);
++                self.dispatch(path, component, depth, mode, group, ctx);
+             }
+             ActivityStmt::DoWith { action, body } => {
+-                self.dispatch(action, component, depth, mode, group);
++                self.dispatch(action, component, depth, mode, group, ctx);
+                 if let Some(b) = body {
+                     self.walk_activity(b, component.to_string(), depth + 1, mode, group, ctx);
+                 }
+@@ -955,6 +991,7 @@ impl<'a> Engine<'a> {
+                                     depth,
+                                     mode,
+                                     group,
++                                    &local,
+                                 );
+                             }
+                         }
+@@ -1097,7 +1134,15 @@ impl<'a> Engine<'a> {
+         action.to_string()
+     }
+ 
+-    fn dispatch(&mut self, path: &Path, component: &str, depth: usize, mode: StepMode, group: u32) {
++    fn dispatch(
++        &mut self,
++        path: &Path,
++        component: &str,
++        depth: usize,
++        mode: StepMode,
++        group: u32,
++        ctx: &BTreeMap<String, i64>,
++    ) {
+         let (target_component, action_name) = split_action_ref(path);
+         let comp = if let Some(c) = target_component {
+             resolve_component(self.model, component, &c).unwrap_or(c)
+@@ -1105,6 +1150,22 @@ impl<'a> Engine<'a> {
+             component.to_string()
+         };
+         let action_name = self.apply_override(&comp, &path.segments.join("."), &action_name);
++        // `two;` names a `symbol` fragment of the component, not an action: a
++        // symbol is invoked like a traversal and its activity is walked in
++        // place (PSS 12.7). Before this the name resolved to nothing, so the
++        // symbol expanded to an UNRESOLVED step and the fragment was lost.
++        if self.model.find_action(Some(&comp), &action_name).is_none() {
++            let body = self
++                .model
++                .components
++                .get(&comp)
++                .and_then(|c| c.symbols.get(&action_name))
++                .cloned();
++            if let Some(body) = body {
++                self.walk_activity(&body, comp, depth, mode, group, ctx);
++                return;
++            }
++        }
+         match self.model.find_action(Some(&comp), &action_name).cloned() {
+             Some(act) => self.walk_action(&act, comp, depth, mode, group, false),
+             None => match self.resolve_handle(&action_name) {
+diff --git a/src/ir.rs b/src/ir.rs
+index 9fa780b..ed5f048 100644
+--- a/src/ir.rs
++++ b/src/ir.rs
+@@ -1253,6 +1253,13 @@ impl Lowerer {
+                         }
+                     }
+                     existing.constraints.extend(extra.constraints);
++                    // An `extend action` may add `exec` blocks, and they must
++                    // run on the merged action (PSS 20.2): the extension's
++                    // blocks are appended after the base's, so a `post_solve`
++                    // in the extension sees what the base's left behind. This
++                    // merge used to carry fields, constraints and activity but
++                    // not execs, so the extension's blocks were silently lost.
++                    existing.execs.extend(extra.execs);
+                     if extra.activity.is_some() {
+                         existing.activity = extra.activity;
+                     }

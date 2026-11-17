@@ -1,0 +1,480 @@
+diff --git a/src/frontend/json.rs b/src/frontend/json.rs
+index fe29e46..e668587 100644
+--- a/src/frontend/json.rs
++++ b/src/frontend/json.rs
+@@ -70,6 +70,7 @@ pub fn model_from_json(src: &str) -> PssResult<Model> {
+         imports: Vec::new(),
+         typedefs: std::collections::HashMap::new(),
+         enum_values: std::collections::HashMap::new(),
++        exports: Vec::new(),
+     };
+ 
+     if let Some(pkgs) = obj_get(obj, "packages").and_then(|v| v.as_arr()) {
+diff --git a/src/ir.rs b/src/ir.rs
+index 9fa780b..1aa79e0 100644
+--- a/src/ir.rs
++++ b/src/ir.rs
+@@ -208,6 +208,11 @@ pub struct Model {
+     /// Declared enum variant values, `Enum::VARIANT` -> value (PSS 12.4).
+     /// Variants without an explicit value take the previous one + 1.
+     pub enum_values: std::collections::HashMap<String, i64>,
++    /// `export target c::A1;` declarations, as `<pkg>::<leaf>` (PSS 22.4).
++    /// An action of a component is nameable from outside its package as
++    /// `pkg::A1` only when the package exports it, so this is what decides
++    /// whether a cross-package `do pkg::A1` resolves.
++    pub exports: Vec<String>,
+ }
+ 
+ impl Model {
+@@ -285,8 +290,21 @@ impl Model {
+             // Qualified by the scope that declares it, so `import fpa::*` can
+             // select fpa's `value` rather than whichever was declared last.
+             let key = qualify(f.scope.as_deref(), &f.name);
+-            lw.model.functions.entry(key).or_insert_with(|| f.clone());
++            // A prototype (`function int f(int a);` — no body) only declares the
++            // signature; a definition supplies the body and must win.
++            // `or_insert` kept whichever came first, so the prototype written
++            // above its definition silently shadowed it and every call returned
++            // 0 (constructs 84 and 86).
++            let take = match lw.model.functions.get(&key) {
++                None => true,
++                Some(prev) => prev.body.is_empty() && !f.body.is_empty(),
++            };
++            if take {
++                lw.model.functions.insert(key, f.clone());
++            }
+         }
++        // `export` gates cross-package visibility of an action (PSS 22.4).
++        check_exported_actions(file, &lw.model)?;
+         Ok(lw.model)
+     }
+ 
+@@ -540,6 +558,22 @@ impl Lowerer {
+         for item in items {
+             match item {
+                 Item::Import(p) => {
++                    // An `export` declaration reaches the IR as an import-shaped
++                    // marker, `__export__::<pkg>::<target>...` (see
++                    // `Parser::parse_export`). It is not an import.
++                    if p.segments.first().map(|s| s == "__export__").unwrap_or(false) {
++                        if p.segments.len() >= 3 {
++                            let key = format!(
++                                "{}::{}",
++                                p.segments[1],
++                                p.segments.last().unwrap()
++                            );
++                            if !self.model.exports.contains(&key) {
++                                self.model.exports.push(key);
++                            }
++                        }
++                        continue;
++                    }
+                     let path = p.segments.join("::");
+                     if !self.model.imports.contains(&path) {
+                         self.model.imports.push(path);
+@@ -1437,3 +1471,107 @@ fn qualify(pkg: Option<&str>, leaf: &str) -> String {
+         _ => leaf.to_string(),
+     }
+ }
++
++// ---------------------------------------------------------------------------
++// `export` gating (PSS 22.4)
++// ---------------------------------------------------------------------------
++
++/// A cross-package action reference `pkg::A` names an action of another
++/// component that `pkg` exports. Without an `export` declaration the name is
++/// not visible from outside `pkg`, so it must be reported rather than resolved.
++///
++/// Only the two-segment form is gated: `pkg::comp::action` names a component
++/// *type* declared in the package (a traversal, not an export), and a bare
++/// `comp::action` names a component in the same scope. Both keep working.
++fn check_exported_actions(file: &SourceFile, model: &Model) -> PssResult<()> {
++    let mut acts: Vec<&crate::ast::ActionDecl> = Vec::new();
++    fn walk_items<'a>(items: &'a [Item], out: &mut Vec<&'a crate::ast::ActionDecl>) {
++        for it in items {
++            match it {
++                Item::Package(p) => walk_items(&p.items, out),
++                Item::Action(a) => out.push(a),
++                Item::Component(c) => {
++                    for ci in &c.items {
++                        if let CompItem::Action(a) = ci {
++                            out.push(a);
++                        }
++                    }
++                }
++                // `Lowerer::collect` keeps the `then` branch of a `compile if`,
++                // so only that branch is checked.
++                Item::CompileIf { then_items, .. } => walk_items(then_items, out),
++                _ => {}
++            }
++        }
++    }
++    walk_items(&file.items, &mut acts);
++    for a in acts {
++        if let Some(act) = &a.activity {
++            check_activity(act, model)?;
++        }
++    }
++    Ok(())
++}
++
++/// One `do` target: a two-segment `pkg::A` must be exported by `pkg`.
++fn check_action_path(p: &crate::ast::Path, model: &Model) -> PssResult<()> {
++    if p.segments.len() != 2 {
++        return Ok(());
++    }
++    let (pkg, leaf) = (&p.segments[0], &p.segments[1]);
++    if model.packages.contains(pkg)
++        && !model.components.contains_key(pkg)
++        && !model.exports.contains(&format!("{}::{}", pkg, leaf))
++    {
++        return Err(crate::error::PssError::plain(format!(
++            "`{}` is not visible: `{}` is a package and does not export `{}` \
++             (PSS 22.4 — an `export` declaration is required)",
++            p, pkg, leaf
++        )));
++    }
++    Ok(())
++}
++
++fn check_activity(act: &crate::ast::Activity, model: &Model) -> PssResult<()> {
++    use crate::ast::{Activity, ActivityStmt};
++    let Activity::Sequence(stmts) = act;
++    for s in stmts {
++        match s {
++            ActivityStmt::Do(p) | ActivityStmt::DoConstrained { action: p, .. } => {
++                check_action_path(p, model)?;
++            }
++            ActivityStmt::DoWith { action: p, body } => {
++                check_action_path(p, model)?;
++                if let Some(b) = body {
++                    check_activity(b, model)?;
++                }
++            }
++            ActivityStmt::Labeled { stmt, .. } => {
++                let one = Activity::Sequence(vec![(**stmt).clone()]);
++                check_activity(&one, model)?;
++            }
++            ActivityStmt::Parallel { branches, .. }
++            | ActivityStmt::Schedule { branches, .. } => {
++                for b in branches {
++                    check_activity(b, model)?;
++                }
++            }
++            ActivityStmt::Select(branches) => {
++                for (_, b) in branches {
++                    check_activity(b, model)?;
++                }
++            }
++            ActivityStmt::Match { choices, .. } => {
++                for (_, b) in choices {
++                    check_activity(b, model)?;
++                }
++            }
++            ActivityStmt::Repeat { body, .. }
++            | ActivityStmt::Foreach { body, .. }
++            | ActivityStmt::Atomic(body) => check_activity(body, model)?,
++            ActivityStmt::Cover { body: Some(b), .. } => check_activity(b, model)?,
++            _ => {}
++        }
++    }
++    Ok(())
++}
+diff --git a/src/parser.rs b/src/parser.rs
+index d156e22..2d47ad9 100644
+--- a/src/parser.rs
++++ b/src/parser.rs
+@@ -29,6 +29,18 @@ pub struct Parser {
+     /// `Option`, so it used to discard errors and turn a broken statement into
+     /// a `Raw` one; keeping the first error lets the body be rejected.
+     exec_err: Option<PssError>,
++    /// Names this file declares — types, constants, functions, actions and
++    /// packages — collected as they are parsed. `compile has (X)` asks whether
++    /// such a name exists (PSS 22.3 §19.3); with no record of declarations the
++    /// parser had to answer `true` unconditionally, so an undeclared name took
++    /// the enabled branch. A name is stored both as its leaf and as
++    /// `<scope>::<leaf>`, so a package-qualified `compile has (p::T)` works.
++    decls: std::collections::BTreeSet<String>,
++    /// Some `compile has` in this pass answered "not declared".
++    has_miss: bool,
++    /// This pass added a name `decls` did not already hold, so a further pass
++    /// could answer a `compile has` differently.
++    decls_grew: bool,
+ }
+ 
+ impl Parser {
+@@ -42,9 +54,68 @@ impl Parser {
+             functions: Vec::new(),
+             scope: None,
+             exec_err: None,
++            decls: std::collections::BTreeSet::new(),
++            has_miss: false,
++            decls_grew: false,
+         }
+     }
+ 
++    /// Record a declared name for `compile has`, under its leaf and under the
++    /// current scope.
++    fn declare(&mut self, name: &str) {
++        let leaf = name.rsplit("::").next().unwrap_or(name).to_string();
++        if self.decls.insert(leaf.clone()) {
++            self.decls_grew = true;
++        }
++        if let Some(scope) = self.scope.clone() {
++            if !scope.is_empty() && self.decls.insert(format!("{}::{}", scope, leaf)) {
++                self.decls_grew = true;
++            }
++        }
++    }
++
++    /// `compile has ( X )` — PSS 22.3 §19.3: true when `X` names a type or
++    /// constant that has been declared unconditionally or in an enabled
++    /// conditional block, false otherwise. A form the parser cannot read as a
++    /// plain (possibly scoped) name keeps the previous answer, `true`, so an
++    /// unusual spelling does not silently change which branch is taken.
++    fn compile_has(&mut self) -> bool {
++        if !self.at_punct("(") {
++            return true;
++        }
++        let save = self.pos;
++        self.bump();
++        let mut segs: Vec<String> = Vec::new();
++        while let TokKind::Ident(id) = self.peek().kind.clone() {
++            self.bump();
++            segs.push(id);
++            if self.at_punct("::") {
++                self.bump();
++                continue;
++            }
++            break;
++        }
++        // `T<>` — elided template arguments still name the type `T`.
++        if self.at_punct("<") && self.peek_at(1).is_punct(">") {
++            self.bump();
++            self.bump();
++        }
++        if segs.is_empty() || !self.at_punct(")") {
++            // Not a plain name: fall back to the old behaviour.
++            self.pos = save;
++            self.skip_parens();
++            return true;
++        }
++        self.bump(); // `)`
++        let full = segs.join("::");
++        let leaf = segs.last().cloned().unwrap_or_default();
++        if self.decls.contains(&full) || self.decls.contains(&leaf) {
++            return true;
++        }
++        self.has_miss = true;
++        false
++    }
++
+     // ---- token helpers -------------------------------------------------
+ 
+     fn peek(&self) -> &Token {
+@@ -221,6 +292,27 @@ impl Parser {
+     // ---- entry point ---------------------------------------------------
+ 
+     pub fn parse_file(&mut self) -> PssResult<SourceFile> {
++        let mut file = self.parse_file_once()?;
++        // §19.3 counts a declaration anywhere in the file, not only one written
++        // above the `compile has`. A first pass can only see what it has
++        // already parsed, so when a `compile has` answered "not declared" and
++        // the pass still discovered new names, re-parse with the completed set.
++        // The set only grows, so this reaches a fixed point (bounded anyway).
++        let mut guard = 0;
++        while self.has_miss && self.decls_grew && guard < 4 {
++            guard += 1;
++            let mut p = Parser::new(self.toks.clone());
++            p.decls = self.decls.clone();
++            let again = p.parse_file_once()?;
++            self.decls = p.decls;
++            self.has_miss = p.has_miss;
++            self.decls_grew = p.decls_grew;
++            file = again;
++        }
++        Ok(file)
++    }
++
++    fn parse_file_once(&mut self) -> PssResult<SourceFile> {
+         let items = self.parse_items(true)?;
+         // `parse_items` stops at a `}`; at file level that means an unmatched
+         // one, which used to be ignored silently.
+@@ -480,11 +572,10 @@ impl Parser {
+                     continue;
+                 }
+                 if self.eat_ident("has") {
+-                    // `compile has (X)` asks whether X exists in the model; a
+-                    // single-file parse cannot see that, so it is accepted.
+-                    if self.at_punct("(") {
+-                        self.skip_parens();
+-                    }
++                    // `compile has (X);` as a statement: evaluate it against the
++                    // declaration set so the same answer is reported whether it
++                    // stands alone or guards a `compile if`.
++                    let _ = self.compile_has();
+                     self.eat_punct(";");
+                     continue;
+                 }
+@@ -538,6 +629,9 @@ impl Parser {
+         if self.at_ident("compile") {
+             return self.parse_compile_if();
+         }
++        if self.at_ident("export") {
++            return Ok(self.parse_export());
++        }
+         if self.at_ident("extend") {
+             return self.parse_extend();
+         }
+@@ -570,6 +664,37 @@ impl Parser {
+ 
+     // ---- imports / packages -------------------------------------------
+ 
++    /// `export target c::A1(bit mode);` (PSS 22.4) — names an action of another
++    /// component that is visible from outside the declaring package as
++    /// `pkg::A1`. The statement used to be skipped, so `pkg::A1` resolved with
++    /// or without it and `export` gated nothing.
++    ///
++    /// It is carried to the IR as an import-shaped marker —
++    /// `__export__::<pkg>::<target>...` — because `Item` has no export variant
++    /// and this change is confined to the parser, the IR and the engine.
++    /// `Lowerer::collect` recognises the marker and records the export; it is
++    /// never treated as an import.
++    fn parse_export(&mut self) -> Item {
++        self.bump(); // `export`
++        // The qualifier says what kind of name is exported.
++        while self.at_ident("target") || self.at_ident("solve") || self.at_ident("action") {
++            self.bump();
++        }
++        let mut segs = vec!["__export__".to_string()];
++        // The exporting package is one segment, even when its own name is
++        // scoped, so the IR can tell it from the target path.
++        segs.push(self.scope.clone().unwrap_or_default());
++        if let Ok(path) = self.parse_scoped_path() {
++            segs.extend(path.segments);
++        }
++        // A parameter list (`(bit mode)`) is not modelled.
++        if self.at_punct("(") {
++            self.skip_parens();
++        }
++        self.skip_to_semicolon();
++        Item::Import(Path::new(segs))
++    }
++
+     fn parse_import(&mut self) -> PssResult<Path> {
+         self.expect_ident_named("import")?;
+         // `import [solve|target] [C|SV] function ...` — an imported function
+@@ -603,6 +728,7 @@ impl Parser {
+         if self.peek().is_ident("class") && !self.peek_at(1).is_punct("::") {
+             self.bump();
+             let path = self.parse_scoped_path()?;
++            self.declare(&path.segments.join("::"));
+             if self.eat_ident("as") {
+                 let _ = self.expect_ident()?;
+             }
+@@ -644,6 +770,7 @@ impl Parser {
+         self.expect_ident_named("package")?;
+         // A package name may be qualified: `package pkg1::a::b::c { ... }`.
+         let name = self.parse_scoped_path()?.segments.join("::");
++        self.declare(&name);
+         self.expect_punct("{")?;
+         let saved = std::mem::replace(&mut self.scope, Some(name.clone()));
+         let items = self.parse_items(false)?;
+@@ -677,6 +804,7 @@ impl Parser {
+     fn parse_enum(&mut self, is_extend: bool, base: Option<Path>) -> PssResult<EnumDecl> {
+         self.expect_ident_named("enum")?;
+         let name = self.parse_scoped_path()?;
++        self.declare(&name.segments.join("::"));
+         // `enum E : int { ... }` — an explicit base type (PSS 12.4). The base
+         // must be a type, so a declaration keyword such as `struct` is an error
+         // rather than something to skip over.
+@@ -701,7 +829,11 @@ impl Parser {
+         if self.eat_punct("{") {
+             while !self.at_punct("}") && !self.at_eof() {
+                 if let Some(id) = self.peek().ident() {
+-                    variants.push(id.to_string());
++                    // An enum variant is a constant, so `compile has (V)` sees
++                    // it (PSS 22.3 §19.3 counts types and constants).
++                    let id = id.to_string();
++                    self.declare(&id);
++                    variants.push(id);
+                     self.bump();
+                     // Optional `= value` (PSS 12.4). It used to be parsed and
+                     // discarded, so every variant took its position instead.
+@@ -735,6 +867,9 @@ impl Parser {
+     fn parse_type_decl(&mut self, is_extend: bool) -> PssResult<TypeDecl> {
+         let keyword = self.expect_ident()?; // struct/resource/buffer/state
+         let name = self.parse_scoped_path()?.leaf();
++        if !is_extend {
++            self.declare(&name);
++        }
+         let template_params = self.parse_template_params()?;
+         let base = if self.eat_punct(":") {
+             Some(self.parse_type_ref()?)
+@@ -1049,6 +1184,7 @@ impl Parser {
+             let _ret = self.parse_type_ref()?;
+         }
+         let name = self.expect_ident()?;
++        self.declare(&name);
+         let mut params = Vec::new();
+         if self.at_punct("(") {
+             self.bump();
+@@ -1095,6 +1231,7 @@ impl Parser {
+         let target = self.parse_type_ref()?;
+         let name = self.expect_ident()?;
+         self.eat_punct(";");
++        self.declare(&name);
+         self.typedefs.insert(name, target);
+         Ok(())
+     }
+@@ -1965,6 +2102,9 @@ impl Parser {
+     fn parse_component(&mut self, is_extend: bool) -> PssResult<ComponentDecl> {
+         self.expect_ident_named("component")?;
+         let name = self.expect_ident()?;
++        if !is_extend {
++            self.declare(&name);
++        }
+         let template_params = self.parse_template_params()?;
+         let base = if self.eat_punct(":") {
+             Some(self.parse_type_ref()?)
+@@ -2297,6 +2437,9 @@ impl Parser {
+         self.expect_ident_named("action")?;
+         // The name may be qualified when extending (`extend action C::A`).
+         let name = self.parse_scoped_path()?.leaf();
++        if !is_extend {
++            self.declare(&name);
++        }
+         let template_params = self.parse_template_params()?;
+         let base = if self.eat_punct(":") {
+             Some(self.parse_type_ref()?)
+@@ -3080,6 +3223,7 @@ impl Parser {
+             Expr::Int(0)
+         };
+         self.expect_punct(";")?;
++        self.declare(&name);
+         Ok(Some(Item::StaticConst { name, value }))
+     }
+ 
+@@ -3487,16 +3631,15 @@ impl Parser {
+                     self.bump();
+                     return Ok(Expr::Bool(false));
+                 }
+-                // `compile has (X)` inside a condition (PSS 22.3) asks whether
+-                // X exists in the model. A single-file parse cannot resolve it,
+-                // so it evaluates to true — the symbol is being referenced.
++                // `compile has (X)` inside a condition (PSS 22.3 §19.3) is true
++                // when X names a type or constant the model declares. It used
++                // to be an unconditional `true`, so a model that guarded on a
++                // symbol declared nowhere silently got the then-branch.
+                 if id == "compile" && self.peek_at(1).is_ident("has") {
+                     self.bump();
+                     self.bump();
+-                    if self.at_punct("(") {
+-                        self.skip_parens();
+-                    }
+-                    return Ok(Expr::Bool(true));
++                    let found = self.compile_has();
++                    return Ok(Expr::Bool(found));
+                 }
+                 if id == "foreach" {
+                     self.bump();

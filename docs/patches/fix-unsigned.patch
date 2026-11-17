@@ -1,0 +1,691 @@
+diff --git a/src/backend/json.rs b/src/backend/json.rs
+index fda762f..3f6d297 100644
+--- a/src/backend/json.rs
++++ b/src/backend/json.rs
+@@ -5,7 +5,7 @@
+ use super::{json_escape, Backend, BackendOptions};
+ use crate::engine::{Scenario, StepMode};
+ use crate::error::PssResult;
+-use crate::ir::Model;
++use crate::ir::{FieldSig, Model};
+ 
+ pub struct JsonBackend;
+ 
+@@ -19,6 +19,11 @@ impl Backend for JsonBackend {
+     }
+ 
+     fn emit(&self, model: &Model, scenario: &Scenario, _opts: &BackendOptions) -> PssResult<String> {
++        // The declared width and signedness of each action's fields, so a value
++        // is printed as its type reads it: a `bit[64]` holding
++        // `0xFFFF_FFFF_FFFF_FFFF` is 18446744073709551615, not -1.
++        let mut sigs: std::collections::HashMap<String, std::collections::HashMap<String, FieldSig>> =
++            std::collections::HashMap::new();
+         let mut s = String::new();
+         s.push_str("{\n");
+         s.push_str(&format!(
+@@ -78,9 +83,16 @@ impl Backend for JsonBackend {
+                 s.push('}');
+             } else {
+                 s.push('\n');
++                let sig = sigs
++                    .entry(step.action.clone())
++                    .or_insert_with(|| model.field_signatures(&step.action));
+                 for (j, (k, v)) in step.fields.iter().enumerate() {
+                     let comma = if j + 1 < step.fields.len() { "," } else { "" };
+-                    s.push_str(&format!("        \"{}\": {}{}\n", json_escape(k), v, comma));
++                    let text = match sig.get(k) {
++                        Some(f) => f.render(*v),
++                        None => v.to_string(),
++                    };
++                    s.push_str(&format!("        \"{}\": {}{}\n", json_escape(k), text, comma));
+                 }
+                 s.push_str("      }");
+             }
+diff --git a/src/backend/trace.rs b/src/backend/trace.rs
+index f6fe216..6c390b7 100644
+--- a/src/backend/trace.rs
++++ b/src/backend/trace.rs
+@@ -3,7 +3,7 @@
+ use super::{Backend, BackendOptions};
+ use crate::engine::Scenario;
+ use crate::error::PssResult;
+-use crate::ir::Model;
++use crate::ir::{FieldSig, Model};
+ 
+ pub struct TraceBackend;
+ 
+@@ -16,7 +16,12 @@ impl Backend for TraceBackend {
+         "Human-readable execution trace"
+     }
+ 
+-    fn emit(&self, _model: &Model, scenario: &Scenario, _opts: &BackendOptions) -> PssResult<String> {
++    fn emit(&self, model: &Model, scenario: &Scenario, _opts: &BackendOptions) -> PssResult<String> {
++        // The declared width and signedness of each action's fields, so a value
++        // is printed as its type reads it: a `bit[64]` holding
++        // `0xFFFF_FFFF_FFFF_FFFF` is 18446744073709551615, not -1.
++        let mut sigs: std::collections::HashMap<String, std::collections::HashMap<String, FieldSig>> =
++            std::collections::HashMap::new();
+         let mut s = String::new();
+         s.push_str("Satya scenario trace\n");
+         s.push_str("====================\n");
+@@ -68,10 +73,16 @@ impl Backend for TraceBackend {
+                 label
+             ));
+             if !step.fields.is_empty() {
++                let sig = sigs
++                    .entry(step.action.clone())
++                    .or_insert_with(|| model.field_signatures(&step.action));
+                 let fields: Vec<String> = step
+                     .fields
+                     .iter()
+-                    .map(|(k, v)| format!("{}={}", k, v))
++                    .map(|(k, v)| match sig.get(k) {
++                        Some(f) => format!("{}={}", k, f.render(*v)),
++                        None => format!("{}={}", k, v),
++                    })
+                     .collect();
+                 s.push_str(&format!("{}     solved: {}\n", indent, fields.join(" ")));
+             }
+diff --git a/src/ir.rs b/src/ir.rs
+index 9fa780b..832a341 100644
+--- a/src/ir.rs
++++ b/src/ir.rs
+@@ -70,6 +70,108 @@ impl Field {
+     pub fn is_numeric(&self) -> bool {
+         matches!(self.category, TypeCategory::Scalar | TypeCategory::Enum(_))
+     }
++
++    /// The width and signedness of this field's *declared* type — the one
++    /// thing a renderer needs and cannot get from the value itself. A solved
++    /// value is carried in an `i64`, so `0xFFFF_FFFF_FFFF_FFFF` and `-1` are
++    /// the same 64 bits: only the declaration says which of the two to print.
++    pub fn signature(&self, model: &Model) -> FieldSig {
++        FieldSig::of(model, &self.type_name, self.bits)
++    }
++}
++
++/// Width and signedness of a declared type, carried from the declaration site
++/// to the backends so a value is printed as the type it was declared with
++/// (PSS 6.1 / 12.2) rather than as whatever the `i64` carrier looks like.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct FieldSig {
++    /// The declared width in bits, when the type declares one.
++    pub bits: Option<i64>,
++    /// True when the declared type is unsigned: `bit[N]`, `bool`, `byte`,
++    /// `uint` and their aliases. `int`, `shortint`, `longint` and enums are
++    /// signed.
++    pub unsigned: bool,
++}
++
++impl FieldSig {
++    /// A signature with no known width, rendered signed — what a value whose
++    /// declaration could not be resolved falls back to.
++    pub const SIGNED: FieldSig = FieldSig {
++        bits: None,
++        unsigned: false,
++    };
++
++    /// Is this type unsigned at its declared width?
++    pub fn is_unsigned(&self) -> bool {
++        self.unsigned
++    }
++
++    /// Print a solved value the way its declared type reads it: an unsigned
++    /// field is the `u64` bit pattern, a signed one is the `i64` it already is.
++    pub fn render(&self, v: i64) -> String {
++        if self.unsigned {
++            (v as u64).to_string()
++        } else {
++            v.to_string()
++        }
++    }
++
++    /// Resolve a declared type name to its width and signedness, following a
++    /// `typedef` alias to the type it names.
++    pub fn of(model: &Model, type_name: &str, bits: Option<i64>) -> FieldSig {
++        Self::of_at(model, type_name, bits, 0)
++    }
++
++    fn of_at(model: &Model, type_name: &str, bits: Option<i64>, depth: usize) -> FieldSig {
++        // A type that (illegally) aliases itself must not recurse forever.
++        if depth > 8 {
++            return FieldSig { bits, unsigned: false };
++        }
++        let leaf = type_name.rsplit("::").next().unwrap_or(type_name);
++        // An explicit width on the declaration itself (`bit[64]`) keeps the
++        // leaf `bit`, so the keyword decides the signedness.
++        if let Some(u) = builtin_unsigned(leaf) {
++            let bits = bits.or(match leaf {
++                "bit" | "bool" => Some(1),
++                _ => None,
++            });
++            return FieldSig { bits, unsigned: u };
++        }
++        // A `typedef` alias: the width may sit on the alias (`typedef bit[64]
++        // u64_t;`), so take it from there when the field has none of its own.
++        if let Some(tr) = model
++            .typedefs
++            .get(type_name)
++            .or_else(|| model.typedefs.get(leaf))
++        {
++            let w = bits.or_else(|| {
++                tr.width
++                    .as_ref()
++                    .and_then(|w| w.eval_const(&|n| model.constants.get(n).copied()))
++            });
++            return Self::of_at(model, &mangle_type(tr), w, depth + 1);
++        }
++        // A named type: its keyword carries the signedness (`bit` for an enum's
++        // base is still an integer, but an enum's own values are signed).
++        if let Some(dt) = model.types.get(&model.resolve(type_name)) {
++            if let Some(u) = builtin_unsigned(&dt.keyword) {
++                return FieldSig { bits, unsigned: u };
++            }
++        }
++        FieldSig { bits, unsigned: false }
++    }
++}
++
++/// The signedness of a built-in type keyword (PSS 6.1): `bit`, `bool`, `byte`
++/// and `uint` are unsigned; `shortint`, `int`, `longint` and `integer` are not.
++fn builtin_unsigned(leaf: &str) -> Option<bool> {
++    match leaf {
++        "bit" | "bool" | "byte" | "uint" | "uint8" | "uint16" | "uint32" | "uint64"
++        | "unsigned" => Some(true),
++        "int" | "integer" | "shortint" | "longint" | "int8" | "int16" | "int32" | "int64"
++        | "signed" => Some(false),
++        _ => None,
++    }
+ }
+ 
+ #[derive(Debug, Clone)]
+@@ -236,6 +338,84 @@ impl Model {
+         self.duplicates.iter().any(|d| d == leaf)
+     }
+ 
++    /// The declared width and signedness of every numeric leaf of `action`,
++    /// keyed exactly as the solver names it (`sv.f`, `arr[0]`), so a backend can
++    /// print a solved value as its declared type instead of guessing from the
++    /// bits it happens to hold. Keys that are absent are not numeric leaves.
++    pub fn field_signatures(&self, action: &str) -> HashMap<String, FieldSig> {
++        let mut out = HashMap::new();
++        if let Some(a) = self.actions.get(&self.resolve(action)) {
++            let mut visited = Vec::new();
++            self.collect_signatures(&a.fields, "", 0, &mut visited, &mut out);
++        }
++        out
++    }
++
++    fn collect_signatures(
++        &self,
++        fields: &[Field],
++        prefix: &str,
++        depth: usize,
++        visited: &mut Vec<String>,
++        out: &mut HashMap<String, FieldSig>,
++    ) {
++        // Mirrors the solver's own expansion (see `expand_field`), so a key
++        // here is the key the solved value carries.
++        if depth > 6 {
++            return;
++        }
++        for f in fields {
++            let path = if prefix.is_empty() {
++                f.name.clone()
++            } else {
++                format!("{}.{}", prefix, f.name)
++            };
++            // A fixed-size array is one variable per element (PSS 8.4).
++            if let Some(n) = f.array {
++                let elem_ty = f.elem_type.clone().unwrap_or_else(|| f.type_name.clone());
++                let sig = FieldSig::of(self, &elem_ty, f.elem_bits.or(f.bits));
++                let elem = self.types.get(&self.resolve(&elem_ty));
++                for i in 0..n.clamp(0, 4096) {
++                    let epath = format!("{}[{}]", path, i);
++                    match elem {
++                        Some(t) => {
++                            if !visited.contains(&elem_ty) {
++                                visited.push(elem_ty.clone());
++                                self.collect_signatures(&t.fields, &epath, depth + 1, visited, out);
++                                visited.pop();
++                            }
++                        }
++                        None => {
++                            out.insert(epath, sig);
++                        }
++                    }
++                }
++                continue;
++            }
++            match &f.category {
++                // A leaf that carries a value of its own — including one whose
++                // type the model never declared (`uint64`, a methodology alias),
++                // which is still printed by the signedness its name gives.
++                TypeCategory::Component(_) | TypeCategory::Handle => {}
++                TypeCategory::Struct(tname) => {
++                    if visited.contains(tname) {
++                        continue;
++                    }
++                    if let Some(t) = self.types.get(tname) {
++                        visited.push(tname.clone());
++                        self.collect_signatures(&t.fields, &path, depth + 1, visited, out);
++                        visited.pop();
++                    }
++                }
++                // Scalar, enum, and an unresolved name: one value, whose
++                // declared type says how to print it.
++                _ => {
++                    out.insert(path, f.signature(self));
++                }
++            }
++        }
++    }
++
+     pub fn lower(file: &SourceFile) -> PssResult<Model> {
+         let mut lw = Lowerer::default();
+         // Covergroups are indexed before lowering so an action's instance
+diff --git a/src/solver.rs b/src/solver.rs
+index 36be20d..37d533b 100644
+--- a/src/solver.rs
++++ b/src/solver.rs
+@@ -122,6 +122,17 @@ pub struct Domain {
+     /// constraint replaces it — up to `ceiling`, the widest value the type can
+     /// hold. `None` once the bounds are real.
+     soft_hi: Option<i64>,
++    /// True when the declared type is unsigned (`bit[N]`, `bool`, `uint`, ...).
++    /// A value is carried in an `i64`, so for a `bit[64]` the pattern with bit
++    /// 63 set *is* negative — the declared signedness is the only thing that
++    /// says whether a bound or a value is to be read as `i64` or as `u64`.
++    unsigned: bool,
++    /// No value survives the constraints. An unsigned domain's empty
++    /// intersection cannot always be written as an inverted `lo > hi`: a
++    /// request such as `[-100..-10]` on a `uint` reads as `[2^64-100..2^64-10]`,
++    /// which the `i64` carrier stores as an interval that is *not* inverted. So
++    /// the emptiness is recorded here rather than inferred from the bounds.
++    empty: bool,
+ }
+ 
+ impl Domain {
+@@ -133,16 +144,79 @@ impl Domain {
+             None => true,
+         }
+     }
++
++    /// A bound read in the order the declared type uses: an unsigned field's
++    /// bounds are `u64` bit patterns. `i64::MIN` / `i64::MAX` are the module's
++    /// "no bound" sentinels (an unsigned 64-bit field's whole range is carried
++    /// as that pair), so they mean the ends of the `u64` range here.
++    fn bound(&self, v: i64) -> u64 {
++        match v {
++            i64::MIN => 0,
++            i64::MAX => u64::MAX,
++            _ => v as u64,
++        }
++    }
++
++    /// Compare two values the way the declared type reads them: unsigned for a
++    /// `bit[N]` / `uint`, signed otherwise. Only ever differs when bit 63 is
++    /// set, which is exactly the `bit[64]` case.
++    fn cmp_vals(&self, a: i64, b: i64) -> std::cmp::Ordering {
++        if self.unsigned {
++            (a as u64).cmp(&(b as u64))
++        } else {
++            a.cmp(&b)
++        }
++    }
++
++    /// Is `v` within `[lo..hi]`, read in the declared type's order? The bounds
++    /// come from the constraint, so they are the literals that were written:
++    /// `in [0..18446744073709551615]` is the whole `u64` range, and
++    /// `in {0x7FFF_FFFF_FFFF_FFFF}` is that one value.
++    fn within(&self, v: i64, lo: i64, hi: i64) -> bool {
++        if self.unsigned {
++            let (v, lo, hi) = (v as u64, lo as u64, hi as u64);
++            v >= lo && v <= hi
++        } else {
++            v >= lo && v <= hi
++        }
++    }
++
++    /// The "no bound" ends of an interval request, in the declared type's
++    /// order: `i64::MIN` / `i64::MAX` are the signed ends, and an unsigned field
++    /// runs from 0 to the `u64` pattern `-1`.
++    fn floor(&self) -> i64 {
++        if self.unsigned {
++            0
++        } else {
++            i64::MIN
++        }
++    }
++
++    fn ceiling(&self) -> i64 {
++        if self.unsigned {
++            -1
++        } else {
++            i64::MAX
++        }
++    }
+     fn contains(&self, v: i64) -> bool {
+         // The declared type is a hard bound, so a value outside it is never in
+         // the domain even if a constraint named it.
+-        if !self.in_declared_width(v) {
++        if self.empty || !self.in_declared_width(v) {
+             return false;
+         }
+         if let Some(a) = &self.allowed {
+             return a.contains(&v);
+         }
+-        v >= self.lo && v <= self.hi && !self.forbidden.contains(&v)
++        // The domain's own bounds are carried in the type's order, where an
++        // unsigned 64-bit field's whole range is the pair (i64::MIN, i64::MAX).
++        let in_range = if self.unsigned {
++            let u = v as u64;
++            u >= self.bound(self.lo) && u <= self.bound(self.hi)
++        } else {
++            v >= self.lo && v <= self.hi
++        };
++        in_range && !self.forbidden.contains(&v)
+     }
+     /// Is there no value left at all? An interval that inverted (`lo > hi`) is
+     /// the obvious case, but a named set whose members were all narrowed away,
+@@ -151,7 +225,7 @@ impl Domain {
+     /// a conflict. The scan is bounded by the same 4096-value window the rest of
+     /// the module uses for enumeration, so a `bit[64]` domain stays O(1).
+     fn is_empty(&self) -> bool {
+-        if self.lo > self.hi {
++        if self.empty || self.lo > self.hi {
+             return true;
+         }
+         if let Some(a) = &self.allowed {
+@@ -165,6 +239,10 @@ impl Domain {
+     }
+ 
+     fn intersect_interval(&mut self, lo: i64, hi: i64) {
++        if self.unsigned {
++            self.intersect_unsigned(lo, hi);
++            return;
++        }
+         let (dlo, dhi) = self.decl.unwrap_or((i64::MIN, i64::MAX));
+         // `DEFAULT_INT_MAX` is a sampling default for an integer whose width the
+         // model never declared, not a bound it declared. Intersecting against it
+@@ -213,6 +291,79 @@ impl Domain {
+             a.retain(|v| *v >= l && *v <= h);
+         }
+     }
++
++    /// `intersect_interval` for an unsigned field, where the bounds are `u64`
++    /// bit patterns and so are only ordered correctly as `u64`.
++    ///
++    /// The narrowing itself is the same rule; what changes is the order the
++    /// bounds are compared in. A request such as `in [0..18446744073709551615]`
++    /// is the whole range and must not narrow anything — under the signed order
++    /// it reads as the inverted `[0..-1]` and would empty the domain. When the
++    /// surviving interval would cross the `i64` sign boundary it cannot be
++    /// written as one signed interval at all, so the domain is left alone and
++    /// the constraint is decided by the satisfaction check instead, which
++    /// compares unsigned.
++    fn intersect_unsigned(&mut self, lo: i64, hi: i64) {
++        let (dlo, dhi) = self
++            .decl
++            .map(|(a, b)| (self.bound(a), self.bound(b)))
++            .unwrap_or((0, u64::MAX));
++        let cur_hi = match self.soft_hi.take() {
++            Some(ceiling) => self.bound(ceiling).min(dhi),
++            None => self.bound(self.hi),
++        };
++        let cur_lo = self.bound(self.lo);
++        // The request is the constraint's own literals, read as `u64`.
++        let (rlo, rhi) = (lo as u64, hi as u64);
++        let nlo = cur_lo.max(rlo).max(dlo);
++        let nhi = cur_hi.min(rhi).min(dhi);
++        let narrowed = if nlo > nhi {
++            if rhi < dlo || rlo > dhi {
++                // Wholly outside the type's range (a `bit[8]` asked for
++                // `[256..300]`): keep the type's own bounds, so the value stays
++                // representable and the check reports the atom.
++                None
++            } else if (nlo as i64) > (nhi as i64) {
++                // Contradictory inside the type's range, and the interval is
++                // inverted in the signed order too, so it can be recorded as it
++                // stands: the picker falls back to the bound the constraint
++                // asked for, exactly as it does for a signed field.
++                self.empty = true;
++                Some((nlo, nhi))
++            } else {
++                // Contradictory, but the interval only inverted under the
++                // unsigned order (`[-100..-10]` on a `uint` is
++                // `[2^64-100..2^64-10]`), so it has no signed representation.
++                // Keep the domain's own bounds and record the emptiness.
++                self.empty = true;
++                None
++            }
++        } else if nlo == 0 && nhi == u64::MAX {
++            // The whole range, which the i64 carrier writes as (MIN, MAX).
++            Some((0, u64::MAX))
++        } else if (nlo as i64) <= (nhi as i64) {
++            Some((nlo, nhi))
++        } else {
++            // The interval crosses the sign boundary and has no signed interval
++            // representation; leave the bounds alone and let the satisfaction
++            // check, which compares unsigned, decide the atom.
++            None
++        };
++        if let Some((nlo, nhi)) = narrowed {
++            if nlo == 0 && nhi == u64::MAX {
++                self.lo = i64::MIN;
++                self.hi = i64::MAX;
++            } else {
++                self.lo = nlo as i64;
++                self.hi = nhi as i64;
++            }
++        }
++        // Keep a named set inside the narrowed domain too.
++        if let Some(a) = &mut self.allowed {
++            let (l, h) = (self.lo, self.hi);
++            a.retain(|v| *v >= l && *v <= h);
++        }
++    }
+ }
+ 
+ /// Small, dependency-free linear-congruential RNG so runs are reproducible.
+@@ -1060,11 +1211,14 @@ fn solve_impl(
+                 if let Some(v) = eval(rhs, bindings, &env) {
+                     let d = vars.get_mut(var);
+                     if let Some(d) = d {
++                        // The open end is the declared type's own, so an
++                        // unsigned field is not capped at the signed maximum.
++                        let (floor, ceil) = (d.floor(), d.ceiling());
+                         match op {
+-                            Op::Le => d.intersect_interval(i64::MIN, v),
+-                            Op::Lt => d.intersect_interval(i64::MIN, v - 1),
+-                            Op::Ge => d.intersect_interval(v, i64::MAX),
+-                            Op::Gt => d.intersect_interval(v + 1, i64::MAX),
++                            Op::Le => d.intersect_interval(floor, v),
++                            Op::Lt => d.intersect_interval(floor, v - 1),
++                            Op::Ge => d.intersect_interval(v, ceil),
++                            Op::Gt => d.intersect_interval(v + 1, ceil),
+                             _ => {}
+                         }
+                     }
+@@ -1250,11 +1404,15 @@ fn solve_impl(
+                 (Some(a), Some(b)) => (a, b),
+                 _ => continue,
+             };
++            // The unbounded ends come from each variable's own type, so an
++            // unsigned `bit[64]` is not capped at the signed maximum.
++            let (afloor, aceil) = (a.floor(), a.ceiling());
++            let (bfloor, bceil) = (b.floor(), b.ceiling());
+             let (alo, ahi, blo, bhi) = match op {
+-                Op::Lt => (i64::MIN, b.hi - 1, a.lo + 1, i64::MAX),
+-                Op::Le => (i64::MIN, b.hi, a.lo, i64::MAX),
+-                Op::Gt => (b.lo + 1, i64::MAX, i64::MIN, a.hi - 1),
+-                Op::Ge => (b.lo, i64::MAX, i64::MIN, a.hi),
++                Op::Lt => (afloor, b.hi - 1, a.lo + 1, bceil),
++                Op::Le => (afloor, b.hi, a.lo, bceil),
++                Op::Gt => (b.lo + 1, aceil, bfloor, a.hi - 1),
++                Op::Ge => (b.lo, aceil, bfloor, a.hi),
+                 _ => continue,
+             };
+             let before = (a.lo, a.hi, b.lo, b.hi);
+@@ -1358,6 +1516,8 @@ fn solve_impl(
+                 is_enum: false,
+                 decl: None,
+                 soft_hi: None,
++                unsigned: false,
++                empty: false,
+             });
+             match dist_by_root.get(&root) {
+                 Some(items) => pick_weighted(items, &mut rng).unwrap_or_else(|| pick(&d, &mut rng)),
+@@ -1411,7 +1571,11 @@ fn solve_impl(
+                         unsupported.push(format!(
+                             "{} -> {}",
+                             render_expr(ante),
+-                            cons.iter().map(render_atom).collect::<Vec<_>>().join(" && ")
++                            cons
++                                .iter()
++                                .map(|c| render_atom(c, &class_domain))
++                                .collect::<Vec<_>>()
++                                .join(" && ")
+                         ));
+                     }
+                 }
+@@ -1434,7 +1598,7 @@ fn solve_impl(
+                 if check_atom(other, &check_values, &env, &class_domain) {
+                     satisfied += 1;
+                 } else {
+-                    unsupported.push(render_atom(other));
++                    unsupported.push(render_atom(other, &class_domain));
+                 }
+             }
+         }
+@@ -2237,13 +2401,20 @@ fn check_atom(
+             } else {
+                 y
+             };
++            // A relation on an unsigned field is compared unsigned: for a
++            // `bit[64]`, `x > 0` must hold for `0xFFFF_FFFF_FFFF_FFFF`, whose
++            // i64 carrier is -1.
++            let ord = match domains.get(var) {
++                Some(d) => d.cmp_vals(x, y),
++                None => x.cmp(&y),
++            };
+             match op {
+                 Op::Eq => x == y,
+                 Op::Ne => x != y,
+-                Op::Le => x <= y,
+-                Op::Ge => x >= y,
+-                Op::Lt => x < y,
+-                Op::Gt => x > y,
++                Op::Le => ord.is_le(),
++                Op::Ge => ord.is_ge(),
++                Op::Lt => ord.is_lt(),
++                Op::Gt => ord.is_gt(),
+             }
+         }
+         Atom::InArray(var, coll) => match values.get(var) {
+@@ -2255,16 +2426,29 @@ fn check_atom(
+             .unwrap_or(true),
+             None => true,
+         },
+-        Atom::InRange(var, lo, hi) => values.get(var).map(|v| *v >= *lo && *v <= *hi).unwrap_or(true),
++        // A range on an unsigned field is checked in the unsigned order the
++        // declaration uses, so `bit[64] in [0..18446744073709551615]` is the
++        // whole range and not the inverted `[0..-1]`.
++        Atom::InRange(var, lo, hi) => values
++            .get(var)
++            .map(|v| match domains.get(var) {
++                Some(d) => d.within(*v, *lo, *hi),
++                None => *v >= *lo && *v <= *hi,
++            })
++            .unwrap_or(true),
+         Atom::InSet(var, items) => {
+             let x = match values.get(var) {
+                 Some(v) => *v,
+                 None => return true,
+             };
++            let dom = domains.get(var);
+             items.iter().any(|it| {
+                 set_item_intervals(it, values, env)
+                     .iter()
+-                    .any(|(lo, hi)| x >= *lo && x <= *hi)
++                    .any(|(lo, hi)| match dom {
++                        Some(d) => d.within(x, *lo, *hi),
++                        None => x >= *lo && x <= *hi,
++                    })
+             })
+         }
+         Atom::General(l, op, r) => {
+@@ -2402,11 +2586,19 @@ fn contains_bitwise(e: &Expr) -> bool {
+ }
+ 
+ /// Render an atom as a constraint string, for diagnostics.
+-fn render_atom(a: &Atom) -> String {
++///
++/// `domains` supplies the declared signedness, so a `bit[64]` bound is reported
++/// as the `u64` it was written as rather than as its negative i64 carrier.
++fn render_atom(a: &Atom, domains: &HashMap<String, Domain>) -> String {
+     match a {
+         Atom::Rel(v, op, e) => format!("{} {} {}", v, op_str(*op), render_expr(e)),
+         Atom::General(l, op, e) => format!("{} {} {}", render_expr(l), op_str(*op), render_expr(e)),
+-        Atom::InRange(v, lo, hi) => format!("{} in [{}..{}]", v, lo, hi),
++        Atom::InRange(v, lo, hi) => match domains.get(v) {
++            Some(d) if d.unsigned => {
++                format!("{} in [{}..{}]", v, *lo as u64, *hi as u64)
++            }
++            _ => format!("{} in [{}..{}]", v, lo, hi),
++        },
+         Atom::InSet(v, items) => format!("{} in {{{}}}", v, items.len()),
+         Atom::InArray(v, c) => format!("{} in {}", v, c),
+         Atom::Unique(names) => format!("unique {{{}}}", names.join(", ")),
+@@ -2548,6 +2740,11 @@ fn invert_eq(
+ }
+ 
+ fn pick(d: &Domain, rng: &mut Rng) -> i64 {
++    // An empty domain has no value to draw; the conflict is reported separately
++    // (see `is_empty`), and the lower bound is the least surprising stand-in.
++    if d.empty {
++        return d.lo;
++    }
+     // A named set is sampled from its members, uniformly. Rejection sampling
+     // would need ~span/allowed tries, and on failure it returned the first
+     // member — so `x in [64, 127, 16384, 32767]` gave 64 on every seed.
+@@ -2704,6 +2901,8 @@ fn expand_field(
+                 is_enum: false,
+                 decl: None,
+                 soft_hi: None,
++                unsigned: false,
++                empty: false,
+             },
+         );
+         return;
+@@ -2759,6 +2958,11 @@ fn expand_field(
+             } else {
+                 None
+             };
++            // The declared signedness is what says how to read the value: for a
++            // `bit[64]` the same 64 bits are `18446744073709551615` or `-1`
++            // depending on it, so it is carried in the domain rather than
++            // inferred from the bits at the point of comparison.
++            let unsigned = field.signature(model).is_unsigned();
+             out.insert(
+                 path,
+                 Domain {
+@@ -2769,6 +2973,8 @@ fn expand_field(
+                     is_enum: false,
+                     decl,
+                     soft_hi,
++                    unsigned,
++                    empty: false,
+                 },
+             );
+         }
+@@ -2797,6 +3003,9 @@ fn expand_field(
+                     is_enum: true,
+                     decl: None,
+                     soft_hi: None,
++                    // An enum's values are signed integers (PSS 12.4).
++                    unsigned: false,
++                    empty: false,
+                 },
+             );
+         }
