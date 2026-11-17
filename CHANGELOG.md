@@ -13,6 +13,33 @@ approximated.
 
 ---
 
+## 0.70.0 — 2026-11-17
+
+Resource pools provide their declared instances
+
+Rows 49 and 50. Two parallel lockers on a `pool [4] core_r` both resolved to
+instance 0, so the exclusivity the pool exists to provide did not hold.
+
+`claim()` gave every resource a hard default capacity of 1 and never consulted
+the pool. It now takes the capacity from the pool that provides the resource:
+
+```
+pool [4] core_r;  …  parallel { do L; do L; }   lock instance 0, lock instance 1
+```
+
+**Two wrong turns, both reverted:**
+
+1. Pre-creating the pool's instances so the pool was not empty. That broke
+   *allocation* — flow objects are created on demand as an `output` produces
+   them, so pre-created ones made allocation append past the declared count and
+   three pool tests failed. Reverted; `capacity` bounds the pool instead.
+2. Seeding the capacities before `collect_resources`, which then replaced the
+   whole map and wiped them. Moved after it.
+
+Proof: **126 → 128 pass, 36 → 34 fail** (rows 49 and 50).
+
+**Verification:** 159 tests; proof 128 pass / 34 fail.
+
 ## 0.69.0 — 2026-11-16
 
 `match` selects a range arm

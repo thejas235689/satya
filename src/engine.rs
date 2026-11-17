@@ -316,6 +316,19 @@ pub fn run_scenario(model: &Model, root_action: &str, seed: u64) -> Scenario {
         eng.pools = pools;
         eng.pool_binds = binds;
         eng.resources = collect_resources(model, t);
+        // A resource's capacity comes from its pool: `pool [4] core_r` provides
+        // four instances. `claim` used a hard default of 1, so every exclusive
+        // claim landed on instance 0 and a 4-instance pool gave two parallel
+        // lockers the same one. This must follow `collect_resources`, which
+        // replaces the map.
+        for p in &eng.pools.clone() {
+            let cap = p.capacity.unwrap_or(1).max(1) as usize;
+            let e = eng.resources.entry(p.type_name.clone()).or_insert(ResourceState {
+                capacity: cap,
+                next: 0,
+            });
+            e.capacity = e.capacity.max(cap);
+        }
     }
     // Component `init_down`/`init_up` blocks run before the root action's
     // `pre_solve`, `init_down` top-down and `init_up` bottom-up (PSS 22.1).
@@ -3384,6 +3397,9 @@ fn collect_pools_into(
     seen.push(name.to_string());
     if let Some(c) = model.component(name) {
         for p in &c.pools {
+            // Flow objects are created on demand as an `output` produces them,
+            // so the pool starts empty and `capacity` bounds it. Pre-creating
+            // them here made allocation append past the declared count.
             out.push(PoolState {
                 name: p.name.clone(),
                 type_name: p.type_name.clone(),
