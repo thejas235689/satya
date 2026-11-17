@@ -13,6 +13,42 @@ approximated.
 
 ---
 
+## 0.71.0 — 2026-11-17
+
+A verified ROBDD core
+
+First slice of the BDD prover (`docs/BDD-DESIGN.md`): the decision-diagram
+engine itself, with no dependencies and no changes to the existing solver path.
+
+`src/bdd/mod.rs` provides a hash-consed reduced ordered BDD: `mk`, `and`, `or`,
+`xor`, `not`, `sat_count`, `witness`, and explicit variable ordering. Nodes are
+only created through `mk`, which is what makes the representation canonical —
+and canonical form is the entire reason to use a BDD: equivalence becomes a
+pointer comparison instead of a sample of test vectors.
+
+**What the tests establish, by brute force rather than assertion:**
+
+- `apply` for AND/OR/XOR over all 64 function pairs on 3 variables, compared
+  against evaluation on all 8 assignments — a wrong comparator is the classic
+  BDD bug and the one a translation layer would inherit.
+- `sat_count` equals `count_ones` of the truth table for all 16 functions over
+  4 variables.
+- `x & y` and `y & x` are the **same node**, as is the De Morgan rewrite of the
+  same function.
+- `witness` returns an assignment that satisfies the function.
+
+**Two bugs found by those tests, not by reading the code:** the `sat_count` memo
+was keyed by node alone, but a node's count depends on the level it is reached
+at; and the first truth-table builder in the test forced bits instead of reading
+the mask, so it was the test that was wrong. Both are the reason the tests are
+brute-force.
+
+**Not yet wired:** the PSS-to-Boolean translation and the `satya prove` command.
+The eligibility rule is in place (`MAX_DOMAIN = 256`); until translation lands,
+nothing user-facing changes and `satya solve`/`gen` are untouched.
+
+**Verification:** 164 tests (5 new); proof unchanged at 128 pass / 34 fail.
+
 ## 0.70.0 — 2026-11-17
 
 Resource pools provide their declared instances

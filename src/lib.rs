@@ -32,6 +32,7 @@
 
 pub mod ast;
 pub mod backend;
+pub mod bdd;
 pub mod engine;
 pub mod error;
 pub mod frontend;
