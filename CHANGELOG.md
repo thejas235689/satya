@@ -13,6 +13,51 @@ approximated.
 
 ---
 
+## 0.77.0 — 2026-11-17
+
+`satya emit` — one model, one bundle, every environment
+
+```
+satya emit model.pss --action run --seeds 3 -o bundle/
+```
+
+```
+bundle/manifest.json     tool version, model, action, seed range
+bundle/scenario.json     resolved values, one entry per seed
+bundle/test_1.c … test_N.c   target code, one program per seed
+bundle/satya_hal.h       every primitive the target code calls
+```
+
+The point is `satya_hal.h`. Today `exec body C = """ dma_program_channel({{chan}}, …) """`
+emits a call to a function nobody defines. The bundle now declares exactly those
+primitives, so a simulation model, an emulator, an FPGA testbench, a virtual
+platform and a post-silicon harness all implement **the same header** and the
+same bundle runs on each unchanged.
+
+**Verified end to end, not asserted:** the DMA model's bundle compiles against a
+stub HAL and runs, printing `chan = 1  len = 114` — the values resolved from seed
+1. That is the first time Satya's generated code has been *executed*.
+
+**Three bugs found by trying to compile it:**
+
+1. **`{{ }}` was emitted raw**, so the C did not compile at all. The 0.53.0
+   substitution patch was rejected because it baked the *first* step's values
+   into a per-action function. Here the bundle holds one scenario per file, so
+   substituting per seed is correct — seeds 1, 2, 3 gave `(1, 114)`, `(0, 702)`,
+   `(1, 186)`.
+2. **The HAL declared its own functions.** `transfer_run` is defined in the file
+   and `memset` is libc; declaring either clashes. Names defined in the file,
+   Satya's `_run` functions, and a libc list are now excluded.
+3. **Concatenating seeds redefined `main`.** One program per seed, which is also
+   what a replay environment wants.
+
+**Not done:** `--target` is not implemented — the bundle is environment-agnostic
+by construction rather than by flag. Determinism across a model revision is
+claimed by seed, not yet guaranteed by a recorded manifest hash.
+
+**Verification:** 162 integration tests; proof unchanged at 138 pass / 24 fail;
+the bundle compiled and ran with `zig cc` against a stub HAL.
+
 ## 0.76.0 — 2026-11-17
 
 Ten proof rows closed, from parallel work

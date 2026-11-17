@@ -114,6 +114,84 @@ fn run(args: &[String]) -> PssResult<()> {
             write_out(flag(rest, "-o").or_else(|| flag(rest, "--out")), &out)?;
             Ok(())
         }
+        "emit" => {
+            // One PSS model, one bundle, every target environment. The bundle is
+            // what a virtual platform, an FPGA testbench or a post-silicon
+            // harness consumes: resolved scenarios, target code, and the header
+            // that says which primitives the environment must provide.
+            let files = positional_files(rest);
+            let model = load_models(&files)?;
+            let action = pick_action(&model, flag(rest, "--action"))?;
+            let act = model
+                .find_action(None, &action)
+                .or_else(|| model.find_action(None, &action.rsplit("::").next().unwrap_or(&action)))
+                .ok_or_else(|| satya::PssError::plain(format!("no action `{}`", action)))?
+                .clone();
+            let n: u64 = flag(rest, "--seeds").and_then(|v| v.parse().ok()).unwrap_or(1);
+            let out = flag(rest, "-o")
+                .or_else(|| flag(rest, "--out"))
+                .unwrap_or("bundle")
+                .to_string();
+            std::fs::create_dir_all(&out)
+                .map_err(|e| satya::PssError::plain(format!("cannot create `{}`: {}", out, e)))?;
+
+            let opts = BackendOptions { top_sequence_name: None, uvm_factory: true };
+            let json_be = backend::get("json").unwrap();
+            let c_be = backend::get("c").unwrap();
+
+            let mut scenario = String::from("[\n");
+            let mut c_src = String::new();
+            for seed in 1..=n.max(1) {
+                let sc = engine::run_scenario(&model, &action, seed);
+                scenario.push_str(&json_be.emit(&model, &sc, &opts)?);
+                scenario.push_str(",\n");
+                if seed > 1 {
+                    c_src.push_str(&format!("/* --- seed {} --- */\n", seed));
+                }
+                // Substitute `{{ expr }}` with *this seed's* solved value.
+                // Emitting the template raw produced C that did not compile;
+                // substituting per seed is correct because the bundle holds one
+                // scenario per file, not one function for many steps.
+                let mut text = c_be.emit(&model, &sc, &opts)?;
+                let mut vals = std::collections::BTreeMap::new();
+                for st in &sc.steps {
+                    for (k, v) in &st.fields {
+                        vals.insert(k.clone(), *v);
+                    }
+                }
+                text = substitute_templates(&text, &vals);
+                // One program per seed: each carries its own `main`, typedefs and
+                // action functions, so concatenating them redefines `main`.
+                write_out(Some(&format!("{}/test_{}.c", out, seed)), &text)?;
+                c_src.push_str(&text);
+            }
+            if scenario.ends_with(",\n") {
+                scenario.truncate(scenario.len() - 2);
+                scenario.push('\n');
+            }
+            scenario.push_str("]\n");
+
+            // Every function the target code calls that it does not define is a
+            // primitive the environment must supply. Collecting them is what
+            // makes the bundle portable: a new environment is "implement this
+            // header", not "read the emitter".
+            let hal = hal_header(&c_src);
+
+            write_out(Some(&format!("{}/scenario.json", out)), &scenario)?;
+            write_out(Some(&format!("{}/test.c", out)), &c_src)?;
+            write_out(Some(&format!("{}/satya_hal.h", out)), &hal)?;
+            let manifest = format!(
+                "{{\n  \"tool\": \"satya {}\",\n  \"model\": {:?},\n  \"action\": {:?},\n  \"seeds\": {},\n  \"files\": [\"scenario.json\", \"test.c\", \"satya_hal.h\"]\n}}\n",
+                env!("CARGO_PKG_VERSION"),
+                files,
+                act.name,
+                n
+            );
+            write_out(Some(&format!("{}/manifest.json", out)), &manifest)?;
+            println!("bundle written to {}/  ({} seed(s), {} primitive(s) required)",
+                     out, n, hal.matches("long long ").count());
+            Ok(())
+        }
         "prove" => {
             // Exact reasoning on small domains. Anything outside what a BDD can
             // carry is reported NOT PROVED, never "satisfiable".
@@ -247,6 +325,87 @@ fn cmd_demo(rest: &[String]) -> PssResult<()> {
 // ---------------------------------------------------------------------------
 
 /// Positional arguments, skipping flags and the values of value-taking flags.
+/// Declare every function the target code calls but does not define, so each
+/// environment implements one header rather than reverse-engineering the
+/// emitter. An empty parameter list keeps the declaration usable for calls of
+/// any arity; the environment narrows it.
+fn hal_header(c_src: &str) -> String {
+    // C keywords, the C library, and the functions Satya itself defines. A
+    // name in any of these must not be declared as an environment primitive:
+    // redeclaring `memset` clashes with <string.h>, and redeclaring an action's
+    // own `_run` function clashes with the definition below it.
+    const KEYWORDS: &[&str] = &[
+        "if", "for", "while", "switch", "return", "sizeof", "printf", "main",
+        "do", "else", "case", "static", "void", "int", "long", "char", "const",
+        "memset", "memcpy", "memmove", "strlen", "strcmp", "strcpy", "malloc",
+        "free", "abort", "exit", "puts", "fprintf", "snprintf", "sprintf",
+    ];
+    let mut names: Vec<String> = Vec::new();
+    let bytes: Vec<char> = c_src.chars().collect();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_alphabetic() || bytes[i] == '_' {
+            let start = i;
+            while i < bytes.len() && (bytes[i].is_alphanumeric() || bytes[i] == '_') {
+                i += 1;
+            }
+            let word: String = bytes[start..i].iter().collect();
+            let is_defined_here = c_src.contains(&format!("void {}(", word))
+                || c_src.contains(&format!(" {}_run(", word.trim_end_matches("_run")));
+            if i < bytes.len() && bytes[i] == '('
+                && !KEYWORDS.contains(&word.as_str())
+                && !word.ends_with("_run")
+                && !is_defined_here
+                && !names.contains(&word)
+            {
+                names.push(word);
+            }
+        } else {
+            i += 1;
+        }
+    }
+    let mut out = String::from(
+        "/* satya_hal.h - generated by Satya.\n *\n * Every primitive the generated target code calls. An environment\n * (simulation, emulation, FPGA, virtual platform, post-silicon) implements\n * these and the same bundle runs there unchanged.\n */\n#ifndef SATYA_HAL_H\n#define SATYA_HAL_H\n\n",
+    );
+    if names.is_empty() {
+        out.push_str("/* this model's target code calls no external primitives */\n");
+    }
+    for n in &names {
+        out.push_str(&format!("long long {}(/* args as the model writes them */);\n", n));
+    }
+    out.push_str("\n#endif /* SATYA_HAL_H */\n");
+    out
+}
+
+/// Replace `{{ expr }}` with the solved value, or with a visible marker when the
+/// expression is not a solved field of this step. A marker is better than a
+/// wrong number: the file still compiles once the environment supplies it.
+fn substitute_templates(text: &str, vals: &std::collections::BTreeMap<String, i64>) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find("{{") {
+        let (head, tail) = rest.split_at(open);
+        out.push_str(head);
+        let after = &tail[2..];
+        match after.find("}}") {
+            Some(close) => {
+                let expr = after[..close].trim();
+                match vals.get(expr) {
+                    Some(v) => out.push_str(&v.to_string()),
+                    None => out.push_str(&format!("/*@PSS-UNRESOLVED {}*/0", expr)),
+                }
+                rest = &after[close + 2..];
+            }
+            None => {
+                out.push_str("{{");
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 fn positional_files(args: &[String]) -> Vec<String> {
     const VALUE_FLAGS: &[&str] = &[
         "--action",
