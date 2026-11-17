@@ -176,6 +176,18 @@ fn translate(b: &mut Bdd, e: &Expr, vars: &[Var]) -> Option<u32> {
                 Some(b.or(nx, y))
             }
             "==" | "!=" | "<" | "<=" | ">" | ">=" => {
+                // Arithmetic on one side (`x + y == 7`) is not a plain
+                // comparison; handle it before falling back.
+                if comparison_sides(a, c, vars).is_none() {
+                    let (lhs, k) = match (a.as_ref(), c.as_ref()) {
+                        (_, Expr::Int(n)) => (a.as_ref(), *n),
+                        (Expr::Int(n), _) => (c.as_ref(), *n),
+                        _ => return None,
+                    };
+                    let width = vars.iter().map(|v| v.bits).max().unwrap_or(1) + 2;
+                    let q = eq_arith(b, lhs, k, vars, width)?;
+                    return Some(if op == "==" { q } else { b.not(q) });
+                }
                 let (v, k) = comparison_sides(a, c, vars)?;
                 let node = match op.as_str() {
                     "==" => eq_const(b, v, k)?,
@@ -234,6 +246,92 @@ fn translate(b: &mut Bdd, e: &Expr, vars: &[Var]) -> Option<u32> {
         }
         _ => None,
     }
+}
+
+/// The BDD for each bit of an arithmetic expression over eligible variables.
+///
+/// `+` and `-` between a variable and a constant, or two variables, become a
+/// ripple-carry adder over the encoded bit vectors. This is what lets
+/// `x + y == 7` be proved rather than abstained on — and it is what gives
+/// `--order` something order-sensitive to measure.
+fn bits_of(b: &mut Bdd, e: &Expr, vars: &[Var], width: u32) -> Option<Vec<u32>> {
+    match e {
+        Expr::Int(n) => {
+            let mut out = Vec::new();
+            for i in 0..width {
+                out.push(if (*n >> i) & 1 == 1 {
+                    crate::bdd::TRUE_NODE
+                } else {
+                    crate::bdd::FALSE_NODE
+                });
+            }
+            Some(out)
+        }
+        Expr::Path(p) => {
+            let v = find(vars, p)?;
+            let mut out = Vec::new();
+            for i in 0..width {
+                if i < v.bits {
+                    let f = crate::bdd::FALSE_NODE;
+                    let t = crate::bdd::TRUE_NODE;
+                    out.push(b.mk(v.base + i, f, t));
+                } else {
+                    out.push(crate::bdd::FALSE_NODE);
+                }
+            }
+            Some(out)
+        }
+        Expr::Binary(op, a, c) if op == "+" || op == "-" => {
+            let x = bits_of(b, a, vars, width)?;
+            let y = bits_of(b, c, vars, width)?;
+            // Two's complement subtract: a + ~b + 1.
+            let y = if op == "-" {
+                y.into_iter().map(|n| b.not(n)).collect::<Vec<_>>()
+            } else {
+                y
+            };
+            let mut carry = if op == "-" {
+                crate::bdd::TRUE_NODE
+            } else {
+                crate::bdd::FALSE_NODE
+            };
+            let mut out = Vec::new();
+            for i in 0..width as usize {
+                let (xi, yi) = (x[i], y[i]);
+                // sum = x XOR y XOR carry
+                let xy = b.xor(xi, yi);
+                let sum = b.xor(xy, carry);
+                // carry = majority(x, y, carry)
+                let c1 = b.and(xi, yi);
+                let c2 = b.and(carry, xy);
+                let next = b.or(c1, c2);
+                out.push(sum);
+                carry = next;
+            }
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
+/// `expr == const` where `expr` may be arithmetic.
+fn eq_arith(b: &mut Bdd, e: &Expr, k: i64, vars: &[Var], width: u32) -> Option<u32> {
+    let bits = bits_of(b, e, vars, width)?;
+    let mut acc = crate::bdd::TRUE_NODE;
+    for (i, node) in bits.iter().enumerate() {
+        let want = if (k >> i) & 1 == 1 {
+            crate::bdd::TRUE_NODE
+        } else {
+            crate::bdd::FALSE_NODE
+        };
+        let lit = if want == crate::bdd::TRUE_NODE {
+            *node
+        } else {
+            b.not(*node)
+        };
+        acc = b.and(acc, lit);
+    }
+    Some(acc)
 }
 
 fn const_of(e: &Expr) -> Option<i64> {
@@ -548,6 +646,37 @@ component c {
     }
 
     #[test]
+    fn arithmetic_agrees_with_direct_evaluation() {
+        // The adder is the newest and most error-prone circuit: verify it by
+        // enumeration, the same way `apply` was verified.
+        for k in 0i64..=14 {
+            let m = model_of(&format!(
+                "component c {{ action a {{ rand int x in [0..7]; rand int y in [0..7]; constraint x + y == {}; }} }};",
+                k
+            ));
+            let a = m.find_action(Some("c"), "a").unwrap().clone();
+            let vars = eligible(&m, &a).unwrap();
+            let mut b = Bdd::new();
+            for (i, v) in vars.iter().enumerate() {
+                for q in 0..v.bits {
+                    b.set_order(v.base + q, (i as u32) * 32 + q);
+                }
+            }
+            let node = translate(&mut b, &a.constraints[0].expr, &vars).unwrap();
+            for x in 0i64..=7 {
+                for y in 0i64..=7 {
+                    let wx = eq_const(&mut b, &vars[0], x).unwrap();
+                    let wy = eq_const(&mut b, &vars[1], y).unwrap();
+                    let both = b.and(wx, wy);
+                    let conj = b.and(node, both);
+                    let hit = !b.is_false(conj);
+                    assert_eq!(hit, x + y == k, "x={} y={} k={}", x, y, k);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn ordering_reports_node_counts_and_abstains_on_arithmetic() {
         let m = model_of("component c { action a { rand int x in [0..7]; constraint x >= 3; } };");
         let a = m.find_action(Some("c"), "a").unwrap().clone();
@@ -555,9 +684,17 @@ component c {
             Proof::Restricting(v) => assert!(v[0].contains("node(s)"), "{:?}", v),
             other => panic!("expected Restricting, got {:?}", other),
         }
-        // Arithmetic is not translated, so this must abstain rather than guess.
+        // Arithmetic is now translated, so this reports node counts rather
+        // than abstaining. (This assertion used to expect NotProved; the
+        // arithmetic support added beside it made that obsolete.)
         let m = model_of(
             "component c { action a { rand int x in [0..7]; rand int y in [0..7]; constraint x + y == 7; } };",
+        );
+        let a = m.find_action(Some("c"), "a").unwrap().clone();
+        assert!(matches!(prove_order(&m, &a), Proof::Restricting(_)));
+        // An expression outside the translator must still abstain.
+        let m = model_of(
+            "component c { action a { rand int x in [0..7]; rand int y in [0..7]; constraint x * y == 7; } };",
         );
         let a = m.find_action(Some("c"), "a").unwrap().clone();
         assert!(matches!(prove_order(&m, &a), Proof::NotProved(_)));

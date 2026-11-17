@@ -13,6 +13,40 @@ approximated.
 
 ---
 
+## 0.75.0 — 2026-11-17
+
+Arithmetic in the prover: `x + y == 7` is now provable
+
+`+` and `-` between a variable and a constant, or two variables, become a
+ripple-carry adder over the encoded bit vectors, so arithmetic equalities are
+proved rather than abstained on.
+
+```
+x + y == 7                      SAT — x=0 y=7 z=0
+x+y==7; y+z==7; x+z==7          UNSAT
+```
+
+That second one is worth pausing on: summing the three constraints gives
+`2(x+y+z) = 21`, which is impossible. The sampling solver can only ever report
+"no seed satisfied it"; the prover says it **cannot** be satisfied.
+
+**Verified by enumeration**, like `apply` was: for every `k` in 0..=14 and every
+`(x, y)` in 0..7 squared, the BDD's answer is compared against `x + y == k`
+evaluated directly. A ripple-carry adder is exactly the kind of circuit that is
+subtly wrong and looks healthy.
+
+**One obsolete test caught:** `--order`'s test asserted that `x + y == 7`
+abstains. It now translates, so the assertion was wrong — it is split into "this
+reports counts" and "`x * y` still abstains", keeping the abstention path
+covered.
+
+**`--order` still reports 1.0x** on every model it accepts. Order sensitivity
+needs a function whose graph differs under permutation; the symmetric models
+tried so far give the same count both ways. The measurement is right; the
+demonstration still needs a model chosen to show it.
+
+**Verification:** 167 tests (1 new); proof unchanged at 128 pass / 34 fail.
+
 ## 0.74.0 — 2026-11-17
 
 `--order`: the size of a diagram depends on variable order
