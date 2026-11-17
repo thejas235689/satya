@@ -178,7 +178,6 @@ fn run(args: &[String]) -> PssResult<()> {
             let hal = hal_header(&c_src);
 
             write_out(Some(&format!("{}/scenario.json", out)), &scenario)?;
-            write_out(Some(&format!("{}/test.c", out)), &c_src)?;
             write_out(Some(&format!("{}/satya_hal.h", out)), &hal)?;
             let manifest = format!(
                 "{{\n  \"tool\": \"satya {}\",\n  \"model\": {:?},\n  \"action\": {:?},\n  \"seeds\": {},\n  \"files\": [\"scenario.json\", \"test.c\", \"satya_hal.h\"]\n}}\n",

@@ -13,6 +13,15 @@ approximated.
 
 ---
 
+## 0.77.1 — 2026-11-17
+
+The bundle no longer writes an uncompilable `test.c`
+
+0.77.0 emitted `test_<n>.c` per seed but still wrote a concatenated `test.c` as
+well. That file redefines `main` and does not compile, so a reader taking the
+obvious file name would hit an error that is not real. Removed: one program per
+seed is the contract.
+
 ## 0.77.0 — 2026-11-17
 
 `satya emit` — one model, one bundle, every environment
