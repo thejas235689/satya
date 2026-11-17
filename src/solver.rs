@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::ast::Expr;
-use crate::ir::{Action, Field, FieldKind, Model, TypeCategory};
+use crate::ir::{Action, Constraint, Field, FieldKind, Model, TypeCategory};
 
 /// Upper bound applied to a bare `int` field when no width is declared. It is
 /// a *default* for sampling, not a bound the model declared: see
@@ -122,6 +122,17 @@ pub struct Domain {
     /// constraint replaces it — up to `ceiling`, the widest value the type can
     /// hold. `None` once the bounds are real.
     soft_hi: Option<i64>,
+    /// True when the declared type is unsigned (`bit[N]`, `bool`, `uint`, ...).
+    /// A value is carried in an `i64`, so for a `bit[64]` the pattern with bit
+    /// 63 set *is* negative — the declared signedness is the only thing that
+    /// says whether a bound or a value is to be read as `i64` or as `u64`.
+    unsigned: bool,
+    /// No value survives the constraints. An unsigned domain's empty
+    /// intersection cannot always be written as an inverted `lo > hi`: a
+    /// request such as `[-100..-10]` on a `uint` reads as `[2^64-100..2^64-10]`,
+    /// which the `i64` carrier stores as an interval that is *not* inverted. So
+    /// the emptiness is recorded here rather than inferred from the bounds.
+    empty: bool,
 }
 
 impl Domain {
@@ -133,16 +144,79 @@ impl Domain {
             None => true,
         }
     }
+
+    /// A bound read in the order the declared type uses: an unsigned field's
+    /// bounds are `u64` bit patterns. `i64::MIN` / `i64::MAX` are the module's
+    /// "no bound" sentinels (an unsigned 64-bit field's whole range is carried
+    /// as that pair), so they mean the ends of the `u64` range here.
+    fn bound(&self, v: i64) -> u64 {
+        match v {
+            i64::MIN => 0,
+            i64::MAX => u64::MAX,
+            _ => v as u64,
+        }
+    }
+
+    /// Compare two values the way the declared type reads them: unsigned for a
+    /// `bit[N]` / `uint`, signed otherwise. Only ever differs when bit 63 is
+    /// set, which is exactly the `bit[64]` case.
+    fn cmp_vals(&self, a: i64, b: i64) -> std::cmp::Ordering {
+        if self.unsigned {
+            (a as u64).cmp(&(b as u64))
+        } else {
+            a.cmp(&b)
+        }
+    }
+
+    /// Is `v` within `[lo..hi]`, read in the declared type's order? The bounds
+    /// come from the constraint, so they are the literals that were written:
+    /// `in [0..18446744073709551615]` is the whole `u64` range, and
+    /// `in {0x7FFF_FFFF_FFFF_FFFF}` is that one value.
+    fn within(&self, v: i64, lo: i64, hi: i64) -> bool {
+        if self.unsigned {
+            let (v, lo, hi) = (v as u64, lo as u64, hi as u64);
+            v >= lo && v <= hi
+        } else {
+            v >= lo && v <= hi
+        }
+    }
+
+    /// The "no bound" ends of an interval request, in the declared type's
+    /// order: `i64::MIN` / `i64::MAX` are the signed ends, and an unsigned field
+    /// runs from 0 to the `u64` pattern `-1`.
+    fn floor(&self) -> i64 {
+        if self.unsigned {
+            0
+        } else {
+            i64::MIN
+        }
+    }
+
+    fn ceiling(&self) -> i64 {
+        if self.unsigned {
+            -1
+        } else {
+            i64::MAX
+        }
+    }
     fn contains(&self, v: i64) -> bool {
         // The declared type is a hard bound, so a value outside it is never in
         // the domain even if a constraint named it.
-        if !self.in_declared_width(v) {
+        if self.empty || !self.in_declared_width(v) {
             return false;
         }
         if let Some(a) = &self.allowed {
             return a.contains(&v);
         }
-        v >= self.lo && v <= self.hi && !self.forbidden.contains(&v)
+        // The domain's own bounds are carried in the type's order, where an
+        // unsigned 64-bit field's whole range is the pair (i64::MIN, i64::MAX).
+        let in_range = if self.unsigned {
+            let u = v as u64;
+            u >= self.bound(self.lo) && u <= self.bound(self.hi)
+        } else {
+            v >= self.lo && v <= self.hi
+        };
+        in_range && !self.forbidden.contains(&v)
     }
     /// Is there no value left at all? An interval that inverted (`lo > hi`) is
     /// the obvious case, but a named set whose members were all narrowed away,
@@ -151,7 +225,7 @@ impl Domain {
     /// a conflict. The scan is bounded by the same 4096-value window the rest of
     /// the module uses for enumeration, so a `bit[64]` domain stays O(1).
     fn is_empty(&self) -> bool {
-        if self.lo > self.hi {
+        if self.empty || self.lo > self.hi {
             return true;
         }
         if let Some(a) = &self.allowed {
@@ -165,6 +239,10 @@ impl Domain {
     }
 
     fn intersect_interval(&mut self, lo: i64, hi: i64) {
+        if self.unsigned {
+            self.intersect_unsigned(lo, hi);
+            return;
+        }
         let (dlo, dhi) = self.decl.unwrap_or((i64::MIN, i64::MAX));
         // `DEFAULT_INT_MAX` is a sampling default for an integer whose width the
         // model never declared, not a bound it declared. Intersecting against it
@@ -208,6 +286,79 @@ impl Domain {
         }
         // Keep a named set inside the narrowed domain too, so a sparse set that
         // reached past the declared width cannot leak an out-of-width member.
+        if let Some(a) = &mut self.allowed {
+            let (l, h) = (self.lo, self.hi);
+            a.retain(|v| *v >= l && *v <= h);
+        }
+    }
+
+    /// `intersect_interval` for an unsigned field, where the bounds are `u64`
+    /// bit patterns and so are only ordered correctly as `u64`.
+    ///
+    /// The narrowing itself is the same rule; what changes is the order the
+    /// bounds are compared in. A request such as `in [0..18446744073709551615]`
+    /// is the whole range and must not narrow anything — under the signed order
+    /// it reads as the inverted `[0..-1]` and would empty the domain. When the
+    /// surviving interval would cross the `i64` sign boundary it cannot be
+    /// written as one signed interval at all, so the domain is left alone and
+    /// the constraint is decided by the satisfaction check instead, which
+    /// compares unsigned.
+    fn intersect_unsigned(&mut self, lo: i64, hi: i64) {
+        let (dlo, dhi) = self
+            .decl
+            .map(|(a, b)| (self.bound(a), self.bound(b)))
+            .unwrap_or((0, u64::MAX));
+        let cur_hi = match self.soft_hi.take() {
+            Some(ceiling) => self.bound(ceiling).min(dhi),
+            None => self.bound(self.hi),
+        };
+        let cur_lo = self.bound(self.lo);
+        // The request is the constraint's own literals, read as `u64`.
+        let (rlo, rhi) = (lo as u64, hi as u64);
+        let nlo = cur_lo.max(rlo).max(dlo);
+        let nhi = cur_hi.min(rhi).min(dhi);
+        let narrowed = if nlo > nhi {
+            if rhi < dlo || rlo > dhi {
+                // Wholly outside the type's range (a `bit[8]` asked for
+                // `[256..300]`): keep the type's own bounds, so the value stays
+                // representable and the check reports the atom.
+                None
+            } else if (nlo as i64) > (nhi as i64) {
+                // Contradictory inside the type's range, and the interval is
+                // inverted in the signed order too, so it can be recorded as it
+                // stands: the picker falls back to the bound the constraint
+                // asked for, exactly as it does for a signed field.
+                self.empty = true;
+                Some((nlo, nhi))
+            } else {
+                // Contradictory, but the interval only inverted under the
+                // unsigned order (`[-100..-10]` on a `uint` is
+                // `[2^64-100..2^64-10]`), so it has no signed representation.
+                // Keep the domain's own bounds and record the emptiness.
+                self.empty = true;
+                None
+            }
+        } else if nlo == 0 && nhi == u64::MAX {
+            // The whole range, which the i64 carrier writes as (MIN, MAX).
+            Some((0, u64::MAX))
+        } else if (nlo as i64) <= (nhi as i64) {
+            Some((nlo, nhi))
+        } else {
+            // The interval crosses the sign boundary and has no signed interval
+            // representation; leave the bounds alone and let the satisfaction
+            // check, which compares unsigned, decide the atom.
+            None
+        };
+        if let Some((nlo, nhi)) = narrowed {
+            if nlo == 0 && nhi == u64::MAX {
+                self.lo = i64::MIN;
+                self.hi = i64::MAX;
+            } else {
+                self.lo = nlo as i64;
+                self.hi = nhi as i64;
+            }
+        }
+        // Keep a named set inside the narrowed domain too.
         if let Some(a) = &mut self.allowed {
             let (l, h) = (self.lo, self.hi);
             a.retain(|v| *v >= l && *v <= h);
@@ -1017,7 +1168,7 @@ fn solve_impl(
             d.soft_hi = None;
         }
     }
-    let (mut constraints, mut soft_constraints) =
+    let (mut constraints, mut soft_constraints, forall_unevaluated) =
         collect_constraints(model, action, &vars, extra, allow_soft);
     let directives = take_directives(&mut constraints, &env);
     // Soft atoms come after the hard ones, so `soft_from` marks where they
@@ -1034,7 +1185,9 @@ fn solve_impl(
 
     // Apply relational atoms.
     let mut unsupported = Vec::new();
-    let mut unevaluated: Vec<String> = Vec::new();
+    // A `forall` whose body could not be placed on any instance was already
+    // reported by the collection pass; it is never counted as satisfied.
+    let mut unevaluated: Vec<String> = forall_unevaluated;
     for atom in &atoms {
         match atom {
             Atom::Rel(var, Op::Eq, rhs) => {
@@ -1060,11 +1213,14 @@ fn solve_impl(
                 if let Some(v) = eval(rhs, bindings, &env) {
                     let d = vars.get_mut(var);
                     if let Some(d) = d {
+                        // The open end is the declared type's own, so an
+                        // unsigned field is not capped at the signed maximum.
+                        let (floor, ceil) = (d.floor(), d.ceiling());
                         match op {
-                            Op::Le => d.intersect_interval(i64::MIN, v),
-                            Op::Lt => d.intersect_interval(i64::MIN, v - 1),
-                            Op::Ge => d.intersect_interval(v, i64::MAX),
-                            Op::Gt => d.intersect_interval(v + 1, i64::MAX),
+                            Op::Le => d.intersect_interval(floor, v),
+                            Op::Lt => d.intersect_interval(floor, v - 1),
+                            Op::Ge => d.intersect_interval(v, ceil),
+                            Op::Gt => d.intersect_interval(v + 1, ceil),
                             _ => {}
                         }
                     }
@@ -1250,11 +1406,15 @@ fn solve_impl(
                 (Some(a), Some(b)) => (a, b),
                 _ => continue,
             };
+            // The unbounded ends come from each variable's own type, so an
+            // unsigned `bit[64]` is not capped at the signed maximum.
+            let (afloor, aceil) = (a.floor(), a.ceiling());
+            let (bfloor, bceil) = (b.floor(), b.ceiling());
             let (alo, ahi, blo, bhi) = match op {
-                Op::Lt => (i64::MIN, b.hi - 1, a.lo + 1, i64::MAX),
-                Op::Le => (i64::MIN, b.hi, a.lo, i64::MAX),
-                Op::Gt => (b.lo + 1, i64::MAX, i64::MIN, a.hi - 1),
-                Op::Ge => (b.lo, i64::MAX, i64::MIN, a.hi),
+                Op::Lt => (afloor, b.hi - 1, a.lo + 1, bceil),
+                Op::Le => (afloor, b.hi, a.lo, bceil),
+                Op::Gt => (b.lo + 1, aceil, bfloor, a.hi - 1),
+                Op::Ge => (b.lo, aceil, bfloor, a.hi),
                 _ => continue,
             };
             let before = (a.lo, a.hi, b.lo, b.hi);
@@ -1358,6 +1518,8 @@ fn solve_impl(
                 is_enum: false,
                 decl: None,
                 soft_hi: None,
+                unsigned: false,
+                empty: false,
             });
             match dist_by_root.get(&root) {
                 Some(items) => pick_weighted(items, &mut rng).unwrap_or_else(|| pick(&d, &mut rng)),
@@ -1411,7 +1573,11 @@ fn solve_impl(
                         unsupported.push(format!(
                             "{} -> {}",
                             render_expr(ante),
-                            cons.iter().map(render_atom).collect::<Vec<_>>().join(" && ")
+                            cons
+                                .iter()
+                                .map(|c| render_atom(c, &class_domain))
+                                .collect::<Vec<_>>()
+                                .join(" && ")
                         ));
                     }
                 }
@@ -1434,7 +1600,7 @@ fn solve_impl(
                 if check_atom(other, &check_values, &env, &class_domain) {
                     satisfied += 1;
                 } else {
-                    unsupported.push(render_atom(other));
+                    unsupported.push(render_atom(other, &class_domain));
                 }
             }
         }
@@ -2237,13 +2403,20 @@ fn check_atom(
             } else {
                 y
             };
+            // A relation on an unsigned field is compared unsigned: for a
+            // `bit[64]`, `x > 0` must hold for `0xFFFF_FFFF_FFFF_FFFF`, whose
+            // i64 carrier is -1.
+            let ord = match domains.get(var) {
+                Some(d) => d.cmp_vals(x, y),
+                None => x.cmp(&y),
+            };
             match op {
                 Op::Eq => x == y,
                 Op::Ne => x != y,
-                Op::Le => x <= y,
-                Op::Ge => x >= y,
-                Op::Lt => x < y,
-                Op::Gt => x > y,
+                Op::Le => ord.is_le(),
+                Op::Ge => ord.is_ge(),
+                Op::Lt => ord.is_lt(),
+                Op::Gt => ord.is_gt(),
             }
         }
         Atom::InArray(var, coll) => match values.get(var) {
@@ -2255,16 +2428,29 @@ fn check_atom(
             .unwrap_or(true),
             None => true,
         },
-        Atom::InRange(var, lo, hi) => values.get(var).map(|v| *v >= *lo && *v <= *hi).unwrap_or(true),
+        // A range on an unsigned field is checked in the unsigned order the
+        // declaration uses, so `bit[64] in [0..18446744073709551615]` is the
+        // whole range and not the inverted `[0..-1]`.
+        Atom::InRange(var, lo, hi) => values
+            .get(var)
+            .map(|v| match domains.get(var) {
+                Some(d) => d.within(*v, *lo, *hi),
+                None => *v >= *lo && *v <= *hi,
+            })
+            .unwrap_or(true),
         Atom::InSet(var, items) => {
             let x = match values.get(var) {
                 Some(v) => *v,
                 None => return true,
             };
+            let dom = domains.get(var);
             items.iter().any(|it| {
                 set_item_intervals(it, values, env)
                     .iter()
-                    .any(|(lo, hi)| x >= *lo && x <= *hi)
+                    .any(|(lo, hi)| match dom {
+                        Some(d) => d.within(x, *lo, *hi),
+                        None => x >= *lo && x <= *hi,
+                    })
             })
         }
         Atom::General(l, op, r) => {
@@ -2402,11 +2588,19 @@ fn contains_bitwise(e: &Expr) -> bool {
 }
 
 /// Render an atom as a constraint string, for diagnostics.
-fn render_atom(a: &Atom) -> String {
+///
+/// `domains` supplies the declared signedness, so a `bit[64]` bound is reported
+/// as the `u64` it was written as rather than as its negative i64 carrier.
+fn render_atom(a: &Atom, domains: &HashMap<String, Domain>) -> String {
     match a {
         Atom::Rel(v, op, e) => format!("{} {} {}", v, op_str(*op), render_expr(e)),
         Atom::General(l, op, e) => format!("{} {} {}", render_expr(l), op_str(*op), render_expr(e)),
-        Atom::InRange(v, lo, hi) => format!("{} in [{}..{}]", v, lo, hi),
+        Atom::InRange(v, lo, hi) => match domains.get(v) {
+            Some(d) if d.unsigned => {
+                format!("{} in [{}..{}]", v, *lo as u64, *hi as u64)
+            }
+            _ => format!("{} in [{}..{}]", v, lo, hi),
+        },
         Atom::InSet(v, items) => format!("{} in {{{}}}", v, items.len()),
         Atom::InArray(v, c) => format!("{} in {}", v, c),
         Atom::Unique(names) => format!("unique {{{}}}", names.join(", ")),
@@ -2548,6 +2742,11 @@ fn invert_eq(
 }
 
 fn pick(d: &Domain, rng: &mut Rng) -> i64 {
+    // An empty domain has no value to draw; the conflict is reported separately
+    // (see `is_empty`), and the lower bound is the least surprising stand-in.
+    if d.empty {
+        return d.lo;
+    }
     // A named set is sampled from its members, uniformly. Rejection sampling
     // would need ~span/allowed tries, and on failure it returned the first
     // member — so `x in [64, 127, 16384, 32767]` gave 64 on every seed.
@@ -2704,6 +2903,8 @@ fn expand_field(
                 is_enum: false,
                 decl: None,
                 soft_hi: None,
+                unsigned: false,
+                empty: false,
             },
         );
         return;
@@ -2759,6 +2960,11 @@ fn expand_field(
             } else {
                 None
             };
+            // The declared signedness is what says how to read the value: for a
+            // `bit[64]` the same 64 bits are `18446744073709551615` or `-1`
+            // depending on it, so it is carried in the domain rather than
+            // inferred from the bits at the point of comparison.
+            let unsigned = field.signature(model).is_unsigned();
             out.insert(
                 path,
                 Domain {
@@ -2769,6 +2975,8 @@ fn expand_field(
                     is_enum: false,
                     decl,
                     soft_hi,
+                    unsigned,
+                    empty: false,
                 },
             );
         }
@@ -2797,6 +3005,9 @@ fn expand_field(
                     is_enum: true,
                     decl: None,
                     soft_hi: None,
+                    // An enum's values are signed integers (PSS 12.4).
+                    unsigned: false,
+                    empty: false,
                 },
             );
         }
@@ -2816,6 +3027,228 @@ fn expand_field(
             // Handles, components and unknown types are opaque to the solver.
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// `forall` instance domains (PSS 16.1.8)
+// ---------------------------------------------------------------------------
+
+/// True when two type names denote the same type. A `forall` may name a type by
+/// its qualified or its leaf name (`p::elem_s` vs `elem_s`), and a field carries
+/// the mangled form (`pair_s<bit[8],4>`), so both spellings are compared.
+fn same_type(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    let la = a.rsplit("::").next().unwrap_or(a);
+    let lb = b.rsplit("::").next().unwrap_or(b);
+    la == lb
+}
+
+/// True when `ty` names a type the model defines, so an empty instance domain
+/// can be told apart from a typo.
+fn type_known(model: &Model, ty: &str) -> bool {
+    let key = model.resolve(ty);
+    model.types.contains_key(&key)
+        || model.types.keys().any(|k| same_type(k, ty))
+        || model.components.keys().any(|k| same_type(k, ty))
+        || model.enums.keys().any(|k| same_type(k, ty))
+        || matches!(
+            ty.rsplit("::").next().unwrap_or(ty),
+            "int" | "bit" | "bool" | "byte" | "shortint" | "longint" | "integer" | "uint"
+                | "float32" | "float64"
+        )
+}
+
+/// Every instance of type `ty` in the instance domain of `action`: the
+/// action's own attributes, at any depth, plus the random attributes of the
+/// component the action runs in — the same tree `collect_variables` walks, so
+/// every path returned here is one the solver owns.
+fn forall_instances(model: &Model, action: &Action, ty: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut visited: Vec<String> = Vec::new();
+    for f in &action.fields {
+        collect_instances(model, f, "", 0, ty, &mut visited, &mut out);
+    }
+    if let Some(owner) = &action.owner {
+        if let Some(comp) = model.components.get(owner) {
+            for f in &comp.fields {
+                if matches!(f.kind, crate::ir::FieldKind::Rand) {
+                    collect_instances(model, f, "", 0, ty, &mut visited, &mut out);
+                }
+            }
+        }
+    }
+    out
+}
+
+fn collect_instances(
+    model: &Model,
+    field: &Field,
+    prefix: &str,
+    depth: usize,
+    ty: &str,
+    visited: &mut Vec<String>,
+    out: &mut Vec<String>,
+) {
+    if depth > MAX_EXPAND_DEPTH {
+        return;
+    }
+    let path = if prefix.is_empty() {
+        field.name.clone()
+    } else {
+        format!("{}.{}", prefix, field.name)
+    };
+    // An array of the type: each element is an instance.
+    if let Some(n) = field.array {
+        let n = n.clamp(0, MAX_ARRAY);
+        let elem_ty = field
+            .elem_type
+            .clone()
+            .unwrap_or_else(|| field.type_name.clone());
+        if same_type(&elem_ty, ty) {
+            for i in 0..n {
+                out.push(format!("{}[{}]", path, i));
+            }
+        }
+        if let TypeCategory::Struct(tname) = category_for(model, &elem_ty) {
+            if visited.contains(&tname) {
+                return;
+            }
+            if let Some(t) = model.types.get(&tname) {
+                visited.push(tname.clone());
+                for i in 0..n {
+                    let elem = format!("{}[{}]", path, i);
+                    for sub in &t.fields {
+                        collect_instances(model, sub, &elem, depth + 1, ty, visited, out);
+                    }
+                }
+                visited.pop();
+            }
+        }
+        return;
+    }
+    if same_type(&field.type_name, ty) {
+        out.push(path.clone());
+    }
+    if let TypeCategory::Struct(tname) = &field.category {
+        if visited.contains(tname) {
+            return;
+        }
+        if let Some(t) = model.types.get(tname) {
+            visited.push(tname.clone());
+            for sub in &t.fields {
+                collect_instances(model, sub, &path, depth + 1, ty, visited, out);
+            }
+            visited.pop();
+        }
+    }
+}
+
+/// Replace the binding variable of a `forall` with an instance path: at
+/// instance `e`, `it.size` becomes `e.size`. A reference whose attribute the
+/// solver does not own is left alone, so the caller can report it.
+fn subst_binding(e: &Expr, var: &str, path: &str, vars: &BTreeMap<String, Domain>) -> Expr {
+    let go = |x: &Expr| Box::new(subst_binding(x, var, path, vars));
+    match e {
+        Expr::Path(p) => {
+            if p.segments.first().map(|s| s == var).unwrap_or(false) {
+                let mut full = path.to_string();
+                for s in p.segments.iter().skip(1) {
+                    full.push('.');
+                    full.push_str(s);
+                }
+                if vars.contains_key(&full) {
+                    return Expr::Path(crate::ast::Path::new(
+                        full.split('.').map(|s| s.to_string()).collect(),
+                    ));
+                }
+            }
+            e.clone()
+        }
+        Expr::Unary(op, x) => Expr::Unary(op.clone(), go(x)),
+        Expr::Binary(op, a, b) => Expr::Binary(op.clone(), go(a), go(b)),
+        Expr::Ternary(a, b, c) => Expr::Ternary(go(a), go(b), go(c)),
+        Expr::InRange(v, lo, hi) => Expr::InRange(go(v), go(lo), go(hi)),
+        Expr::InSet(v, items) => {
+            Expr::InSet(go(v), items.iter().map(|i| subst_binding(i, var, path, vars)).collect())
+        }
+        Expr::Cast(t, x) => Expr::Cast(t.clone(), go(x)),
+        Expr::Call(f, args) => Expr::Call(
+            f.clone(),
+            args.iter().map(|a| subst_binding(a, var, path, vars)).collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// True when `e` still refers to `name` — the binding of a `forall` the
+/// substitution could not resolve.
+fn mentions(e: &Expr, name: &str) -> bool {
+    match e {
+        Expr::Path(p) => p.segments.first().map(|s| s == name).unwrap_or(false),
+        Expr::Unary(_, x) | Expr::Cast(_, x) => mentions(x, name),
+        Expr::Binary(_, a, b) => mentions(a, name) || mentions(b, name),
+        Expr::Ternary(a, b, c) => mentions(a, name) || mentions(b, name) || mentions(c, name),
+        Expr::InRange(v, lo, hi) => mentions(v, name) || mentions(lo, name) || mentions(hi, name),
+        Expr::InSet(v, items) => {
+            mentions(v, name) || items.iter().any(|i| mentions(i, name))
+        }
+        Expr::Call(_, args) => args.iter().any(|a| mentions(a, name)),
+        _ => false,
+    }
+}
+
+/// Expand one `forall (it : T) { body }` constraint into the body written once
+/// per instance of `T` in scope, with the bound variable substituted by the
+/// instance path (PSS 16.1.8).
+///
+/// A body that cannot be placed on an instance is returned as an error, not
+/// dropped: an atom naming an attribute the solver has no domain for is
+/// treated as satisfied by `check_atom`, so a body left with its binding
+/// variable free would report success while enforcing nothing.
+fn expand_forall(
+    model: &Model,
+    action: &Action,
+    vars: &BTreeMap<String, Domain>,
+    c: &Constraint,
+) -> Result<Vec<Expr>, String> {
+    let (var, ty) = match &c.forall_binding {
+        Some((v, t)) => (v.clone(), t.clone()),
+        None => {
+            return Err(format!(
+                "forall constraint without a binding: {}",
+                render_expr(&c.expr)
+            ))
+        }
+    };
+    let instances = forall_instances(model, action, &ty);
+    if instances.is_empty() {
+        if !type_known(model, &ty) {
+            return Err(format!(
+                "forall ({} : {}) names a type the model does not define",
+                var, ty
+            ));
+        }
+        // Nothing of the type is in this scope, so the body constrains no
+        // instance. That is vacuously true, and nothing is claimed for it.
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for path in instances {
+        let e = subst_binding(&c.expr, &var, &path, vars);
+        if mentions(&e, &var) {
+            return Err(format!(
+                "forall ({} : {}) body does not bind at `{}`: {}",
+                var,
+                ty,
+                path,
+                render_expr(&c.expr)
+            ));
+        }
+        out.push(e);
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -2839,17 +3272,27 @@ fn collect_constraints(
     vars: &BTreeMap<String, Domain>,
     extra: &[Expr],
     include_soft: bool,
-) -> (Vec<Expr>, Vec<Expr>) {
+) -> (Vec<Expr>, Vec<Expr>, Vec<String>) {
     let mut regular: Vec<Expr> = Vec::new();
     let mut soft: Vec<Expr> = Vec::new();
     // (expr, level): level 0 = the action's own context, 1 = a data type's.
     let mut defaults: Vec<(Expr, u8)> = Vec::new();
     let mut disabled: Vec<String> = Vec::new();
+    // A `forall` that cannot be placed on its instances is reported here, not
+    // dropped and not counted as satisfied.
+    let mut unevaluated: Vec<String> = Vec::new();
 
     for c in &action.constraints {
         if c.is_disable {
             if let Some(t) = constraint_target(&c.expr) {
                 disabled.push(t);
+            }
+            continue;
+        }
+        if c.is_forall {
+            match expand_forall(model, action, vars, c) {
+                Ok(es) => regular.extend(es),
+                Err(why) => unevaluated.push(why),
             }
             continue;
         }
@@ -2874,6 +3317,13 @@ fn collect_constraints(
                 if c.is_disable {
                     continue;
                 }
+                if c.is_forall {
+                    match expand_forall(model, action, vars, c) {
+                        Ok(es) => regular.extend(es),
+                        Err(why) => unevaluated.push(why),
+                    }
+                    continue;
+                }
                 if c.is_soft {
                     if include_soft {
                         soft.push(c.expr.clone());
@@ -2893,7 +3343,17 @@ fn collect_constraints(
     // Constraints declared on the types of this action's struct fields.
     let mut visited: Vec<String> = Vec::new();
     for f in &action.fields {
-        collect_type_constraints(model, f, "", 0, &mut visited, vars, &mut regular, &mut defaults);
+        collect_type_constraints(
+            model,
+            f,
+            "",
+            0,
+            &mut visited,
+            vars,
+            &mut regular,
+            &mut defaults,
+            &mut unevaluated,
+        );
     }
 
     // Resolve the defaults: drop disabled ones, keep one per attribute.
@@ -2922,7 +3382,7 @@ fn collect_constraints(
     for (_, (_, e)) in chosen {
         regular.push(e);
     }
-    (regular, soft)
+    (regular, soft, unevaluated)
 }
 
 /// The attribute a default constraint targets: the left-hand side of an
@@ -2948,6 +3408,7 @@ fn collect_type_constraints(
     vars: &BTreeMap<String, Domain>,
     out: &mut Vec<Expr>,
     defaults: &mut Vec<(Expr, u8)>,
+    unevaluated: &mut Vec<String>,
 ) {
     if depth > MAX_EXPAND_DEPTH {
         return;
@@ -2965,6 +3426,15 @@ fn collect_type_constraints(
             visited.push(tname.clone());
             let locals: HashSet<String> = t.fields.iter().map(|f| f.name.clone()).collect();
             for c in &t.constraints {
+                // A `forall` declared on a type has no instance domain here:
+                // report it rather than pass the free body off as satisfied.
+                if c.is_forall {
+                    unevaluated.push(format!(
+                        "forall constraint on `{}` in type `{}` is not expanded",
+                        path, tname
+                    ));
+                    continue;
+                }
                 let e = prefix_paths(&c.expr, &path, &locals, vars);
                 if c.is_default {
                     defaults.push((e, 1));
@@ -2973,7 +3443,9 @@ fn collect_type_constraints(
                 }
             }
             for sub in &t.fields {
-                collect_type_constraints(model, sub, &path, depth + 1, visited, vars, out, defaults);
+                collect_type_constraints(
+                    model, sub, &path, depth + 1, visited, vars, out, defaults, unevaluated,
+                );
             }
             visited.pop();
         }

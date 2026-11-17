@@ -21,16 +21,22 @@ simulation, emulation or post-silicon bring-up without changing the model.
 ---
 
 > **Verified coverage — read this before trusting the feature list.**
-> Every construct Satya claims was re-tested against the published **v0.46.0**
-> binary and judged on **observed behaviour**, never on whether it parsed. The
-> audit covered **146 constructs and found 74 that behave as the standard
-> specifies** — 24 more whose documented limitation reproduces, 35 that behave
-> worse than documented, and 13 that do not work at all. That is 51% of the
-> construct table, against the 114 rows the feature matrix marks `yes`: the
-> matrix was counting *parsed* as *implemented*. The verdicts, the 120
-> reproducing models and `tests/feature_proof/run_all.sh` are in
-> [`docs/FEATURE-AUDIT.md`](docs/FEATURE-AUDIT.md). Where this README and the
-> audit disagree, the audit is the accurate description of the released binary.
+> Every construct Satya claims is judged on **observed behaviour**, never on
+> whether it parsed. On the **v0.75.0** build the behavioural harness
+> (`tests/feature_proof/run_all.sh`) reports **128 pass / 34 fail of 162
+> checks**; the 34 failures name constructs 6, 9, 14, 15, 16, 25, 30, 34, 37,
+> 43, 47, 48, 54, 58, 62, 74, 76, 77, 79, 80, 83, 84, 86, 87, 88, 100, 102,
+> 103, 104, 119, 121, 126, 127 and 128.
+>
+> The older figures here — **74 of 146 constructs behaving as the standard
+> specifies** (24 partial, 35 worse, 13 not working, from the **v0.46.0** audit)
+> — are historical. `docs/FEATURES.md` was re-tested against the current build
+> for 21 rows, 18 of which had been fixed without the table following, and is
+> now correct on those rows; the rest of that table still carries its v0.46.0
+> verdict and is marked unverified. The verdicts, the 120 reproducing models and
+> the harness are in [`docs/FEATURE-AUDIT.md`](docs/FEATURE-AUDIT.md) and
+> [`docs/FEATURES.md`](docs/FEATURES.md). Where this README and the harness
+> disagree, the harness is the accurate description of the binary.
 
 ---
 
@@ -227,10 +233,10 @@ understands:
   (with `join_none` / `join_branch` / `join_select` / `join_first`),
   `schedule`, `select` (with branch guards), `repeat`, `foreach`,
   `replicate`, `if/else`, `atomic`, `sequence`, nested blocks, and
-  single-statement bodies (`repeat (n) do X;`) — the four join forms behave
-  identically and gate nothing (audit row 34), the `sequence` scheduling
-  constraint is not honoured (row 62), and `repeat … while` never re-evaluates
-  its condition (row 37)
+  single-statement bodies (`repeat (n) do X;`) — the four join forms differ in
+  emission order but the joined statement is still tagged with the concurrent
+  group's id (row 34), the `sequence` scheduling constraint is not honoured
+  (row 62), and `repeat … while` never re-evaluates its condition (row 37)
 * `bit[N]` and ranged `bit[msb:lsb]` widths — parsed and sized, but the declared
   width is not enforced on solved values (audit row 9)
 * repeat/replicate **index binding**: `repeat (i: 4) do B with { size == i*10; }`
@@ -247,9 +253,9 @@ understands:
 * address regions declared in `exec` blocks (`region.addr = …; region.size = …;`)
 
 A bullet above means the syntax is parsed and lowered. It does **not** mean the
-construct behaves as the standard requires — of the 146 constructs the audit
-judged, 74 do. The parenthetical audit references name the rows the proof shows
-are parse-only or wrong.
+construct behaves as the standard requires — on the current build the harness
+passes 128 of its 162 behavioural checks and fails 34. The parenthetical row
+references name the constructs the proof shows are parse-only or wrong.
 
 Constructs outside the modelled subset are *accepted but skipped*, so a real
 `.pss` file still parses and its modelled parts remain usable: raw `exec`
@@ -370,25 +376,40 @@ replace any commercial tool — see [`NOTICE.md`](NOTICE.md). Known limits:
   is no queuing or priority.
 * **Pools are allocated and consumed**, `foreach` over a pool iterates its
   objects, and a pool's declared count is enforced — an allocation beyond it is
-  refused and reported. **Resource pools do not currently create instances**, so
-  concurrent lockers all resolve to instance 0 and always contend (audit rows
-  49, 50).
+  refused and reported. Concurrent lockers on a multi-instance pool now get
+  **distinct** instances (0 and 1 on a 4-instance pool) and do not contend
+  (rows 49, 50 — fixed in 0.69.0, verified on 0.75.0).
 * **`compile if` takes the primary branch**, but declarations from the enabled
   branch are lost when the statement is nested, at package scope, or inside an
   action body (audit row 103).
 * **`task` bodies, `covergroup`s and `symbol` declarations are accepted but not
-  executed** — a `symbol` expands to nothing (audit row 43). `typedef` *is*
-  implemented (row 17), and `function`s resolve when called unqualified, but a
-  package-qualified call does not reach its definition (row 84).
-* **`exec` bodies are translated for plain assignments and braced `if`/`else`;**
-  `{ }` blocks, `+=`/`|=`, array-element assignment and single-statement
-  `repeat`/`if` bodies are dropped or mis-executed (audit rows 89, 91, 94, 97).
-  Foreign calls (`make_handle_from_claim`, `add_region`, …) are emitted as
-  comments in C and passed through in SystemVerilog — Satya does not implement
-  the foreign functions.
-* **`match` is only partly executed** — exact-value arms with a braced body
-  work, but range arms `[lo..hi]` never match and unbraced arms are dropped
-  (audit row 98). `select` index expressions are parsed but ignored.
+  executed** — a `symbol` expands to nothing (row 43). `typedef` *is*
+  implemented (row 17). Functions resolve when called unqualified **and**
+  package-qualified (`fn_p::sum10(4,2)` is 42), but a bodyless prototype
+  declared before the definition wins and both call forms silently return 0
+  (row 84).
+* **`exec body` is never executed.** `pre_solve`, `post_solve`, `pre_body`,
+  `init_up` and `init_down` run; an `exec body { … }` block is only translated
+  into the C and UVM realizations, so a model whose meaning lives there is
+  modelled but never run. In the `exec` blocks that do run, `+=`, indexed
+  assignment and single-statement `repeat`/`if` bodies now take effect (rows 91,
+  94, 97). Foreign calls (`make_handle_from_claim`, `add_region`, …) are emitted
+  as comments in C and passed through in SystemVerilog — Satya does not
+  implement the foreign functions.
+* **The native C realization truncates wide values.** Every action field is
+  declared `int32_t` (chandles `uint64_t`), so a `float64` field's 64-bit image
+  is assigned into an `int32_t` and the generated file warns that the value
+  changes — the compiled harness prints `0` where JSON prints
+  `4618441417868443648`. Use the JSON or trace backend when the value matters.
+* **A component-scope attribute initializer is dropped** — `int t = 1;` at
+  component scope reads 0 inside an action's `exec`, while an `exec init_up`
+  assignment to the same field, or an action-scope `int t = 1;`, reads 1.
+* **`fatal()` does not fail the run.** It stops the rest of its `exec` block and
+  records a `FATAL:` message, but the process still exits 0.
+* **`match` executes range arms** (`[4..7]` on 5 gives 2, and unbraced arms
+  work too — row 98, fixed in 0.69.0), but when several arms match the first is
+  taken where 11.4.6.d chooses one at random. `select` index expressions are
+  parsed but ignored.
 
 ---
 

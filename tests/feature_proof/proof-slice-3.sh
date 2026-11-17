@@ -737,17 +737,26 @@ done
 verdict 57 "foreach constraint" "$R"
 
 # ------------------------------------------------------------ construct 58 ---
+# fa_a carries `forall (it : elem_s) { it.size < 5; }` over its one instance of
+# elem_s, so the body must land on `e.size` and hold on every seed. The second
+# assertion compares against fa_b, the same model without the forall: an
+# expanded body must move the value where the unconstrained solve picks one
+# outside the body's range. (This block used to require the two models to agree
+# on all 20 seeds, which no enforced forall can satisfy — the contradiction
+# recorded in docs/proposed/README.md.)
 R=""
-bad=0; same=0
+bad=0; bites=0
 for s in $(seq 1 20); do
     va=$(vals m58 fa_a "$s" 'e.size')
     vb=$(vals m58 fa_b "$s" 'e.size')
     [ "${va% }" = "-" ] && bad=$((bad + 1))
-    [ "${va% }" = "${vb% }" ] && same=$((same + 1))
+    [ "${va% }" != "${vb% }" ] && bites=$((bites + 1))
     { [ "${va% }" != "-" ] && [ "${va% }" -lt 5 ]; } || bad=$((bad + 1))
 done
 [ "$bad" = 0 ] || add "forall (it : elem_s) { it.size < 5; } not expanded: e.size >= 5 on $bad of 20 seeds"
-[ "$same" = 20 ] || add "forall model differs from the unconstrained one on $((20 - same)) seeds"
+# fa_b is unconstrained over 0..100, so an enforced body must differ from it on
+# nearly every seed; agreeing on most seeds means the body was dropped.
+[ "$bites" -ge 10 ] || add "forall model equals the unconstrained one on $((20 - bites)) of 20 seeds: the body is not enforced"
 verdict 58 "forall constraint" "$R"
 
 # ------------------------------------------------------------ construct 59 ---

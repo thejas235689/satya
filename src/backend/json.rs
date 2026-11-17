@@ -5,7 +5,7 @@
 use super::{json_escape, Backend, BackendOptions};
 use crate::engine::{Scenario, StepMode};
 use crate::error::PssResult;
-use crate::ir::Model;
+use crate::ir::{FieldSig, Model};
 
 pub struct JsonBackend;
 
@@ -19,6 +19,11 @@ impl Backend for JsonBackend {
     }
 
     fn emit(&self, model: &Model, scenario: &Scenario, _opts: &BackendOptions) -> PssResult<String> {
+        // The declared width and signedness of each action's fields, so a value
+        // is printed as its type reads it: a `bit[64]` holding
+        // `0xFFFF_FFFF_FFFF_FFFF` is 18446744073709551615, not -1.
+        let mut sigs: std::collections::HashMap<String, std::collections::HashMap<String, FieldSig>> =
+            std::collections::HashMap::new();
         let mut s = String::new();
         s.push_str("{\n");
         s.push_str(&format!(
@@ -78,9 +83,16 @@ impl Backend for JsonBackend {
                 s.push('}');
             } else {
                 s.push('\n');
+                let sig = sigs
+                    .entry(step.action.clone())
+                    .or_insert_with(|| model.field_signatures(&step.action));
                 for (j, (k, v)) in step.fields.iter().enumerate() {
                     let comma = if j + 1 < step.fields.len() { "," } else { "" };
-                    s.push_str(&format!("        \"{}\": {}{}\n", json_escape(k), v, comma));
+                    let text = match sig.get(k) {
+                        Some(f) => f.render(*v),
+                        None => v.to_string(),
+                    };
+                    s.push_str(&format!("        \"{}\": {}{}\n", json_escape(k), text, comma));
                 }
                 s.push_str("      }");
             }

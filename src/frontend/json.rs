@@ -70,6 +70,7 @@ pub fn model_from_json(src: &str) -> PssResult<Model> {
         imports: Vec::new(),
         typedefs: std::collections::HashMap::new(),
         enum_values: std::collections::HashMap::new(),
+        exports: Vec::new(),
     };
 
     if let Some(pkgs) = obj_get(obj, "packages").and_then(|v| v.as_arr()) {
@@ -177,6 +178,8 @@ pub fn model_from_json(src: &str) -> PssResult<Model> {
                                 is_default: false,
                                 is_disable: false,
                     is_soft: false,
+                    is_forall: false,
+                    forall_binding: None,
                             });
                         }
                     }
@@ -381,6 +384,8 @@ fn build_constraints(obj: &[(String, Json)]) -> PssResult<Vec<Constraint>> {
                     is_default: false,
                     is_disable: false,
                     is_soft: false,
+                    is_forall: false,
+                    forall_binding: None,
                 });
             }
         }

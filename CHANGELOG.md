@@ -13,6 +13,51 @@ approximated.
 
 ---
 
+## 0.76.0 — 2026-11-17
+
+Ten proof rows closed, from parallel work
+
+Proof: **128 → 138 pass, 34 → 24 fail.** Every row was verified behaviourally by
+the work that closed it, and the merged total is exactly the sum — nothing
+interfered in combination, which is the thing a merge like this usually gets
+wrong.
+
+| row | what was wrong |
+|---|---|
+| 9 | 64-bit values rendered signed: `bad64=-1` for 2^64−1. Width and signedness now come from the *declared* type, never guessed from the value; `Domain` compares in the declared order |
+| 79 | `ir::build_actions` merged an extension's fields, constraints and activity but not its `execs` |
+| 83 | a composite action is walked without being recorded, so its exec blocks were dead code |
+| 84 | a prototype above a definition won the `functions` entry, so both qualified and unqualified calls returned 0 |
+| 102 | `export` was skipped entirely; now parsed and gates the two-segment cross-package form |
+| 104 | `compile has` returned a constant `true`; it now consults a declaration set |
+| 6 | `{1:10, 2:20}` parsed `1:10` as `Int(1), Unknown(":")` — the "map" was six junk list items |
+| 15 | `set` kept duplicates |
+| 58 | **`forall` never bound its variable**, and `check_atom` returns *true* for an attribute it has no value for — so the body could never fail while the counter read `2/2 satisfied` |
+| 25 | a templated field was `__ABSENT__`: `category_of` missed the mangled instantiation, and a type parameter used as a width was never substituted |
+
+Row 58 is the one to note: the same shape as `exec body <lang>` and
+`addr_value_abs` — a construct that reports success while doing nothing. A body
+that cannot be placed on an instance is now reported `not evaluated` and counted
+in neither total nor satisfied.
+
+**Also in this release:** the documentation was reconciled against the built
+binary. Twenty-one stale `FEATURES` rows corrected (14 move to `yes`), and
+`CORPUS.md` now states the truth about the compliance tier: **0 of 113 tests
+checked, 0 passed** — Satya emits zero `@@PSS-TRACE` lines because it never
+executes `exec body`, and the five `compile_error` models that should be
+rejected are all accepted.
+
+**Two patches did not apply cleanly and are held, not merged:** the AST-gap work
+(rows 43, 80, 100, 103) and the harness `--seeds` speedup both conflict on
+`src/engine.rs` and a proof slice, where three patches overlap. Their rows are
+still failing here. Hand resolution is the next step, not a re-run.
+
+**Correction:** the test count in recent notes was wrong. It is **181** (19 lib +
+162 integration), not 173 — three independent measurements agree.
+
+**Verification:** 181 tests; proof 138 pass / 24 fail; the merged tree builds and
+the ten rows were re-checked on it.
+
 ## 0.75.0 — 2026-11-17
 
 Arithmetic in the prover: `x + y == 7` is now provable

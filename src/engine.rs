@@ -46,6 +46,25 @@ enum FloatKind {
     F64,
 }
 
+/// Which collection family a field's declared type belongs to (PSS 7.9). The
+/// engine's value model is a flat `i64` map, so the *storage discipline* — and
+/// not the storage itself — is what distinguishes the four families:
+///
+/// * an array or list numbers its elements `0..size-1`;
+/// * a set numbers its elements too, but a repeated value is stored once
+///   (PSS 4.8.2, 7.9.5);
+/// * a map stores an entry at `<name>[<key>]` and its size counts distinct
+///   keys, so it is never positional.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CollKind {
+    /// Not a collection, or a collection with no special semantics.
+    Other,
+    Array,
+    List,
+    Set,
+    Map,
+}
+
 /// A flow object allocated to (or consumed by) a step.
 #[derive(Debug, Clone)]
 pub struct FlowRecord {
@@ -432,9 +451,28 @@ impl<'a> Engine<'a> {
             let first_step = self.steps.len();
             let steps_before = self.steps.len();
             let warns_before = self.warnings.len();
+            // A composite action's own `exec` blocks run around its activity,
+            // exactly as a leaf action's run around its solve (PSS 22.1). They
+            // used to be skipped entirely: `record_step` is the only place
+            // that ran execs, and a container never reaches it.
+            let comp_name = component.clone();
+            let mut pre: BTreeMap<String, i64> = BTreeMap::new();
+            let has_pre = action.execs.iter().any(|e| e.kind == "pre_solve");
+            if has_pre {
+                self.exec_action = Some(action.clone());
+                self.exec_component = Some(comp_name.clone());
+                for e in action.execs.iter().filter(|e| e.kind == "pre_solve") {
+                    self.exec_stmts(&e.stmts, &mut pre);
+                }
+            }
             // Solve the container action first so its random fields — a repeat
             // count, for instance — are available while walking the activity.
-            let report = solver::solve(self.model, action, self.seed ^ (depth as u64) ^ 0x5EED);
+            let seed = self.seed ^ (depth as u64) ^ 0x5EED;
+            let report = if has_pre {
+                solver::solve_with(self.model, action, seed, &[], &pre)
+            } else {
+                solver::solve(self.model, action, seed)
+            };
             let ctx = report.assignment.values;
             let handles = self.handles_of(action, &component);
             let handle_arrays = self.handle_arrays_of(action, &component);
@@ -443,6 +481,23 @@ impl<'a> Engine<'a> {
             self.walk_activity(act, component, depth + 1, mode, group, &ctx);
             self.handle_array_scopes.pop();
             self.handle_scopes.pop();
+            // `exec post_solve` and `exec pre_body` of the composite action run
+            // once its activity has completed, in the action's own scope.
+            if action
+                .execs
+                .iter()
+                .any(|e| e.kind == "post_solve" || e.kind == "pre_body")
+            {
+                let mut solved = ctx.clone();
+                self.exec_action = Some(action.clone());
+                self.exec_component = Some(comp_name);
+                for e in action.execs.iter().filter(|e| e.kind == "post_solve") {
+                    self.exec_stmts(&e.stmts, &mut solved);
+                }
+                for e in action.execs.iter().filter(|e| e.kind == "pre_body") {
+                    self.exec_stmts(&e.stmts, &mut solved);
+                }
+            }
             // An activity that produced nothing and said nothing is the worst
             // outcome for a test tool: the model runs, reports success, and
             // tests nothing. This catches the silent cases — a `foreach` over a
@@ -754,10 +809,10 @@ impl<'a> Engine<'a> {
     ) {
         match stmt {
             ActivityStmt::Do(path) => {
-                self.dispatch(path, component, depth, mode, group);
+                self.dispatch(path, component, depth, mode, group, ctx);
             }
             ActivityStmt::DoWith { action, body } => {
-                self.dispatch(action, component, depth, mode, group);
+                self.dispatch(action, component, depth, mode, group, ctx);
                 if let Some(b) = body {
                     self.walk_activity(b, component.to_string(), depth + 1, mode, group, ctx);
                 }
@@ -955,6 +1010,7 @@ impl<'a> Engine<'a> {
                                     depth,
                                     mode,
                                     group,
+                                    &local,
                                 );
                             }
                         }
@@ -1097,7 +1153,15 @@ impl<'a> Engine<'a> {
         action.to_string()
     }
 
-    fn dispatch(&mut self, path: &Path, component: &str, depth: usize, mode: StepMode, group: u32) {
+    fn dispatch(
+        &mut self,
+        path: &Path,
+        component: &str,
+        depth: usize,
+        mode: StepMode,
+        group: u32,
+        ctx: &BTreeMap<String, i64>,
+    ) {
         let (target_component, action_name) = split_action_ref(path);
         let comp = if let Some(c) = target_component {
             resolve_component(self.model, component, &c).unwrap_or(c)
@@ -1105,6 +1169,22 @@ impl<'a> Engine<'a> {
             component.to_string()
         };
         let action_name = self.apply_override(&comp, &path.segments.join("."), &action_name);
+        // `two;` names a `symbol` fragment of the component, not an action: a
+        // symbol is invoked like a traversal and its activity is walked in
+        // place (PSS 12.7). Before this the name resolved to nothing, so the
+        // symbol expanded to an UNRESOLVED step and the fragment was lost.
+        if self.model.find_action(Some(&comp), &action_name).is_none() {
+            let body = self
+                .model
+                .components
+                .get(&comp)
+                .and_then(|c| c.symbols.get(&action_name))
+                .cloned();
+            if let Some(body) = body {
+                self.walk_activity(&body, comp, depth, mode, group, ctx);
+                return;
+            }
+        }
         match self.model.find_action(Some(&comp), &action_name).cloned() {
             Some(act) => self.walk_action(&act, comp, depth, mode, group, false),
             None => match self.resolve_handle(&action_name) {
@@ -1433,6 +1513,98 @@ impl<'a> Engine<'a> {
         Some(ty)
     }
 
+    /// Which collection family a declared type name belongs to (PSS 7.9),
+    /// resolving typedefs. `array<T, N>` and `list<T>` carry their element type
+    /// in `elem_type`; `set<T>` and `map<K, V>` do not, so the family has to be
+    /// read off the type name itself.
+    fn coll_kind_of_type(&self, ty: &str) -> CollKind {
+        let mut name = ty.to_string();
+        for _ in 0..4 {
+            let leaf = name.rsplit("::").next().unwrap_or(&name).to_string();
+            // `map<int,int>` -> `map`; the template arguments are not part of
+            // the family name.
+            let base = leaf.split('<').next().unwrap_or(&leaf).trim().to_string();
+            match base.as_str() {
+                "array" => return CollKind::Array,
+                "list" => return CollKind::List,
+                "set" => return CollKind::Set,
+                "map" => return CollKind::Map,
+                _ => {}
+            }
+            let next = self
+                .model
+                .typedefs
+                .get(&name)
+                .or_else(|| self.model.typedefs.get(&leaf))
+                .map(|t| t.name());
+            match next {
+                Some(n) => name = n,
+                None => return CollKind::Other,
+            }
+        }
+        CollKind::Other
+    }
+
+    /// The collection family of the variable (or member path) `segments` names.
+    fn coll_kind(&self, segments: &[String]) -> CollKind {
+        match self.exec_target_type(segments) {
+            Some(ty) => self.coll_kind_of_type(&ty),
+            None => CollKind::Other,
+        }
+    }
+
+    /// `m = {k : v, ...}` — a map literal (PSS 4.8.3). The first element of each
+    /// colon-separated pair is the key and the second is the value; when the
+    /// same key appears more than once the last value wins. The map's size is
+    /// the number of distinct keys, so entries live at `<base>[<key>]` and are
+    /// never renumbered 0, 1, 2 the way an array's are.
+    fn assign_map(&mut self, base: &str, items: &[Expr], values: &mut BTreeMap<String, i64>) {
+        let mut entries: BTreeMap<i64, i64> = BTreeMap::new();
+        for it in items {
+            let pair = match it {
+                Expr::Binary(op, k, v) if op == ":" => Some((k, v)),
+                _ => None,
+            };
+            let Some((k, v)) = pair else {
+                self.warnings.push(format!(
+                    "map literal for `{}` has an item that is not a `key : value` pair; the map is left unchanged",
+                    base
+                ));
+                return;
+            };
+            let key = eval_value(k, values, self.model, self.seed);
+            let val = eval_value(v, values, self.model, self.seed);
+            match (key, val) {
+                (Some(kv), Some(vv)) => {
+                    entries.insert(kv, vv);
+                }
+                _ => {
+                    self.warnings.push(format!(
+                        "map literal for `{}` has a key or value that could not be evaluated; the map is left unchanged",
+                        base
+                    ));
+                    return;
+                }
+            }
+        }
+        // Drop the entries the previous contents of this map left behind: the
+        // key set of a map is not a contiguous range, so it cannot be cleared
+        // by walking `0..size`.
+        let prefix = format!("{}[", base);
+        let stale: Vec<String> = values
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect();
+        for k in stale {
+            values.remove(&k);
+        }
+        for (k, v) in &entries {
+            values.insert(format!("{}[{}]", base, k), *v);
+        }
+        values.insert(format!("{}.size", base), entries.len() as i64);
+    }
+
     /// The storage width (32 or 64) of a floating-point type, resolving
     /// typedefs. `None` for anything that is not a float.
     fn float_width_of(&self, ty: &str) -> Option<u32> {
@@ -1736,10 +1908,39 @@ impl<'a> Engine<'a> {
                         }
                     }
                 }
+                // `m = {k : v, ...};` gives a map its entries (PSS 4.8.3). This
+                // must come before the positional branch below: a map's entries
+                // are keyed, so numbering them 0, 1, 2 would report the wrong
+                // size and put every value under the wrong key.
+                if let Expr::List(items) = rhs {
+                    if self.coll_kind(&path.segments) == CollKind::Map {
+                        self.assign_map(&base, items, values);
+                        return Flow::Normal;
+                    }
+                }
                 // `L = {a, b, c};` gives a collection its elements (PSS 8.5).
                 if let Expr::List(items) = rhs {
                     for i in 0..MAX_LIST {
                         values.remove(&format!("{}[{}]", base, i));
+                    }
+                    // In a set each value is counted once, however many times it
+                    // appears in the literal (PSS 4.8.2), so the elements are
+                    // compacted as they are stored instead of being numbered by
+                    // their position in the literal.
+                    if self.coll_kind(&path.segments) == CollKind::Set {
+                        let mut kept: Vec<i64> = Vec::new();
+                        for it in items.iter() {
+                            if let Some(v) = eval_value(it, values, self.model, self.seed) {
+                                if !kept.contains(&v) {
+                                    kept.push(v);
+                                }
+                            }
+                        }
+                        for (i, v) in kept.iter().enumerate() {
+                            values.insert(format!("{}[{}]", base, i), *v);
+                        }
+                        values.insert(format!("{}.size", base), kept.len() as i64);
+                        return Flow::Normal;
                     }
                     for (i, it) in items.iter().enumerate() {
                         if let Some(v) = eval_value(it, values, self.model, self.seed) {
@@ -2394,24 +2595,40 @@ impl<'a> Engine<'a> {
         };
         let size_key = format!("{}.size", recv);
         let n = *values.get(&size_key).unwrap_or(&0);
+        // The receiver's collection family decides whether a method numbers its
+        // elements (array/list), ignores repeats (set) or keys its entries
+        // (map). Without this the same method meant one thing for every
+        // collection, and a map insert shifted entries the way a list does.
+        let recv_segs: Vec<String> = recv.split('.').map(|s| s.to_string()).collect();
+        let kind = self.coll_kind(&recv_segs);
         let elem = |i: i64| format!("{}[{}]", recv, i);
         let arg = |k: usize| args.get(k).and_then(|a| eval_value(a, values, self.model, self.seed));
         match method {
             "push_back" => {
                 if let Some(v) = arg(0) {
-                    values.insert(elem(n), v);
-                    values.insert(size_key, n + 1);
+                    // A set holds each value once, however many times it is
+                    // pushed (PSS 4.8.2, 7.9.5).
+                    let dup = kind == CollKind::Set
+                        && (0..n).any(|i| values.get(&elem(i)).copied() == Some(v));
+                    if !dup {
+                        values.insert(elem(n), v);
+                        values.insert(size_key, n + 1);
+                    }
                 }
             }
             "push_front" => {
                 if let Some(v) = arg(0) {
-                    for i in (0..n).rev() {
-                        if let Some(x) = values.get(&elem(i)).copied() {
-                            values.insert(elem(i + 1), x);
+                    let dup = kind == CollKind::Set
+                        && (0..n).any(|i| values.get(&elem(i)).copied() == Some(v));
+                    if !dup {
+                        for i in (0..n).rev() {
+                            if let Some(x) = values.get(&elem(i)).copied() {
+                                values.insert(elem(i + 1), x);
+                            }
                         }
+                        values.insert(elem(0), v);
+                        values.insert(size_key, n + 1);
                     }
-                    values.insert(elem(0), v);
-                    values.insert(size_key, n + 1);
                 }
             }
             "pop_back" => {
@@ -2432,7 +2649,18 @@ impl<'a> Engine<'a> {
                 }
             }
             "insert" => {
-                if let (Some(i), Some(v)) = (arg(0), arg(1)) {
+                if kind == CollKind::Map {
+                    // `m.insert(k, v)` associates `v` with key `k` (PSS 7.9.4).
+                    // An existing key keeps its place and takes the new value,
+                    // so the size changes only for a key that was not there.
+                    if let (Some(k), Some(v)) = (arg(0), arg(1)) {
+                        let key = format!("{}[{}]", recv, k);
+                        if !values.contains_key(&key) {
+                            values.insert(size_key, n + 1);
+                        }
+                        values.insert(key, v);
+                    }
+                } else if let (Some(i), Some(v)) = (arg(0), arg(1)) {
                     if (0..=n).contains(&i) {
                         for j in (i..n).rev() {
                             if let Some(x) = values.get(&elem(j)).copied() {
@@ -2458,8 +2686,22 @@ impl<'a> Engine<'a> {
                 }
             }
             "clear" => {
-                for i in 0..n {
-                    values.remove(&elem(i));
+                if kind == CollKind::Map {
+                    // A map's keys are not `0..size`, so the entries have to be
+                    // found by prefix.
+                    let prefix = format!("{}[", recv);
+                    let stale: Vec<String> = values
+                        .keys()
+                        .filter(|k| k.starts_with(&prefix))
+                        .cloned()
+                        .collect();
+                    for k in stale {
+                        values.remove(&k);
+                    }
+                } else {
+                    for i in 0..n {
+                        values.remove(&elem(i));
+                    }
                 }
                 values.insert(size_key, 0);
             }

@@ -29,6 +29,18 @@ pub struct Parser {
     /// `Option`, so it used to discard errors and turn a broken statement into
     /// a `Raw` one; keeping the first error lets the body be rejected.
     exec_err: Option<PssError>,
+    /// Names this file declares — types, constants, functions, actions and
+    /// packages — collected as they are parsed. `compile has (X)` asks whether
+    /// such a name exists (PSS 22.3 §19.3); with no record of declarations the
+    /// parser had to answer `true` unconditionally, so an undeclared name took
+    /// the enabled branch. A name is stored both as its leaf and as
+    /// `<scope>::<leaf>`, so a package-qualified `compile has (p::T)` works.
+    decls: std::collections::BTreeSet<String>,
+    /// Some `compile has` in this pass answered "not declared".
+    has_miss: bool,
+    /// This pass added a name `decls` did not already hold, so a further pass
+    /// could answer a `compile has` differently.
+    decls_grew: bool,
 }
 
 impl Parser {
@@ -42,7 +54,66 @@ impl Parser {
             functions: Vec::new(),
             scope: None,
             exec_err: None,
+            decls: std::collections::BTreeSet::new(),
+            has_miss: false,
+            decls_grew: false,
         }
+    }
+
+    /// Record a declared name for `compile has`, under its leaf and under the
+    /// current scope.
+    fn declare(&mut self, name: &str) {
+        let leaf = name.rsplit("::").next().unwrap_or(name).to_string();
+        if self.decls.insert(leaf.clone()) {
+            self.decls_grew = true;
+        }
+        if let Some(scope) = self.scope.clone() {
+            if !scope.is_empty() && self.decls.insert(format!("{}::{}", scope, leaf)) {
+                self.decls_grew = true;
+            }
+        }
+    }
+
+    /// `compile has ( X )` — PSS 22.3 §19.3: true when `X` names a type or
+    /// constant that has been declared unconditionally or in an enabled
+    /// conditional block, false otherwise. A form the parser cannot read as a
+    /// plain (possibly scoped) name keeps the previous answer, `true`, so an
+    /// unusual spelling does not silently change which branch is taken.
+    fn compile_has(&mut self) -> bool {
+        if !self.at_punct("(") {
+            return true;
+        }
+        let save = self.pos;
+        self.bump();
+        let mut segs: Vec<String> = Vec::new();
+        while let TokKind::Ident(id) = self.peek().kind.clone() {
+            self.bump();
+            segs.push(id);
+            if self.at_punct("::") {
+                self.bump();
+                continue;
+            }
+            break;
+        }
+        // `T<>` — elided template arguments still name the type `T`.
+        if self.at_punct("<") && self.peek_at(1).is_punct(">") {
+            self.bump();
+            self.bump();
+        }
+        if segs.is_empty() || !self.at_punct(")") {
+            // Not a plain name: fall back to the old behaviour.
+            self.pos = save;
+            self.skip_parens();
+            return true;
+        }
+        self.bump(); // `)`
+        let full = segs.join("::");
+        let leaf = segs.last().cloned().unwrap_or_default();
+        if self.decls.contains(&full) || self.decls.contains(&leaf) {
+            return true;
+        }
+        self.has_miss = true;
+        false
     }
 
     // ---- token helpers -------------------------------------------------
@@ -221,6 +292,27 @@ impl Parser {
     // ---- entry point ---------------------------------------------------
 
     pub fn parse_file(&mut self) -> PssResult<SourceFile> {
+        let mut file = self.parse_file_once()?;
+        // §19.3 counts a declaration anywhere in the file, not only one written
+        // above the `compile has`. A first pass can only see what it has
+        // already parsed, so when a `compile has` answered "not declared" and
+        // the pass still discovered new names, re-parse with the completed set.
+        // The set only grows, so this reaches a fixed point (bounded anyway).
+        let mut guard = 0;
+        while self.has_miss && self.decls_grew && guard < 4 {
+            guard += 1;
+            let mut p = Parser::new(self.toks.clone());
+            p.decls = self.decls.clone();
+            let again = p.parse_file_once()?;
+            self.decls = p.decls;
+            self.has_miss = p.has_miss;
+            self.decls_grew = p.decls_grew;
+            file = again;
+        }
+        Ok(file)
+    }
+
+    fn parse_file_once(&mut self) -> PssResult<SourceFile> {
         let items = self.parse_items(true)?;
         // `parse_items` stops at a `}`; at file level that means an unmatched
         // one, which used to be ignored silently.
@@ -480,11 +572,10 @@ impl Parser {
                     continue;
                 }
                 if self.eat_ident("has") {
-                    // `compile has (X)` asks whether X exists in the model; a
-                    // single-file parse cannot see that, so it is accepted.
-                    if self.at_punct("(") {
-                        self.skip_parens();
-                    }
+                    // `compile has (X);` as a statement: evaluate it against the
+                    // declaration set so the same answer is reported whether it
+                    // stands alone or guards a `compile if`.
+                    let _ = self.compile_has();
                     self.eat_punct(";");
                     continue;
                 }
@@ -538,6 +629,9 @@ impl Parser {
         if self.at_ident("compile") {
             return self.parse_compile_if();
         }
+        if self.at_ident("export") {
+            return Ok(self.parse_export());
+        }
         if self.at_ident("extend") {
             return self.parse_extend();
         }
@@ -569,6 +663,37 @@ impl Parser {
     }
 
     // ---- imports / packages -------------------------------------------
+
+    /// `export target c::A1(bit mode);` (PSS 22.4) — names an action of another
+    /// component that is visible from outside the declaring package as
+    /// `pkg::A1`. The statement used to be skipped, so `pkg::A1` resolved with
+    /// or without it and `export` gated nothing.
+    ///
+    /// It is carried to the IR as an import-shaped marker —
+    /// `__export__::<pkg>::<target>...` — because `Item` has no export variant
+    /// and this change is confined to the parser, the IR and the engine.
+    /// `Lowerer::collect` recognises the marker and records the export; it is
+    /// never treated as an import.
+    fn parse_export(&mut self) -> Item {
+        self.bump(); // `export`
+        // The qualifier says what kind of name is exported.
+        while self.at_ident("target") || self.at_ident("solve") || self.at_ident("action") {
+            self.bump();
+        }
+        let mut segs = vec!["__export__".to_string()];
+        // The exporting package is one segment, even when its own name is
+        // scoped, so the IR can tell it from the target path.
+        segs.push(self.scope.clone().unwrap_or_default());
+        if let Ok(path) = self.parse_scoped_path() {
+            segs.extend(path.segments);
+        }
+        // A parameter list (`(bit mode)`) is not modelled.
+        if self.at_punct("(") {
+            self.skip_parens();
+        }
+        self.skip_to_semicolon();
+        Item::Import(Path::new(segs))
+    }
 
     fn parse_import(&mut self) -> PssResult<Path> {
         self.expect_ident_named("import")?;
@@ -603,6 +728,7 @@ impl Parser {
         if self.peek().is_ident("class") && !self.peek_at(1).is_punct("::") {
             self.bump();
             let path = self.parse_scoped_path()?;
+            self.declare(&path.segments.join("::"));
             if self.eat_ident("as") {
                 let _ = self.expect_ident()?;
             }
@@ -644,6 +770,7 @@ impl Parser {
         self.expect_ident_named("package")?;
         // A package name may be qualified: `package pkg1::a::b::c { ... }`.
         let name = self.parse_scoped_path()?.segments.join("::");
+        self.declare(&name);
         self.expect_punct("{")?;
         let saved = std::mem::replace(&mut self.scope, Some(name.clone()));
         let items = self.parse_items(false)?;
@@ -677,6 +804,7 @@ impl Parser {
     fn parse_enum(&mut self, is_extend: bool, base: Option<Path>) -> PssResult<EnumDecl> {
         self.expect_ident_named("enum")?;
         let name = self.parse_scoped_path()?;
+        self.declare(&name.segments.join("::"));
         // `enum E : int { ... }` — an explicit base type (PSS 12.4). The base
         // must be a type, so a declaration keyword such as `struct` is an error
         // rather than something to skip over.
@@ -701,7 +829,11 @@ impl Parser {
         if self.eat_punct("{") {
             while !self.at_punct("}") && !self.at_eof() {
                 if let Some(id) = self.peek().ident() {
-                    variants.push(id.to_string());
+                    // An enum variant is a constant, so `compile has (V)` sees
+                    // it (PSS 22.3 §19.3 counts types and constants).
+                    let id = id.to_string();
+                    self.declare(&id);
+                    variants.push(id);
                     self.bump();
                     // Optional `= value` (PSS 12.4). It used to be parsed and
                     // discarded, so every variant took its position instead.
@@ -735,6 +867,9 @@ impl Parser {
     fn parse_type_decl(&mut self, is_extend: bool) -> PssResult<TypeDecl> {
         let keyword = self.expect_ident()?; // struct/resource/buffer/state
         let name = self.parse_scoped_path()?.leaf();
+        if !is_extend {
+            self.declare(&name);
+        }
         let template_params = self.parse_template_params()?;
         let base = if self.eat_punct(":") {
             Some(self.parse_type_ref()?)
@@ -1049,6 +1184,7 @@ impl Parser {
             let _ret = self.parse_type_ref()?;
         }
         let name = self.expect_ident()?;
+        self.declare(&name);
         let mut params = Vec::new();
         if self.at_punct("(") {
             self.bump();
@@ -1095,6 +1231,7 @@ impl Parser {
         let target = self.parse_type_ref()?;
         let name = self.expect_ident()?;
         self.eat_punct(";");
+        self.declare(&name);
         self.typedefs.insert(name, target);
         Ok(())
     }
@@ -1965,6 +2102,9 @@ impl Parser {
     fn parse_component(&mut self, is_extend: bool) -> PssResult<ComponentDecl> {
         self.expect_ident_named("component")?;
         let name = self.expect_ident()?;
+        if !is_extend {
+            self.declare(&name);
+        }
         let template_params = self.parse_template_params()?;
         let base = if self.eat_punct(":") {
             Some(self.parse_type_ref()?)
@@ -2297,6 +2437,9 @@ impl Parser {
         self.expect_ident_named("action")?;
         // The name may be qualified when extending (`extend action C::A`).
         let name = self.parse_scoped_path()?.leaf();
+        if !is_extend {
+            self.declare(&name);
+        }
         let template_params = self.parse_template_params()?;
         let base = if self.eat_punct(":") {
             Some(self.parse_type_ref()?)
@@ -3080,6 +3223,7 @@ impl Parser {
             Expr::Int(0)
         };
         self.expect_punct(";")?;
+        self.declare(&name);
         Ok(Some(Item::StaticConst { name, value }))
     }
 
@@ -3487,16 +3631,15 @@ impl Parser {
                     self.bump();
                     return Ok(Expr::Bool(false));
                 }
-                // `compile has (X)` inside a condition (PSS 22.3) asks whether
-                // X exists in the model. A single-file parse cannot resolve it,
-                // so it evaluates to true — the symbol is being referenced.
+                // `compile has (X)` inside a condition (PSS 22.3 §19.3) is true
+                // when X names a type or constant the model declares. It used
+                // to be an unconditional `true`, so a model that guarded on a
+                // symbol declared nowhere silently got the then-branch.
                 if id == "compile" && self.peek_at(1).is_ident("has") {
                     self.bump();
                     self.bump();
-                    if self.at_punct("(") {
-                        self.skip_parens();
-                    }
-                    return Ok(Expr::Bool(true));
+                    let found = self.compile_has();
+                    return Ok(Expr::Bool(found));
                 }
                 if id == "foreach" {
                     self.bump();
@@ -3566,11 +3709,30 @@ impl Parser {
                 self.bump();
                 let mut exprs = Vec::new();
                 let mut saw_comma = false;
+                // A `key : value` item is a map-literal pair (PSS Syntax 6,
+                // 4.8.3). The pair is kept as one `":"` binary node, the same
+                // shape the `'{ x : 3 }` keyed form already produces, so a
+                // structure literal and a map literal reach the engine
+                // identically and it is the target's declared type that decides
+                // which one applies.
+                let mut saw_pair = false;
                 while !self.at_punct("}") && !self.at_eof() {
                     if self.eat_punct(";") {
                         continue;
                     }
-                    exprs.push(self.parse_constraint_body_item()?);
+                    let item = self.parse_constraint_body_item()?;
+                    if self.at_punct(":") {
+                        self.bump();
+                        let value = self.parse_expr(0)?;
+                        exprs.push(Expr::Binary(
+                            ":".into(),
+                            Box::new(item),
+                            Box::new(value),
+                        ));
+                        saw_pair = true;
+                    } else {
+                        exprs.push(item);
+                    }
                     if self.eat_punct(",") {
                         saw_comma = true;
                         continue;
@@ -3578,10 +3740,12 @@ impl Parser {
                     self.eat_punct(";");
                 }
                 self.expect_punct("}")?;
-                if saw_comma || exprs.is_empty() {
+                if saw_comma || saw_pair || exprs.is_empty() {
                     // An empty `{}` is the empty literal collection (PSS 8.5),
                     // not a trivially-true constraint: `arr = {};` must leave
-                    // an empty collection.
+                    // an empty collection. A single pair, `{1:10}`, must stay a
+                    // one-item list rather than collapsing to a bare `":"`
+                    // expression.
                     return Ok(Expr::List(exprs));
                 }
                 Ok(combine_and(exprs))

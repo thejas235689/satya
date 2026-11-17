@@ -3898,3 +3898,85 @@ component c {
     let l = s.steps[0].fields.iter().find(|(k, _)| k == "l").map(|(_, v)| *v).unwrap();
     assert_eq!(l, 2, "an unbraced arm body must run");
 }
+
+#[test]
+fn forall_expands_over_the_instances_in_scope() {
+    // Audit row 58. `forall (it : elem_s) { it.size < 5; }` was dropped: the
+    // body reached the solver with `it` free, and an atom on an attribute with
+    // no domain is treated as satisfied by `check_atom` — so the counter read
+    // `2/2 satisfied` while `e.size` solved anywhere in 0..100.
+    let src = r#"
+package p {
+  struct elem_s { rand int size; };
+  component c {
+    action a {
+      rand elem_s e;
+      constraint e.size in [0..100];
+      constraint forall (it : elem_s) { it.size < 5; };
+    };
+    action b { rand elem_s e; constraint e.size in [0..100]; };
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let mut moved = 0;
+    for seed in 1..=20u64 {
+        let a = engine::run_scenario(&m, "a", seed);
+        let b = engine::run_scenario(&m, "b", seed);
+        let va = a.steps[0].fields.iter().find(|(k, _)| k == "e.size").map(|(_, v)| *v).unwrap();
+        let vb = b.steps[0].fields.iter().find(|(k, _)| k == "e.size").map(|(_, v)| *v).unwrap();
+        assert!(va < 5, "seed {seed}: the forall body did not hold: e.size={va}");
+        if va != vb {
+            moved += 1;
+        }
+    }
+    assert!(moved >= 10, "the forall model matched the unconstrained one on {} of 20 seeds", 20 - moved);
+}
+
+#[test]
+fn a_forall_body_that_cannot_bind_is_reported_not_satisfied() {
+    // The failure mode this project keeps removing: a quantifier that enforces
+    // nothing while reporting success. A body naming an attribute the solver
+    // does not own must be reported as not evaluated.
+    let src = r#"
+package p {
+  struct elem_s { rand int size; };
+  component c {
+    action a { rand elem_s e; constraint forall (it : elem_s) { it.nosuch < 5; }; };
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    assert!(
+        !s.steps[0].unevaluated.is_empty(),
+        "an unbindable forall body must be reported as not evaluated"
+    );
+    assert_eq!(s.steps[0].total, 0, "it must not be counted as a satisfied constraint");
+}
+
+#[test]
+fn a_templated_field_is_expanded_and_constrained() {
+    // Audit row 25. `pair_s<bit[8],4> small;` was categorised `Unknown`, so no
+    // member of the instantiation entered the solve: `small.f == 200` bound
+    // nothing and `small.f` was absent from the assignment.
+    let src = r#"
+package p {
+  struct pair_s<bit[W], int N> { rand bit[W] f; rand int g; int arr[N]; };
+  component c {
+    action a {
+      pair_s<bit[8], 4> small;
+      constraint small.f == 200;
+      constraint small.g == 33;
+    };
+  };
+};
+"#;
+    let m = compile_pss(src).unwrap();
+    let s = engine::run_scenario(&m, "a", 1);
+    let get = |k: &str| s.steps[0].fields.iter().find(|(n, _)| n == k).map(|(_, v)| *v);
+    assert_eq!(get("small.f"), Some(200), "the templated field must bind");
+    assert_eq!(get("small.g"), Some(33));
+    // `int arr[N]` with N = 4 is a four-element array, so element 3 exists.
+    assert_eq!(get("small.arr[3]"), Some(0), "the extent N must be substituted");
+}

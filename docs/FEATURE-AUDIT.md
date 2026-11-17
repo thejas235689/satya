@@ -14,6 +14,13 @@ them, and `run_all.sh` re-runs them all:
 tests/feature_proof/run_all.sh /path/to/satya
 ```
 
+> **Every verdict below is a v0.46.0 measurement and several are now out of
+> date.** Re-running the same scripts against the **v0.75.0** build gives
+> **128 pass / 34 fail of 162 checks** (it gave 104 / 58 on v0.46.0): 18 rows
+> have changed bucket since, 14 of them now `yes`. [`FEATURES.md`](FEATURES.md)
+> carries the corrected per-row status and says which rows were re-tested; this
+> document is the historical audit and is not re-measured.
+
 ## Verdict vocabulary
 
 | verdict | meaning |

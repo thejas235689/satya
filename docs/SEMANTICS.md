@@ -15,15 +15,22 @@ examples, with their stated expected results, and check the tool produces them.*
 
 ## How this revision was verified
 
-Every claim below was re-checked against the published **v0.46.0** release binary
-(`satya-v0.46.0-x86_64-linux.tar.gz`, `sha256 4a40d468…2e421e`, checksum
-verified before use — nothing here is built from source). The evidence is:
+Most claims below were checked against the published **v0.46.0** release binary
+(`sha256 4a40d468…2e421e`); the rows marked **✔ 0.75** were re-tested against
+the **v0.75.0 source build** in this revision, and the rows marked ✎ were
+corrected against it. The evidence is:
 
 * the six assertion scripts in [`tests/feature_proof/`](../tests/feature_proof/)
   — `./proof-slice-N.sh <binary>` — which re-derive one verdict per construct
-  from observed behaviour (104 pass / 58 fail on this binary);
+  from observed behaviour. On the v0.75.0 build `run_all.sh` reports **128 pass
+  / 34 fail over 162 checks** (on v0.46.0 it reported 104 / 58);
 * the per-slice reports in `tests/feature_proof/reports/`;
 * purpose-written models for the claims those two did not settle.
+
+**Rows without a ✔ 0.75 or ✎ marker were not re-tested against v0.75.0** — they
+carry their v0.46.0 result and should be read as unverified against the current
+code. The code has moved under this document repeatedly; where a row here
+disagrees with the harness, the harness is right.
 
 Markers used in the tables:
 
@@ -32,7 +39,8 @@ Markers used in the tables:
 | ✔ | the claim was re-tested against the binary in this revision and still holds |
 | ✎ | the claim was **wrong or stale** and is corrected here; the previous wording is quoted so the change is visible |
 | + | a defect the audit found and this document did not mention before; verified here |
-| *(none)* | carried over from the previous revision, not re-tested in this pass — treat as unverified |
+| ✔ 0.75 | re-tested against the v0.75.0 source build in this revision and still holds |
+| *(none)* | carried over from an earlier revision, not re-tested in this pass — treat as unverified |
 
 ---
 
@@ -112,10 +120,10 @@ consistent with these). With `:/`, `[100..102 :/ 6, 200 := 2]` gives
 | packed little-endian layout | 24.10.1 | ✔ register fields pack from the least-significant bit in declaration order |
 | address handles | 24.10.3 | ✔ a handle holds an address; `make_handle_from_claim` and `make_handle_from_handle` offset it |
 | `addr_value` / `addr_value_solve` | 24.10.5, 24.10.6 | ✔ the handle's address (`0x410` and `0xC00` for claims at `0x10` and `0x800` in a region based at `0x400`) |
-| `addr_value_abs` | 21.13.7 | ✔ **a boolean, per the standard.** "The solve function addr_value_abs() returns 'true' if the absolute address value is available for the specified address handle. The absolute address value is available if hndl is within a transparent region." A handle in a region added to an address space is transparent, so it returns 1; `addr_value` returns the address itself (1040, 3072 for the two test handles). **This row was wrong twice:** it first claimed the address while the code returned a constant 1; 0.51.0 then changed the code to return the address, which the standard does not say. Restored in 0.61.0. An *opaque* region should give 0 and is not modelled |
+| `addr_value_abs` | PSS 3.1 §21.13.7 | ✎ ✔ 0.75 **a boolean, not an address.** "The solve function addr_value_abs() returns 'true' if the absolute address value is available for the specified address handle. The absolute address value is available if hndl is within a transparent region." Measured on 0.75.0: a handle from a region added to an address space gives `addr_value` 1060 (0x424) and `addr_value_abs` 1, while a handle made from a **generic** claim — a region that is not transparent — gives 0. The address itself is `addr_value`'s job (1040, 3072 for the harness's two handles). **This row was wrong twice:** it first claimed the address while the code returned a constant 1; 0.51.0 then changed the code to return the address, which the standard does not say. Restored in 0.61.0. Caveat: in the 0 case `addr_value` also returns 0 (the §2.1 gap below), so whether the 0 comes from the transparency test or from that gap could not be separated |
 | primitive read/write | 24.10.9.1, 24.10.9.2 | ✔ `read8`/`read16`/`read32`/`read64` and their writes, little-endian over a byte-addressable store |
 | array operators `==`, `!=` | 7.9.2.1 | ✔ element-wise equality and inequality are solved (`a == b` holds for two equal arrays, `a != b` evaluates to 0) |
-| array operator `in` | 7.9.2.1 | ✎ **split out of the row above, which claimed "element-wise equality and set membership are solved".** Membership is not evaluated: `v in [1, 3, 5..9]` as an expression yields 0 even when `v = 6` lies in `5..9`, and `v in allowed` over a named array leaves `v = 69` outside `{4, 7, 9}` (the counter reports 3/4 rather than claiming success). See also `x in <collection>` below |
+| array operator `in` | 7.9.2.1 | ✎ **split out of the row above, which claimed "element-wise equality and set membership are solved".** ✎ ✔ 0.75 Membership over a **literal or range list** now *is* evaluated as an expression — `2 in [1,2,3]` → 1, `9 in [1,2,3]` → 0, `5 in [4..7]` → 1, `3 in [4..7]` → 0 (fixed in 0.66.0; the previous wording's "yields 0 even when `v = 6` lies in `5..9`" no longer reproduces). Membership over a **named** collection still is not: with `allowed = {4, 7, 9}` and `constraint v in allowed`, `v` solved to 69, 668 and 469 on three seeds and the counter reported `0/1` — unsatisfied, not claimed. See also `x in <collection>` below |
 | array properties `arr.size`, `arr.sum` | 7.9.2.4 | ✔ the deprecated property forms evaluate like the methods |
 | `exec init_down` / `init_up` | 22.1 | ✔ run for the component hierarchy before the scenario, `init_down` top-down and `init_up` bottom-up (`cfg` ends at the `init_up` value) |
 | collection mutators in `exec` | 7.9.3.2 | ✎ `push_back`, `push_front`, `pop_back`, `pop_front`, `insert`, `delete`, `clear`, `shuffle` build a list that constraints can then read — **in method form** (`base.push_back(4)` grows the list to 5 and makes `sum` 9). **Previously** the row did not say the form matters: the free-function spelling `push_back(base, 4)` is silently ignored |
@@ -133,7 +141,7 @@ consistent with these). With `:/`, `[100..102 :/ 6, 200 := 2]` gives
 | an `open_range_list` mixing values and ranges | 8.5.9 | ✎ **moved here from §1, where the row simply gave `[1, 3, 5..9]` as accepted.** Accepted is not enough: a mixed list is honoured member by member (`[1, 4, 9..12]` and `[1, 3, 5..9]` reach every member), but if the list contains an **open-ended** range the open range is never chosen and the solve collapses onto the first single value — `constraint z in [1, 4, 9..12, 20..]` gave `z = 1` on all 60 seeds tried, and `[9..12, 20..]` only ever produced 9..12 |
 | value list literal | 5 | ✔ `[1, 2, 3]` and `[a, b]` as a constraint's value set |
 | procedural statements | 89-101 | ✎ **moved here from §1, where the row claimed `repeat`/`repeat…while`/`foreach`/`if`/`match`/`break`/`continue`/`return`/`randomize` in `exec` work "with control flow".** The braced forms work; the single-statement forms are mis-parsed (§2.1), `+=`/`\|=`/indexed assignment are dropped (§2.1), `match` range arms never match (§2.1), `randomize x with { … }` ignores its `with` clause (construct 100), a bare `{ … }` block statement is dropped entirely and a block-scoped declaration leaks into the component (constructs 89, 90) |
-| floating-point (`float_pkg`) | 112-116 | ✎ **moved here from §1.** `float_mantissa`, `float_sign` and `to_float` behave; but `float32` does **not** narrow — `6.0` is stored as the 64-bit image `4618441417868443648`, and the field is 8 bytes (construct 112), and `float_exponent` is wrong for most negative inputs (`-6.0` → 1022 where 1025 is wanted, `-0.25` → 1027 where 1021 is wanted; `-1.0` and `-2.0` are right) |
+| floating-point (`float_pkg`) | 112-116 | ✎ ✔ 0.75 **corrected in this revision — the previous wording was stale.** It said `float32` does **not** narrow (`6.0` stored as the 64-bit image `4618441417868443648`) and that `float_exponent` was wrong for most negative inputs. On 0.75.0 `float32` stores the **binary32** word — `f = 6.0` → 1086324736 (0x40C00000), `f = 20.14` → 1101078200 (0x41A11EB8) — while `float64` keeps 4618441417868443648, and `float_exponent` agrees with its positive counterparts for negatives (−1.0 → 1023, −2.0 → 1024, −6.0 → 1025, −0.25 → 1021). Both were fixed in 0.68.0. `float_mantissa`, `float_sign` and `to_float` behave. Not verified: the value `float_exponent` returns is the raw biased exponent field (1.0 → 1023), and whether that is the exponent the standard's function must return was not checked |
 | messaging | 106-110 | ✎ `print`/`message`/`error` are recorded and reported, and file operations are accepted and have no effect — verified. **Previously** the row included `fatal` in the same breath; `fatal()` does **not** terminate the run: the next statement still executes and the process exits 0 (construct 110) |
 | randomization functions | 111 | ✔ `urandom()` / `urandom_range()` — deterministic and varying by run seed |
 | `x in <collection>` | 8.5.9 | ✎ **moved here from §1, where it claimed "membership in a named array/list is a solved constraint, uniform over its elements".** It is not solved: with `allowed = {4, 7, 9}` and `constraint v in allowed`, `v` solved to 69, 668 and 469 on three seeds, the constraint left unsatisfied (3/4), and the same membership used as an expression evaluated to 0 |
@@ -200,12 +208,14 @@ so they are called out even where the construct still parses.
 | + covergroup instantiation | 64 | `named_cg inst1 (x);` binds nothing and never samples — no coverage row appears at all, with no warning |
 | + `forall` constraints | 58 | not expanded: `forall (it : elem_s) { it.size < 5; }` leaves `e.size = 69` and the counter still reports `1/1 satisfied` |
 | + flow-object data, and `state` | 47, 48 | a bound input does not carry the producer's data, and a `state` object is not persisted: the writer sets `mode = 5`, the reader of the same object solves `mode = 269` |
-| + `fatal()` | 110 | does not terminate: the following statement executes and the exit status is 0 |
+| + `fatal()` | 110 | ✎ ✔ 0.75 **half fixed.** It records a `FATAL:` message and the rest of its `exec` block does not run (the statement after it never executes — the previous wording, "the following statement executes", no longer reproduces), but the process still exits 0 and no error reaches the caller, so a harness cannot see the failure from the exit status |
 | + action-handle traversal | 30 | `h1;` for a declared action handle is `[UNRESOLVED]` (`unresolved action 'h1'`), and `do sub.s;` is truncated to its first segment |
 | + `symbol` | 43 | expands to nothing (see §1) |
 | + `export` action declaration | 102 | no effect: `pkg::A1` resolves with no export statement at all |
+| + `exec body` is never executed | 101 | ✎ ✔ 0.75 **no document said this plainly.** `exec pre_solve`, `post_solve`, `pre_body`, `init_up` and `init_down` run, but an `exec body { … }` block does **not**: with `exec body { x = 99; }` the field keeps its random value (69) and a `message(NONE, …)` inside it is never printed. The body is only *translated* into the C and UVM realizations. `FEATURES.md` row 101 claimed "the engine runs `exec` bodies to completion" — corrected there. This is what makes the corpus's compliance tier uncheckable (`CORPUS.md`) |
+| + a component-scope attribute initializer is dropped | 8 | ✎ ✔ 0.75 **undocumented before this revision.** `int t = 1;` declared at **component** scope reads 0 inside an action's `exec` (`r = t + 1` gives 1, and `message(NONE, "t=%d", t)` prints the argument unresolved), while the same field set in `exec init_up` reads 1, and an **action**-scope `int t = 1;` reads 1. So it is the declaration initializer at component scope that is lost, not the name |
 | + executor claim struct | 119 | an executor claim is routed into address allocation and reported unsatisfiable |
-| + value widths and enum values | 8, 9, 11 | declared widths are not enforced (`bit[8]` yields 256, `bit[64]` yields −1, `bool` yields 69) and an enum's declared values are ignored — `{ W0 = 200, W1 = 201 }` gives 1, and `{ A = 5, B, C }` gives 2 for `C` |
+| + value widths and enum values | 8, 9, 11 | ✎ ✔ 0.75 **mostly closed since this was written.** Declared widths are now enforced on solved values (`bit[8]` stays ≤ 255, `bool` reads 0 or 1, `constraint bo == 2` is counted unsatisfied rather than accepted) and an enum's declared values are honoured (`{ W0 = 200, W1 = 201 }` gives 201). What remains is **rendering**: a `bit[64]` holding 2^64−1 prints as `−1`, because values are `i64` and the JSON and trace backends format them signed |
 
 ---
 
@@ -221,9 +231,9 @@ they are natural things to reach for and are harmless when unused:
 
 ## 4. How this is checked
 
-* `tests/integration.rs` — ✎ **134 tests**, not 57 as this section previously
-  said (the file grew; the count is `grep -c '#\[test\]' tests/integration.rs`
-  on the v0.46.0 tree). They include the LRM's Examples 133 and 134 with their
+* `tests/integration.rs` — ✎ **159 tests** on the v0.75.0 tree (the count is
+  `grep -c '#\[test\]' tests/integration.rs`; it was 134 on v0.46.0 and 57 when
+  this section was first written). They include the LRM's Examples 133 and 134 with their
   stated values, the join orderings of Examples 68/71/72 (including
   `join_branch_waits_only_for_the_named_branch` and
   `join_select_waits_for_n_branches`), the `dist` distribution, exec ordering,
@@ -231,7 +241,8 @@ they are natural things to reach for and are harmless when unused:
 * `tests/feature_proof/run_all.sh <binary>` — six self-contained assertion
   scripts, one per slice of the construct table, that re-derive each verdict from
   observed behaviour (solved values, trace structure, reported bins, monitor
-  matches). On v0.46.0 they report **104 pass / 58 fail** over 162 checks. They
+  matches). On the **v0.75.0** build they report **128 pass / 34 fail** over 162
+  checks (on v0.46.0: 104 / 58). They
   are the reproducible evidence for §2.1; `tests/feature_proof/reports/` holds
   the per-slice write-ups, including where a script disagreed with the audit
   (the audit's "all four join forms are indistinguishable" is the clearest case —

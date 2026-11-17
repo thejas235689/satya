@@ -15,6 +15,11 @@ updated here and marked *closed in 0.2.0*.
 audit of **v0.46.0**. Sections 1–6 are unchanged from the 0.2.0 pass and are a
 **grammar and parse** verification; they do not establish behavioural
 conformance, which §7 measures and which is materially lower.
+**Revision:** 4 — §7's figures re-measured on the **v0.75.0 source build**:
+the harness now reports **128 pass / 34 fail of 162 checks** (was 104 / 58), and
+§5.1, §7 and §8 carry what changed. The parse-level results in §§1–6 are
+unchanged and were **not** re-run; the workshop archive they use is not in this
+repository.
 
 ---
 
@@ -250,6 +255,12 @@ is recorded in the IR but ignored, `import` does not affect name resolution, and
 `compile if` loses declarations in nested scope (§7,
 [`FEATURE-AUDIT.md`](FEATURE-AUDIT.md)).
 
+Three of those examples have since been fixed and no longer reproduce on the
+v0.75.0 build: `import class` parses in all four spellings (row 87), the four
+`join` forms are distinguishable in emission order (row 34), and `fatal()` stops
+its `exec` block (row 110 — the run still exits 0). `FEATURES.md` records the
+per-row corrections.
+
 ### 5.2 Accepted but not executed
 
 These parse (so a real file still compiles) but Satya does not act on them.
@@ -340,29 +351,36 @@ observed value on failure. Slice 6 also carries Part B, sixteen CLI and backend
 checks (exit statuses, line-numbered diagnostics, and every one of the six
 backends).
 
-Result on the checksum-verified v0.46.0 binary:
+Result on the **v0.75.0 source build** (`cargo build --release`, then
+`./tests/feature_proof/run_all.sh ./target/release/satya`):
 
 | slice | constructs | pass | fail |
 |---|---|---|---|
-| 1 | 1–25 literals, data types, components | 12 | 13 |
-| 2 | 26–50 templates, activity, flow objects | 16 | 9 |
-| 3 | 51–75 constraints, coverage, monitors | 18 | 7 |
-| 4 | 76–100 monitors, extension, functions, procedural | 8 | 17 |
-| 5 | 101–125 compile-time, executors, address space | 18 | 7 |
-| 6 | 126–146 handles, registers, memory primitives | 16 | 5 |
-| CLI / backends | 16 items | 16 | 0 |
-| **total** | | **104** | **58** |
+| 1 | 1–25 literals, data types, components | 19 | 6 |
+| 2 | 26–50 templates, activity, flow objects | 19 | 6 |
+| 3 | 51–75 constraints, coverage, monitors | 21 | 4 |
+| 4 | 76–100 monitors, extension, functions, procedural | 15 | 10 |
+| 5 | 101–125 compile-time, executors, address space | 20 | 5 |
+| 6 | 126–146 handles, registers, memory primitives, and the CLI/backend checks | 34 | 3 |
+| **total** | | **128** | **34** |
 
-That is 162 assertions, 104 pass and 58 fail. Judged four ways over the 146
-constructs, the audit found **74 PASS, 24 PARTIAL-OK, 35 PARTIAL-WORSE, 13
-FAIL** — 35 rows behave worse than this document describes, and 13 do not work
-at all. The per-row verdicts and observed values are in
-[`FEATURE-AUDIT.md`](FEATURE-AUDIT.md).
+That is 162 assertions, **128 pass and 34 fail**; on the v0.46.0 binary the same
+scripts reported 104 pass / 58 fail. The 34 that still fail name constructs 6, 9,
+14, 15, 16, 25, 30, 34, 37, 43, 47, 48, 54, 58, 62, 74, 76, 77, 79, 80, 83, 84,
+86, 87, 88, 100, 102, 103, 104, 119, 121, 126, 127 and 128 — each `FAIL` line
+carries the value it observed.
 
-The scripts use a two-way vocabulary, so a `PARTIAL-OK` row counts as PASS in
-some slices and FAIL in others depending on whether the assertion pins the
-documented limitation or the standard. That inconsistency is real; the
-four-way table in the audit is the more informative view, and the scripts are
+The audit's own four-way tally over the 146 constructs was **74 PASS, 24
+PARTIAL-OK, 35 PARTIAL-WORSE, 13 FAIL** on v0.46.0. That tally is historical:
+`FEATURES.md` records 21 rows re-tested on v0.75.0 and corrected, 18 of which
+change bucket, giving 88 / 23 / 25 / 10 *if* the rest of the audit's verdicts are
+carried forward — arithmetic, not a fresh measurement. The per-row verdicts and
+observed values are in [`FEATURE-AUDIT.md`](FEATURE-AUDIT.md).
+
+The scripts use a two-way vocabulary, so a row whose documented limitation
+reproduces counts as PASS in some slices and FAIL in others depending on whether
+the assertion pins the limitation or the standard. That inconsistency is real;
+the four-way table in the audit is the more informative view, and the scripts are
 the reproducible evidence rather than a single score.
 
 This is the correction to the earlier framing. The verification described in
@@ -400,6 +418,25 @@ corrected this document's own record in six places (rows 62, 121, 14, 34, 80,
   resolve, and colliding leaf types stay distinct, but `import` statements are
   not used to disambiguate an unqualified leaf reference — such a name is
   flagged and the first declaration wins.
+* **`exec body` is never executed** (found in this revision, documented nowhere
+  before it). `pre_solve`, `post_solve`, `pre_body`, `init_up` and `init_down`
+  run; an `exec body { … }` block is only translated into the C and UVM
+  realizations. A model whose meaning lives in `exec body` is therefore modelled
+  but never run — which is also why the corpus's compliance tier cannot be
+  checked (`CORPUS.md`).
+* **A component-scope attribute initializer is dropped** (found in this
+  revision). `int t = 1;` at component scope reads 0 inside an action's `exec`,
+  while the same field set in `exec init_up`, or an action-scope `int t = 1;`,
+  reads 1.
+* **The C realization truncates wide field values** (found in this revision). The
+  C backend declares every action field `int32_t` (chandles `uint64_t`), so a
+  `float64` field's 64-bit image is assigned into an `int32_t`: the generated
+  file warns `implicit conversion … changes value from 4618441417868443648 to 0`
+  and the compiled harness prints `g = 0`. The JSON and trace backends carry the
+  value correctly; the native C realization does not.
+* **`fatal()` does not fail the run.** It stops the rest of its `exec` block and
+  records a `FATAL:` message, but the process exits 0, so a harness cannot detect
+  the failure from the exit status.
 
 ---
 
@@ -407,7 +444,7 @@ corrected this document's own record in six places (rows 62, 121, 14, 34, 80,
 
 ```bash
 cargo build --release
-cargo test                                  # 134 tests in tests/integration.rs
+cargo test                                  # 159 tests in tests/integration.rs
 
 # The behavioural feature proof — six slices, 162 assertions
 tests/feature_proof/run_all.sh ./target/release/satya

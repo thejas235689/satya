@@ -32,7 +32,12 @@ The tool exits non-zero if any bucket misses its expectation, so it can gate CI.
 ```
 
 **97/97** of the buckets that must parse, and 7 of 7 pathological files
-correctly rejected.
+correctly rejected. These are **acceptance** counts: `tools/pss_corpus_check.py`
+runs `satya parse` on each file and compares the exit status against
+`manifest.toml`. Nothing below in this document measures what an accepted model
+*does* — reproduced on the v0.75.0 source build, and the same run reports
+`compliance 114 file(s) 114 parsed` (see *The executable (compliance) tier*
+below, which is **not** a pass).
 
 ### What a green corpus does and does not prove
 
@@ -46,7 +51,14 @@ has no effect on name resolution (row 82), `bind p *` is parsed and ignored
 and all of which pass models of this kind. The corpus proves that the front end
 accepts the shared language; it does not prove that the constructs mean what
 the standard says. Conformance is measured separately, construct by construct,
-by `tests/feature_proof/run_all.sh`.
+by `tests/feature_proof/run_all.sh`, which on the v0.75.0 build reports **128
+pass / 34 fail over 162 checks**.
+
+The compliance tier is the sharpest case of the same distinction, and it is
+worth stating in one line: its 114 files parse, and **not one of its 113 tests
+can be checked**, because the tier is judged on a run and the trace it needs is
+emitted from `exec body` blocks Satya never executes. A parse figure that reads
+as conformance is exactly the failure mode this document exists to avoid.
 
 ## What the corpus found
 
@@ -110,29 +122,58 @@ path was prepended. Every message in this exercise read
 `expected ']', found '::'` with no indication of where. Now they say
 `(line 86, col 44)`.
 
-## The executable (compliance) tier
+## The executable (compliance) tier — parse-level only, and uncheckable
 
 `compliance/` is the corpus's second tier: instrumented PSS plus legality
-models, written against **PSS 3.1**, with a checker that judges a tool's run.
-It has no manifest entry, but it is all valid PSS and should parse.
+models, written against **PSS 3.1**, with a checker that judges a tool's **run**.
+It has no manifest entry.
 
 ```
   compliance     114 file(s)  114 parsed   0 failed
 ```
 
-**114/114.** That is the largest single block of externally-authored PSS Satya
-has been run against, and it exercises 3.1 surface beyond the 3.0 standard this
-implementation targets.
+**That 114/114 is a parse count and must not be read as conformance.** The tier
+is executable by design, and Satya cannot be executed against it:
+
+* Each test is instrumented PSS whose scenario reports itself as
+  `message(NONE, "@@PSS-TRACE …")` lines — written **inside `exec body`** — plus
+  a `test.json` legality oracle. The checker pulls those trace records out of the
+  tool's log and decides whether they describe a legal execution.
+* **Satya never executes `exec body`.** It runs `pre_solve`, `post_solve`,
+  `pre_body`, `init_up` and `init_down`, but an `exec body { … }` block is only
+  translated into the C and UVM realizations, never run. So it emits **no
+  `@@PSS-TRACE` lines at all**: solving all 113 oracle-bearing tests on the
+  v0.75.0 build produced zero such lines.
+* **108 of the 113 `test.json` oracles cannot be checked at all.** Their
+  `expect` block carries only `outcome: ok`, which the checker can only
+  establish from the trace records — the records that are never printed.
+* The remaining **5** expect `compile_error` with a file/line diagnostic
+  (`neg/call_undeclared`, `neg/ref_before_decl`, `neg/ref_undeclared`,
+  `neg/type_undeclared`, `L0-protocol/diag_location`). Satya accepts **all five**
+  — `satya check` reports `OK: … parsed and lowered successfully`, exit 0 — so
+  none of the five is passed either. An undeclared type or call inside `exec` is
+  not diagnosed at all.
+
+So the honest figure for this tier is **0 of 113 tests checked, 0 passed** — not
+114/114. It is the largest single block of externally-authored PSS Satya has been
+run against, and it exercises 3.1 surface beyond the 3.0 standard this
+implementation targets, but only its **parsing** has been exercised. Behavioural
+conformance is measured construct by construct instead, and it is materially
+lower: `tests/feature_proof/run_all.sh` reports **128 pass / 34 fail over 162
+checks** on the v0.75.0 build.
 
 ## The rest of the organization
 
 The same check was run against every other `psstools` repository that contains
 `.pss` files:
 
+Every `Parse` column below is an **acceptance** count (`satya parse` exit
+status), not a conformance count.
+
 | Repository | Files | Parse | What it is |
 |---|---|---|---|
 | `pss-corpus` (`curated/`) | 97 | **97** | the manifest-governed buckets |
-| `pss-corpus` (`compliance/`) | 114 | **114** | the executable tier |
+| `pss-corpus` (`compliance/`) | 114 | **114** | the executable tier — parses, but see above: 0 of its 113 tests can be checked |
 | `peakrdl-pss` (`tests/golden/expect/`) | 26 | **26** | PSS generated by a register-description tool |
 | `peakrdl-pss` (templates) | 7 | 3 | Jinja2 templates, *not* PSS |
 | `pssc` | 46 | **46** | a full DMA operation model, plus a bug repro |
@@ -170,7 +211,7 @@ Three more defects, none of which the corpus alone exposed:
   `}` with it. Found by `sphinx-pss`'s activity fixtures. Now parsed and
   recorded.
 
-## Every expectation is now met
+## Every parse expectation is now met
 
 ```
   buckets that must parse: 97 passed, 0 failed
@@ -178,10 +219,14 @@ Three more defects, none of which the corpus alone exposed:
   compliance             114 file(s)  114 parsed   0 failed
 ```
 
-**97/97, 7/7, 114/114.** These are acceptance counts: every file is judged on
-whether it parses (or, for `pathological/`, is correctly rejected), not on what
-the accepted constructs then do — see *What a green corpus does and does not
-prove* above. The last pathological file,
+**97/97, 7/7, 114/114 parse — and nothing more is claimed.** Every file here is
+judged on whether it parses (or, for `pathological/`, is correctly rejected), not
+on what the accepted constructs then do. The compliance tier's own expectation is
+a run, and it is not met: 108 of its 113 tests have no checkable expectation and
+the 5 that do are all accepted rather than rejected — see *The executable
+(compliance) tier* above. For behaviour, the figure is
+`tests/feature_proof/run_all.sh`: **128 pass / 34 fail over 162 checks** on the
+v0.75.0 build. The last pathological file,
 `unclosed_mustache.pss`, contains an unclosed `{{` template expression in
 target code; a triple-quoted block is now checked for an opening `{{` with no
 matching `}}`. Only the *open* side is checked — ordinary code may legitimately

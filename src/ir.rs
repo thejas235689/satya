@@ -70,6 +70,108 @@ impl Field {
     pub fn is_numeric(&self) -> bool {
         matches!(self.category, TypeCategory::Scalar | TypeCategory::Enum(_))
     }
+
+    /// The width and signedness of this field's *declared* type — the one
+    /// thing a renderer needs and cannot get from the value itself. A solved
+    /// value is carried in an `i64`, so `0xFFFF_FFFF_FFFF_FFFF` and `-1` are
+    /// the same 64 bits: only the declaration says which of the two to print.
+    pub fn signature(&self, model: &Model) -> FieldSig {
+        FieldSig::of(model, &self.type_name, self.bits)
+    }
+}
+
+/// Width and signedness of a declared type, carried from the declaration site
+/// to the backends so a value is printed as the type it was declared with
+/// (PSS 6.1 / 12.2) rather than as whatever the `i64` carrier looks like.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FieldSig {
+    /// The declared width in bits, when the type declares one.
+    pub bits: Option<i64>,
+    /// True when the declared type is unsigned: `bit[N]`, `bool`, `byte`,
+    /// `uint` and their aliases. `int`, `shortint`, `longint` and enums are
+    /// signed.
+    pub unsigned: bool,
+}
+
+impl FieldSig {
+    /// A signature with no known width, rendered signed — what a value whose
+    /// declaration could not be resolved falls back to.
+    pub const SIGNED: FieldSig = FieldSig {
+        bits: None,
+        unsigned: false,
+    };
+
+    /// Is this type unsigned at its declared width?
+    pub fn is_unsigned(&self) -> bool {
+        self.unsigned
+    }
+
+    /// Print a solved value the way its declared type reads it: an unsigned
+    /// field is the `u64` bit pattern, a signed one is the `i64` it already is.
+    pub fn render(&self, v: i64) -> String {
+        if self.unsigned {
+            (v as u64).to_string()
+        } else {
+            v.to_string()
+        }
+    }
+
+    /// Resolve a declared type name to its width and signedness, following a
+    /// `typedef` alias to the type it names.
+    pub fn of(model: &Model, type_name: &str, bits: Option<i64>) -> FieldSig {
+        Self::of_at(model, type_name, bits, 0)
+    }
+
+    fn of_at(model: &Model, type_name: &str, bits: Option<i64>, depth: usize) -> FieldSig {
+        // A type that (illegally) aliases itself must not recurse forever.
+        if depth > 8 {
+            return FieldSig { bits, unsigned: false };
+        }
+        let leaf = type_name.rsplit("::").next().unwrap_or(type_name);
+        // An explicit width on the declaration itself (`bit[64]`) keeps the
+        // leaf `bit`, so the keyword decides the signedness.
+        if let Some(u) = builtin_unsigned(leaf) {
+            let bits = bits.or(match leaf {
+                "bit" | "bool" => Some(1),
+                _ => None,
+            });
+            return FieldSig { bits, unsigned: u };
+        }
+        // A `typedef` alias: the width may sit on the alias (`typedef bit[64]
+        // u64_t;`), so take it from there when the field has none of its own.
+        if let Some(tr) = model
+            .typedefs
+            .get(type_name)
+            .or_else(|| model.typedefs.get(leaf))
+        {
+            let w = bits.or_else(|| {
+                tr.width
+                    .as_ref()
+                    .and_then(|w| w.eval_const(&|n| model.constants.get(n).copied()))
+            });
+            return Self::of_at(model, &mangle_type(tr), w, depth + 1);
+        }
+        // A named type: its keyword carries the signedness (`bit` for an enum's
+        // base is still an integer, but an enum's own values are signed).
+        if let Some(dt) = model.types.get(&model.resolve(type_name)) {
+            if let Some(u) = builtin_unsigned(&dt.keyword) {
+                return FieldSig { bits, unsigned: u };
+            }
+        }
+        FieldSig { bits, unsigned: false }
+    }
+}
+
+/// The signedness of a built-in type keyword (PSS 6.1): `bit`, `bool`, `byte`
+/// and `uint` are unsigned; `shortint`, `int`, `longint` and `integer` are not.
+fn builtin_unsigned(leaf: &str) -> Option<bool> {
+    match leaf {
+        "bit" | "bool" | "byte" | "uint" | "uint8" | "uint16" | "uint32" | "uint64"
+        | "unsigned" => Some(true),
+        "int" | "integer" | "shortint" | "longint" | "int8" | "int16" | "int32" | "int64"
+        | "signed" => Some(false),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +183,14 @@ pub struct Constraint {
     /// `constraint soft ...` (PSS 16.1.4): honoured when it can be, dropped
     /// when it conflicts with a hard constraint.
     pub is_soft: bool,
+    /// `constraint forall (it : T) { ... }` (PSS 16.1.8). The body is kept in
+    /// `expr`; without the binding the solver cannot tell which attributes it
+    /// means, so the flag and the binding travel with it.
+    pub is_forall: bool,
+    /// The `(variable, type)` a `forall` binds, as declared. The type is
+    /// mangled the way a field's is (`pair_s<bit[8],4>`), so it compares
+    /// directly against `Field::type_name`.
+    pub forall_binding: Option<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -208,6 +318,11 @@ pub struct Model {
     /// Declared enum variant values, `Enum::VARIANT` -> value (PSS 12.4).
     /// Variants without an explicit value take the previous one + 1.
     pub enum_values: std::collections::HashMap<String, i64>,
+    /// `export target c::A1;` declarations, as `<pkg>::<leaf>` (PSS 22.4).
+    /// An action of a component is nameable from outside its package as
+    /// `pkg::A1` only when the package exports it, so this is what decides
+    /// whether a cross-package `do pkg::A1` resolves.
+    pub exports: Vec<String>,
 }
 
 impl Model {
@@ -234,6 +349,84 @@ impl Model {
     /// True when `leaf` is defined in more than one scope.
     pub fn is_ambiguous(&self, leaf: &str) -> bool {
         self.duplicates.iter().any(|d| d == leaf)
+    }
+
+    /// The declared width and signedness of every numeric leaf of `action`,
+    /// keyed exactly as the solver names it (`sv.f`, `arr[0]`), so a backend can
+    /// print a solved value as its declared type instead of guessing from the
+    /// bits it happens to hold. Keys that are absent are not numeric leaves.
+    pub fn field_signatures(&self, action: &str) -> HashMap<String, FieldSig> {
+        let mut out = HashMap::new();
+        if let Some(a) = self.actions.get(&self.resolve(action)) {
+            let mut visited = Vec::new();
+            self.collect_signatures(&a.fields, "", 0, &mut visited, &mut out);
+        }
+        out
+    }
+
+    fn collect_signatures(
+        &self,
+        fields: &[Field],
+        prefix: &str,
+        depth: usize,
+        visited: &mut Vec<String>,
+        out: &mut HashMap<String, FieldSig>,
+    ) {
+        // Mirrors the solver's own expansion (see `expand_field`), so a key
+        // here is the key the solved value carries.
+        if depth > 6 {
+            return;
+        }
+        for f in fields {
+            let path = if prefix.is_empty() {
+                f.name.clone()
+            } else {
+                format!("{}.{}", prefix, f.name)
+            };
+            // A fixed-size array is one variable per element (PSS 8.4).
+            if let Some(n) = f.array {
+                let elem_ty = f.elem_type.clone().unwrap_or_else(|| f.type_name.clone());
+                let sig = FieldSig::of(self, &elem_ty, f.elem_bits.or(f.bits));
+                let elem = self.types.get(&self.resolve(&elem_ty));
+                for i in 0..n.clamp(0, 4096) {
+                    let epath = format!("{}[{}]", path, i);
+                    match elem {
+                        Some(t) => {
+                            if !visited.contains(&elem_ty) {
+                                visited.push(elem_ty.clone());
+                                self.collect_signatures(&t.fields, &epath, depth + 1, visited, out);
+                                visited.pop();
+                            }
+                        }
+                        None => {
+                            out.insert(epath, sig);
+                        }
+                    }
+                }
+                continue;
+            }
+            match &f.category {
+                // A leaf that carries a value of its own — including one whose
+                // type the model never declared (`uint64`, a methodology alias),
+                // which is still printed by the signedness its name gives.
+                TypeCategory::Component(_) | TypeCategory::Handle => {}
+                TypeCategory::Struct(tname) => {
+                    if visited.contains(tname) {
+                        continue;
+                    }
+                    if let Some(t) = self.types.get(tname) {
+                        visited.push(tname.clone());
+                        self.collect_signatures(&t.fields, &path, depth + 1, visited, out);
+                        visited.pop();
+                    }
+                }
+                // Scalar, enum, and an unresolved name: one value, whose
+                // declared type says how to print it.
+                _ => {
+                    out.insert(path, f.signature(self));
+                }
+            }
+        }
     }
 
     pub fn lower(file: &SourceFile) -> PssResult<Model> {
@@ -285,8 +478,21 @@ impl Model {
             // Qualified by the scope that declares it, so `import fpa::*` can
             // select fpa's `value` rather than whichever was declared last.
             let key = qualify(f.scope.as_deref(), &f.name);
-            lw.model.functions.entry(key).or_insert_with(|| f.clone());
+            // A prototype (`function int f(int a);` — no body) only declares the
+            // signature; a definition supplies the body and must win.
+            // `or_insert` kept whichever came first, so the prototype written
+            // above its definition silently shadowed it and every call returned
+            // 0 (constructs 84 and 86).
+            let take = match lw.model.functions.get(&key) {
+                None => true,
+                Some(prev) => prev.body.is_empty() && !f.body.is_empty(),
+            };
+            if take {
+                lw.model.functions.insert(key, f.clone());
+            }
         }
+        // `export` gates cross-package visibility of an action (PSS 22.4).
+        check_exported_actions(file, &lw.model)?;
         Ok(lw.model)
     }
 
@@ -468,6 +674,19 @@ fn type_arg_bits(a: &str) -> Option<i64> {
     }
 }
 
+/// The template argument bound to `e` when `e` is a bare parameter name, so a
+/// width (`bit[W]`) or an extent (`arr[N]`) can be taken from it.
+fn param_arg<'a>(e: &crate::ast::Expr, params: &[String], args: &'a [String]) -> Option<&'a String> {
+    match e {
+        crate::ast::Expr::Path(p) => {
+            let name = p.segments.join(".");
+            let pos = params.iter().position(|x| *x == name)?;
+            args.get(pos)
+        }
+        _ => None,
+    }
+}
+
 /// Evaluate a `bit[N]` width with the template's value parameters substituted.
 fn substituted_width(
     w: &crate::ast::Expr,
@@ -540,6 +759,22 @@ impl Lowerer {
         for item in items {
             match item {
                 Item::Import(p) => {
+                    // An `export` declaration reaches the IR as an import-shaped
+                    // marker, `__export__::<pkg>::<target>...` (see
+                    // `Parser::parse_export`). It is not an import.
+                    if p.segments.first().map(|s| s == "__export__").unwrap_or(false) {
+                        if p.segments.len() >= 3 {
+                            let key = format!(
+                                "{}::{}",
+                                p.segments[1],
+                                p.segments.last().unwrap()
+                            );
+                            if !self.model.exports.contains(&key) {
+                                self.model.exports.push(key);
+                            }
+                        }
+                        continue;
+                    }
                     let path = p.segments.join("::");
                     if !self.model.imports.contains(&path) {
                         self.model.imports.push(path);
@@ -864,6 +1099,19 @@ impl Lowerer {
     }
 
     fn category_of(&self, type_name: &str) -> TypeCategory {
+        // A template instantiation (`pair_s<bit[8],4>`) is a type of its own,
+        // built by `instantiate_types` under its mangled name. Resolving it as
+        // written fails — no raw type is called that — so it used to land in
+        // `Unknown`, and every member of the instance stayed out of the solve:
+        // `constraint small.f == 200;` bound nothing and the counter still read
+        // `2/2 satisfied` (audit row 25). The base is what decides the category;
+        // the mangled name is the key the instantiated type is stored under.
+        if let Some((base, _)) = type_name.split_once('<') {
+            let base_key = self.resolve_type_key(base);
+            if self.raw_types.contains_key(&base_key) {
+                return TypeCategory::Struct(type_name.to_string());
+            }
+        }
         let key = self.resolve_type_key(type_name);
         let leaf = key.rsplit("::").next().unwrap_or(&key).to_string();
         let leaf = leaf.as_str();
@@ -955,6 +1203,11 @@ impl Lowerer {
                     is_default: c.is_default,
                     is_disable: c.is_disable,
                     is_soft: c.is_soft,
+                    is_forall: c.is_forall,
+                    forall_binding: c
+                        .forall_binding
+                        .as_ref()
+                        .map(|(v, ty)| (v.clone(), mangle_type(ty))),
                 });
             }
             out.extend(inner);
@@ -984,6 +1237,8 @@ impl Lowerer {
                         is_default: true,
                         is_disable: f == "default_disable",
                         is_soft: false,
+                        is_forall: false,
+                        forall_binding: None,
                     });
                 }
                 None
@@ -1082,6 +1337,27 @@ impl Lowerer {
                         f.bits = Some(bits);
                     }
                 }
+                // A *type* parameter used as the width: `rand bit[W] f;` with
+                // `W = bit[8]`. `substituted_width` only parses a numeric
+                // argument, so the width stayed unsubstituted and the member
+                // fell back to a one-bit `bit` — `small.f` could then never
+                // hold 200 (audit row 25).
+                if f.bits.is_none() {
+                    if let Some(w) = &m.ty.width {
+                        if let Some(a) = param_arg(w, &params, &args) {
+                            f.bits = type_arg_bits(a);
+                        }
+                    }
+                }
+                // A value parameter used as an array extent: `int arr[N];`.
+                if f.array.is_none() {
+                    let extent = m.array.as_ref().or_else(|| m.ty.const_args.first());
+                    if let Some(e) = extent {
+                        if let Some(a) = param_arg(e, &params, &args) {
+                            f.array = a.trim().parse::<i64>().ok();
+                        }
+                    }
+                }
                 if let Some(inline) = &f.inline_constraint {
                     constraints.push(Constraint {
                         name: None,
@@ -1089,6 +1365,8 @@ impl Lowerer {
                         is_default: false,
                         is_disable: false,
                 is_soft: false,
+                is_forall: false,
+                forall_binding: None,
                     });
                 }
                 fields.push(f);
@@ -1125,6 +1403,8 @@ impl Lowerer {
                                 is_default: false,
                                 is_disable: false,
                 is_soft: false,
+                is_forall: false,
+                forall_binding: None,
                             });
                         }
                         fields.push(f);
@@ -1141,6 +1421,8 @@ impl Lowerer {
                         is_default: false,
                         is_disable: false,
                 is_soft: false,
+                is_forall: false,
+                forall_binding: None,
                     });
                 }
                 if let Some(existing) = fields.iter_mut().find(|x| x.name == f.name) {
@@ -1253,6 +1535,13 @@ impl Lowerer {
                         }
                     }
                     existing.constraints.extend(extra.constraints);
+                    // An `extend action` may add `exec` blocks, and they must
+                    // run on the merged action (PSS 20.2): the extension's
+                    // blocks are appended after the base's, so a `post_solve`
+                    // in the extension sees what the base's left behind. This
+                    // merge used to carry fields, constraints and activity but
+                    // not execs, so the extension's blocks were silently lost.
+                    existing.execs.extend(extra.execs);
                     if extra.activity.is_some() {
                         existing.activity = extra.activity;
                     }
@@ -1322,6 +1611,8 @@ impl Lowerer {
                     is_default: false,
                     is_disable: false,
                 is_soft: false,
+                is_forall: false,
+                forall_binding: None,
                 });
             }
             fields.push(f);
@@ -1436,4 +1727,108 @@ fn qualify(pkg: Option<&str>, leaf: &str) -> String {
         Some(p) if !p.is_empty() => format!("{}::{}", p, leaf),
         _ => leaf.to_string(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// `export` gating (PSS 22.4)
+// ---------------------------------------------------------------------------
+
+/// A cross-package action reference `pkg::A` names an action of another
+/// component that `pkg` exports. Without an `export` declaration the name is
+/// not visible from outside `pkg`, so it must be reported rather than resolved.
+///
+/// Only the two-segment form is gated: `pkg::comp::action` names a component
+/// *type* declared in the package (a traversal, not an export), and a bare
+/// `comp::action` names a component in the same scope. Both keep working.
+fn check_exported_actions(file: &SourceFile, model: &Model) -> PssResult<()> {
+    let mut acts: Vec<&crate::ast::ActionDecl> = Vec::new();
+    fn walk_items<'a>(items: &'a [Item], out: &mut Vec<&'a crate::ast::ActionDecl>) {
+        for it in items {
+            match it {
+                Item::Package(p) => walk_items(&p.items, out),
+                Item::Action(a) => out.push(a),
+                Item::Component(c) => {
+                    for ci in &c.items {
+                        if let CompItem::Action(a) = ci {
+                            out.push(a);
+                        }
+                    }
+                }
+                // `Lowerer::collect` keeps the `then` branch of a `compile if`,
+                // so only that branch is checked.
+                Item::CompileIf { then_items, .. } => walk_items(then_items, out),
+                _ => {}
+            }
+        }
+    }
+    walk_items(&file.items, &mut acts);
+    for a in acts {
+        if let Some(act) = &a.activity {
+            check_activity(act, model)?;
+        }
+    }
+    Ok(())
+}
+
+/// One `do` target: a two-segment `pkg::A` must be exported by `pkg`.
+fn check_action_path(p: &crate::ast::Path, model: &Model) -> PssResult<()> {
+    if p.segments.len() != 2 {
+        return Ok(());
+    }
+    let (pkg, leaf) = (&p.segments[0], &p.segments[1]);
+    if model.packages.contains(pkg)
+        && !model.components.contains_key(pkg)
+        && !model.exports.contains(&format!("{}::{}", pkg, leaf))
+    {
+        return Err(crate::error::PssError::plain(format!(
+            "`{}` is not visible: `{}` is a package and does not export `{}` \
+             (PSS 22.4 — an `export` declaration is required)",
+            p, pkg, leaf
+        )));
+    }
+    Ok(())
+}
+
+fn check_activity(act: &crate::ast::Activity, model: &Model) -> PssResult<()> {
+    use crate::ast::{Activity, ActivityStmt};
+    let Activity::Sequence(stmts) = act;
+    for s in stmts {
+        match s {
+            ActivityStmt::Do(p) | ActivityStmt::DoConstrained { action: p, .. } => {
+                check_action_path(p, model)?;
+            }
+            ActivityStmt::DoWith { action: p, body } => {
+                check_action_path(p, model)?;
+                if let Some(b) = body {
+                    check_activity(b, model)?;
+                }
+            }
+            ActivityStmt::Labeled { stmt, .. } => {
+                let one = Activity::Sequence(vec![(**stmt).clone()]);
+                check_activity(&one, model)?;
+            }
+            ActivityStmt::Parallel { branches, .. }
+            | ActivityStmt::Schedule { branches, .. } => {
+                for b in branches {
+                    check_activity(b, model)?;
+                }
+            }
+            ActivityStmt::Select(branches) => {
+                for (_, b) in branches {
+                    check_activity(b, model)?;
+                }
+            }
+            ActivityStmt::Match { choices, .. } => {
+                for (_, b) in choices {
+                    check_activity(b, model)?;
+                }
+            }
+            ActivityStmt::Repeat { body, .. }
+            | ActivityStmt::Foreach { body, .. }
+            | ActivityStmt::Atomic(body) => check_activity(body, model)?,
+            ActivityStmt::Cover { body: Some(b), .. } => check_activity(b, model)?,
+            _ => {}
+        }
+    }
+    Ok(())
 }

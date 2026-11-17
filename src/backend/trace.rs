@@ -3,7 +3,7 @@
 use super::{Backend, BackendOptions};
 use crate::engine::Scenario;
 use crate::error::PssResult;
-use crate::ir::Model;
+use crate::ir::{FieldSig, Model};
 
 pub struct TraceBackend;
 
@@ -16,7 +16,12 @@ impl Backend for TraceBackend {
         "Human-readable execution trace"
     }
 
-    fn emit(&self, _model: &Model, scenario: &Scenario, _opts: &BackendOptions) -> PssResult<String> {
+    fn emit(&self, model: &Model, scenario: &Scenario, _opts: &BackendOptions) -> PssResult<String> {
+        // The declared width and signedness of each action's fields, so a value
+        // is printed as its type reads it: a `bit[64]` holding
+        // `0xFFFF_FFFF_FFFF_FFFF` is 18446744073709551615, not -1.
+        let mut sigs: std::collections::HashMap<String, std::collections::HashMap<String, FieldSig>> =
+            std::collections::HashMap::new();
         let mut s = String::new();
         s.push_str("Satya scenario trace\n");
         s.push_str("====================\n");
@@ -68,10 +73,16 @@ impl Backend for TraceBackend {
                 label
             ));
             if !step.fields.is_empty() {
+                let sig = sigs
+                    .entry(step.action.clone())
+                    .or_insert_with(|| model.field_signatures(&step.action));
                 let fields: Vec<String> = step
                     .fields
                     .iter()
-                    .map(|(k, v)| format!("{}={}", k, v))
+                    .map(|(k, v)| match sig.get(k) {
+                        Some(f) => format!("{}={}", k, f.render(*v)),
+                        None => format!("{}={}", k, v),
+                    })
                     .collect();
                 s.push_str(&format!("{}     solved: {}\n", indent, fields.join(" ")));
             }
