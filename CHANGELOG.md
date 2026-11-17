@@ -13,6 +13,29 @@ approximated.
 
 ---
 
+## 0.74.0 — 2026-11-17
+
+`--order`: the size of a diagram depends on variable order
+
+```
+satya prove model.pss --action a --order
+ordering: 13 node(s) in declaration order, 13 in reverse order (1.0x)
+```
+
+Builds the same constraint set twice, under declaration order and under reverse
+order, and reports the node count of each. Same function, two graphs.
+
+**Honest limitation, and it is a real one:** with only single-variable
+comparisons translated, the two orders usually give the *same* count — as above,
+1.0x. Order sensitivity shows up on functions that relate variables to each
+other, and those need arithmetic: `x + y == 7` currently abstains with
+NOT PROVED. So the demonstration is in place and correct, but it cannot yet show
+the exponential blow-up it exists to show. Translating var-to-var relations and
+small arithmetic is what would make it bite.
+
+**Verification:** 166 tests (1 new, covering both the node-count report and the
+arithmetic abstention); proof unchanged at 128 pass / 34 fail.
+
 ## 0.73.0 — 2026-11-17
 
 `--equivalent`: canonical form as a pointer comparison

@@ -136,6 +136,8 @@ fn run(args: &[String]) -> PssResult<()> {
                     satya::bdd::prove::prove_equivalent(&model, &act, &rhs),
                     0,
                 )
+            } else if rest.iter().any(|a| a == "--order") {
+                ("ordering", satya::bdd::prove::prove_order(&model, &act), 0)
             } else if rest.iter().any(|a| a == "--vacuity") {
                 ("vacuity", satya::bdd::prove::prove_vacuity(&model, &act), 0)
             } else {
@@ -158,6 +160,10 @@ fn run(args: &[String]) -> PssResult<()> {
                     for c in v { t.push_str(&format!("\n  - {}", c)); }
                     (t, 0)
                 }
+                Proof::Restricting(v) if label == "ordering" => (
+                    format!("ordering: {}", v.join("; ")),
+                    0,
+                ),
                 Proof::Restricting(v) if label == "equivalence" => (
                     format!("equivalence: DIFFERENT — {}", v.join("; ")),
                     1,

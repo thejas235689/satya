@@ -382,6 +382,48 @@ pub fn prove_equivalent(model: &Model, left: &Action, right: &Action) -> Proof {
     }
 }
 
+/// Build the constraint set under a given variable ordering and report the node
+/// count. This is the demonstration that ordering decides the size of the
+/// diagram — the same function, two orders, very different graphs.
+pub fn prove_order(model: &Model, action: &Action) -> Proof {
+    let vars = match eligible(model, action) {
+        Ok(v) => v,
+        Err(why) => return Proof::NotProved(why),
+    };
+    if vars.is_empty() {
+        return Proof::NotProved("no random variables with a small domain".into());
+    }
+    let build = |reverse: bool| -> Option<usize> {
+        let mut b = Bdd::new();
+        let n = vars.len() as u32;
+        for (i, v) in vars.iter().enumerate() {
+            let rank_base = if reverse { (n - 1 - i as u32) * 32 } else { i as u32 * 32 };
+            for k in 0..v.bits {
+                b.set_order(v.base + k, rank_base + k);
+            }
+        }
+        let mut acc = crate::bdd::TRUE_NODE;
+        for c in &action.constraints {
+            let node = translate(&mut b, &c.expr, &vars)?;
+            acc = b.and(acc, node);
+        }
+        Some(b.node_count())
+    };
+    let decl = match build(false) {
+        Some(n) => n,
+        None => return Proof::NotProved("a constraint could not be expressed as a Boolean circuit".into()),
+    };
+    let rev = match build(true) {
+        Some(n) => n,
+        None => return Proof::NotProved("a constraint could not be expressed as a Boolean circuit".into()),
+    };
+    let ratio = if decl == 0 { 0.0 } else { rev as f64 / decl as f64 };
+    Proof::Restricting(vec![format!(
+        "{} node(s) in declaration order, {} in reverse order ({:.1}x)",
+        decl, rev, ratio
+    )])
+}
+
 /// Which constraints restrict nothing? A vacuous constraint is a silent no-op.
 pub fn prove_vacuity(model: &Model, action: &Action) -> Proof {
     let vars = match eligible(model, action) {
@@ -503,6 +545,22 @@ component c {
             matches!(prove_equivalent(&m, &a, &d), Proof::Restricting(_)),
             "x >= 3 and x >= 4 must NOT prove equivalent"
         );
+    }
+
+    #[test]
+    fn ordering_reports_node_counts_and_abstains_on_arithmetic() {
+        let m = model_of("component c { action a { rand int x in [0..7]; constraint x >= 3; } };");
+        let a = m.find_action(Some("c"), "a").unwrap().clone();
+        match prove_order(&m, &a) {
+            Proof::Restricting(v) => assert!(v[0].contains("node(s)"), "{:?}", v),
+            other => panic!("expected Restricting, got {:?}", other),
+        }
+        // Arithmetic is not translated, so this must abstain rather than guess.
+        let m = model_of(
+            "component c { action a { rand int x in [0..7]; rand int y in [0..7]; constraint x + y == 7; } };",
+        );
+        let a = m.find_action(Some("c"), "a").unwrap().clone();
+        assert!(matches!(prove_order(&m, &a), Proof::NotProved(_)));
     }
 
     #[test]
