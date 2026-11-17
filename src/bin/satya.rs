@@ -125,7 +125,18 @@ fn run(args: &[String]) -> PssResult<()> {
                 .or_else(|| model.find_action(None, &action.rsplit("::").next().unwrap_or(&action)))
                 .ok_or_else(|| satya::PssError::plain(format!("no action `{}`", action)))?
                 .clone();
-            let (label, result, code) = if rest.iter().any(|a| a == "--vacuity") {
+            let (label, result, code) = if let Some(other) = flag(rest, "--equivalent") {
+                let rhs = model
+                    .find_action(None, other)
+                    .or_else(|| model.find_action(None, other.rsplit("::").next().unwrap_or(other)))
+                    .ok_or_else(|| satya::PssError::plain(format!("no action `{}`", other)))?
+                    .clone();
+                (
+                    "equivalence",
+                    satya::bdd::prove::prove_equivalent(&model, &act, &rhs),
+                    0,
+                )
+            } else if rest.iter().any(|a| a == "--vacuity") {
                 ("vacuity", satya::bdd::prove::prove_vacuity(&model, &act), 0)
             } else {
                 ("satisfiability", satya::bdd::prove::prove_sat(&model, &act), 0)
@@ -137,11 +148,20 @@ fn run(args: &[String]) -> PssResult<()> {
                     let vals: Vec<String> = w.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
                     (format!("{}: SAT — {}", label, vals.join(" ")), 0)
                 }
+                Proof::Vacuous(v) if label == "equivalence" => (
+                    "equivalence: EQUIVALENT — the two constraint sets are the same function"
+                        .to_string(),
+                    0,
+                ),
                 Proof::Vacuous(v) => {
                     let mut t = format!("{}: {} constraint(s) restrict nothing:", label, v.len());
                     for c in v { t.push_str(&format!("\n  - {}", c)); }
                     (t, 0)
                 }
+                Proof::Restricting(v) if label == "equivalence" => (
+                    format!("equivalence: DIFFERENT — {}", v.join("; ")),
+                    1,
+                ),
                 Proof::Restricting(v) => {
                     let mut t = format!("{}: no constraint is vacuous ({} restrict the space)", label, v.len());
                     for c in v { t.push_str(&format!("\n  - {}", c)); }
@@ -226,6 +246,7 @@ fn positional_files(args: &[String]) -> Vec<String> {
         "--action",
         "--seed",
         "--seeds",
+        "--equivalent",
         "--backend",
         "-o",
         "--out",

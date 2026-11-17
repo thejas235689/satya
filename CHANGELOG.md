@@ -13,6 +13,32 @@ approximated.
 
 ---
 
+## 0.73.0 — 2026-11-17
+
+`--equivalent`: canonical form as a pointer comparison
+
+```
+satya prove model.pss --action a --equivalent b
+```
+
+```
+x >= 3  vs  x > 2   →  EQUIVALENT   exit 0
+x >= 3  vs  x >= 4  →  DIFFERENT    exit 1
+```
+
+This is the case that shows why a BDD rather than a solver: `x >= 3` and `x > 2`
+are different expressions that compile to the **same node**, so the proof is one
+comparison rather than a sample of assignments. A solver can only ever say "I
+found no difference".
+
+Both sides are built in one manager so the nodes are comparable; when they are
+not the same node, `xor` gives the separating function.
+
+**Not implemented yet:** `--order` (node count under two variable orderings) and
+`satya reach`.
+
+**Verification:** 165 tests (1 new); proof unchanged at 128 pass / 34 fail.
+
 ## 0.72.0 — 2026-11-17
 
 `satya prove` — exact answers on small domains

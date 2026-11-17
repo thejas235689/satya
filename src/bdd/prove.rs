@@ -325,6 +325,63 @@ pub fn prove_sat(model: &Model, action: &Action) -> Proof {
     Proof::Sat(out)
 }
 
+/// Are two actions' constraint sets equivalent?
+///
+/// Canonical form makes this a pointer comparison: two constraints that mean the
+/// same thing collapse to the same BDD node, so this is exact rather than
+/// statistical.
+pub fn prove_equivalent(model: &Model, left: &Action, right: &Action) -> Proof {
+    let lv = match eligible(model, left) {
+        Ok(v) => v,
+        Err(why) => return Proof::NotProved(why),
+    };
+    let rv = match eligible(model, right) {
+        Ok(v) => v,
+        Err(why) => return Proof::NotProved(why),
+    };
+    if lv.len() != rv.len() {
+        return Proof::NotProved(format!(
+            "`{}` has {} random variable(s), `{}` has {}",
+            left.name, lv.len(), right.name, rv.len()
+        ));
+    }
+    // Both sides share one manager, so the two functions are comparable.
+    let mut b = Bdd::new();
+    for (i, v) in lv.iter().enumerate() {
+        for k in 0..v.bits {
+            b.set_order(v.base + k, (i as u32) * 32 + k);
+        }
+    }
+    let build = |b: &mut Bdd, vars: &[Var], act: &Action| -> Option<u32> {
+        let mut acc = crate::bdd::TRUE_NODE;
+        for c in &act.constraints {
+            let node = translate(b, &c.expr, vars)?;
+            acc = b.and(acc, node);
+        }
+        Some(acc)
+    };
+    let ln = match build(&mut b, &lv, left) {
+        Some(n) => n,
+        None => return Proof::NotProved("a constraint could not be expressed as a Boolean circuit".into()),
+    };
+    let rn = match build(&mut b, &rv, right) {
+        Some(n) => n,
+        None => return Proof::NotProved("a constraint could not be expressed as a Boolean circuit".into()),
+    };
+    if ln == rn {
+        return Proof::Vacuous(Vec::new());
+    }
+    // Not the same node: show that they differ by finding a separating case.
+    let diff = b.xor(ln, rn);
+    if b.is_false(diff) {
+        Proof::Vacuous(Vec::new())
+    } else {
+        Proof::Restricting(vec![
+            "the two constraint sets admit different assignments".to_string()
+        ])
+    }
+}
+
 /// Which constraints restrict nothing? A vacuous constraint is a silent no-op.
 pub fn prove_vacuity(model: &Model, action: &Action) -> Proof {
     let vars = match eligible(model, action) {
@@ -422,6 +479,30 @@ mod tests {
         let m = model_of("component c { action a { rand int x in [0..7]; constraint x >= 3; } };");
         let a = m.find_action(Some("c"), "a").unwrap().clone();
         assert!(matches!(prove_vacuity(&m, &a), Proof::Restricting(_)));
+    }
+
+    #[test]
+    fn equivalent_rewrites_are_the_same_node() {
+        // The showcase: `x >= 3` and `x > 2` mean the same thing, and canonical
+        // form makes that a pointer comparison rather than a sample.
+        let m = model_of(r#"
+component c {
+  action a { rand int x in [0..7]; constraint x >= 3; }
+  action b { rand int x in [0..7]; constraint x > 2; }
+  action d { rand int x in [0..7]; constraint x >= 4; }
+};
+"#);
+        let a = m.find_action(Some("c"), "a").unwrap().clone();
+        let b = m.find_action(Some("c"), "b").unwrap().clone();
+        let d = m.find_action(Some("c"), "d").unwrap().clone();
+        assert!(
+            matches!(prove_equivalent(&m, &a, &b), Proof::Vacuous(_)),
+            "x >= 3 and x > 2 must prove equivalent"
+        );
+        assert!(
+            matches!(prove_equivalent(&m, &a, &d), Proof::Restricting(_)),
+            "x >= 3 and x >= 4 must NOT prove equivalent"
+        );
     }
 
     #[test]
