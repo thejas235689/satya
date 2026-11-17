@@ -98,9 +98,9 @@ enum Atom {
 }
 
 #[derive(Debug, Clone)]
-struct Domain {
-    lo: i64,
-    hi: i64,
+pub struct Domain {
+    pub lo: i64,
+    pub hi: i64,
     forbidden: HashSet<i64>,
     /// When a constraint names a sparse set of values, the set is kept
     /// directly. Filling the gaps instead means one `forbidden` entry per
@@ -2610,6 +2610,12 @@ fn as_var(e: &Expr) -> Option<String> {
 // ---------------------------------------------------------------------------
 // Variable collection
 // ---------------------------------------------------------------------------
+
+/// The random variables of `action` with their declared domains, for callers
+/// outside the solver (the BDD prover needs the same view the solver uses).
+pub fn variables_for(model: &Model, action: &Action) -> BTreeMap<String, Domain> {
+    collect_variables(model, action)
+}
 
 fn collect_variables(model: &Model, action: &Action) -> BTreeMap<String, Domain> {
     let mut out = BTreeMap::new();

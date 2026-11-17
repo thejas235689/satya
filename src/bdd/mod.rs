@@ -17,8 +17,10 @@ use std::collections::HashMap;
 /// The largest domain a variable may have and still be BDD-eligible.
 pub const MAX_DOMAIN: i64 = 256;
 
-const FALSE: u32 = 0;
-const TRUE: u32 = 1;
+pub const FALSE_NODE: u32 = 0;
+pub const TRUE_NODE: u32 = 1;
+const FALSE: u32 = FALSE_NODE;
+const TRUE: u32 = TRUE_NODE;
 
 #[derive(Clone, Copy)]
 struct Node {
@@ -31,6 +33,8 @@ struct Node {
 ///
 /// Nodes are only ever created through [`Bdd::mk`], which is what makes the
 /// representation canonical: two equal subgraphs are the same index.
+pub mod prove;
+
 pub struct Bdd {
     nodes: Vec<Node>,
     unique: HashMap<(u32, u32, u32), u32>,

@@ -13,6 +13,43 @@ approximated.
 
 ---
 
+## 0.72.0 — 2026-11-17
+
+`satya prove` — exact answers on small domains
+
+The BDD now answers questions about a real PSS model.
+
+```
+satya prove model.pss --action A              # satisfiability
+satya prove model.pss --action A --vacuity    # which constraints restrict nothing
+```
+
+Exit codes carry the answer too: `0` proved, `1` disproved, `2` NOT PROVED.
+
+**Eligibility.** Only `bool`, an enum, `bit[N]` small N, and a declared range of
+at most 256 values are encoded. If any variable is wider, the whole proof
+abstains — `x spans 1024 values, more than the 256 a BDD can carry` — because a
+proof over a subset of the variables would be a lie about the whole set.
+
+**Three bugs the tests caught, all of them silent-wrong-answer class:**
+
+1. `>=` fell through to the `<` arm, so `x >= 0` was translated as `x < 0` —
+   always false. A vacuous constraint was reported as restricting.
+2. `lt_const` used `> width` where `>= width` was needed, so `x < 8` over a
+   domain of width 8 built a comparator for a value that does not fit the
+   encoding and read as unsatisfiable.
+3. A field's declared range is lowered into the constraint list, so
+   `rand int x in [0..7]` was reported as a vacuous constraint. It is the domain
+   declaration, not something the user wrote; it is now excluded.
+
+**Not implemented yet:** `--equivalent` and `--order`, and `satya reach`. The
+translation covers comparisons, set/range membership, and the Boolean
+connectives; arithmetic beyond constants abstains.
+
+**Verification:** 164 tests (5 new, including the brute-force check that the BDD
+agrees with direct evaluation for every value in a domain); proof unchanged at
+128 pass / 34 fail.
+
 ## 0.71.0 — 2026-11-17
 
 A verified ROBDD core

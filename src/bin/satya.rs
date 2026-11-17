@@ -114,6 +114,48 @@ fn run(args: &[String]) -> PssResult<()> {
             write_out(flag(rest, "-o").or_else(|| flag(rest, "--out")), &out)?;
             Ok(())
         }
+        "prove" => {
+            // Exact reasoning on small domains. Anything outside what a BDD can
+            // carry is reported NOT PROVED, never "satisfiable".
+            let files = positional_files(rest);
+            let model = load_models(&files)?;
+            let action = pick_action(&model, flag(rest, "--action"))?;
+            let act = model
+                .find_action(None, &action)
+                .or_else(|| model.find_action(None, &action.rsplit("::").next().unwrap_or(&action)))
+                .ok_or_else(|| satya::PssError::plain(format!("no action `{}`", action)))?
+                .clone();
+            let (label, result, code) = if rest.iter().any(|a| a == "--vacuity") {
+                ("vacuity", satya::bdd::prove::prove_vacuity(&model, &act), 0)
+            } else {
+                ("satisfiability", satya::bdd::prove::prove_sat(&model, &act), 0)
+            };
+            use satya::bdd::prove::Proof;
+            let (text, exit) = match result {
+                Proof::Unsat => (format!("{}: UNSAT — no assignment satisfies these constraints", label), 1),
+                Proof::Sat(w) => {
+                    let vals: Vec<String> = w.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
+                    (format!("{}: SAT — {}", label, vals.join(" ")), 0)
+                }
+                Proof::Vacuous(v) => {
+                    let mut t = format!("{}: {} constraint(s) restrict nothing:", label, v.len());
+                    for c in v { t.push_str(&format!("\n  - {}", c)); }
+                    (t, 0)
+                }
+                Proof::Restricting(v) => {
+                    let mut t = format!("{}: no constraint is vacuous ({} restrict the space)", label, v.len());
+                    for c in v { t.push_str(&format!("\n  - {}", c)); }
+                    (t, 0)
+                }
+                Proof::NotProved(why) => (format!("{}: NOT PROVED — {}", label, why), 2),
+            };
+            write_out(flag(rest, "-o").or_else(|| flag(rest, "--out")), &format!("{}\n", text))?;
+            let _ = code;
+            if exit != 0 {
+                std::process::exit(exit);
+            }
+            Ok(())
+        }
         "gen" => {
             let files = positional_files(rest);
             let model = load_models(&files)?;
