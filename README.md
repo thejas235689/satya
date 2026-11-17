@@ -433,6 +433,8 @@ satya/
     integration.rs   end-to-end tests
 ```
 
+See `docs/ROADMAP.md` for what is planned and what each item buys.
+
 ## License
 
 Apache License 2.0 — see `LICENSE`.
