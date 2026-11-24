@@ -32,7 +32,7 @@ left **exactly two conflicts**, both resolvable in a minute:
 103 compile if in an exec body    PASS
 ```
 
-Proof: **138 → 142 pass, 20 → 20 fail** — wait, 138/24 → 142/20.
+Proof: **138 → 142 pass, 24 → 20 fail.**
 
 Worth recording what the earlier attempt got wrong: `git apply --3way` failed
 with "does not match index" because the index was dirty from other patches.
