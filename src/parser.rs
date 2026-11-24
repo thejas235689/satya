@@ -1444,6 +1444,21 @@ impl Parser {
         })
     }
 
+    /// The constraint set of a `with { ... }` clause, as one constraint block:
+    /// a braced item list or a single statement (`with x > 5;`).
+    fn parse_with_clause(&mut self) -> PssResult<Vec<ConstraintBlock>> {
+        let expr = self.parse_constraint_set()?;
+        Ok(vec![ConstraintBlock {
+            name: None,
+            is_default: false,
+            is_disable: false,
+            is_soft: false,
+            is_forall: false,
+            forall_binding: None,
+            expr,
+        }])
+    }
+
     /// Parse a constraint set: either a `{ item* }` block or a single item.
     fn parse_constraint_set(&mut self) -> PssResult<Expr> {
         // `forall (it : Type) { ... }` wherever a constraint set is expected —
@@ -1925,26 +1940,73 @@ impl Parser {
         }
         if self.at_ident("randomize") {
             self.bump();
-            self.expect_punct("(").ok()?;
             let mut targets = Vec::new();
-            while !self.at_punct(")") && !self.at_eof() {
-                if let Ok(Expr::Path(p)) = self.parse_expr(0) {
-                    targets.push(p);
-                } else {
-                    break;
+            if self.eat_punct("(") {
+                while !self.at_punct(")") && !self.at_eof() {
+                    if let Ok(Expr::Path(p)) = self.parse_expr(0) {
+                        targets.push(p);
+                    } else {
+                        break;
+                    }
+                    if !self.eat_punct(",") {
+                        break;
+                    }
                 }
-                if !self.eat_punct(",") {
-                    break;
+                self.expect_punct(")").ok()?;
+            } else if !self.at_ident("with") && !self.at_punct(";") {
+                // `randomize res with { ... }` — the form without parentheses
+                // (LRM Example 197). It was rejected here, so the whole
+                // statement, clause and all, was dropped.
+                while matches!(self.peek().kind, TokKind::Ident(_)) {
+                    match self.parse_scoped_path() {
+                        Ok(p) => targets.push(p),
+                        Err(_) => break,
+                    }
+                    if !self.eat_punct(",") {
+                        break;
+                    }
                 }
             }
-            self.expect_punct(")").ok()?;
+            // `randomize(x) with { x > 50; }` — the clause is part of the
+            // statement (PSS Syntax 100) and holds for the re-solve. It used to
+            // be dropped here, so the statement re-randomised as if the clause
+            // had not been written.
+            let mut constraints = Vec::new();
+            if self.eat_ident("with") {
+                constraints = self.parse_with_clause().ok()?;
+            }
             self.eat_punct(";");
-            return Some(ExecStmt::Randomize(targets));
+            return Some(ExecStmt::Randomize(RandomizeStmt { targets, constraints }));
         }
         if self.at_ident("yield") {
             self.bump();
             self.eat_punct(";");
             return Some(ExecStmt::Yield);
+        }
+        // `compile if (cond) ... [else ...]` inside an `exec` body (PSS 22.3).
+        // Only the selected branch is part of the model. It used to fall through
+        // to the generic path below, where `compile` became an unparsed
+        // statement and the `if` was re-read as a *runtime* conditional — the
+        // right answer for a constant condition, by accident, and a runtime
+        // evaluation of a condition that must be compile-time.
+        if self.at_ident("compile") && self.peek_at(1).is_ident("if") {
+            let value = self.eat_compile_if_head().ok().flatten().unwrap_or(true);
+            let then_stmts = self.parse_exec_body();
+            let mut else_stmts = Vec::new();
+            if self.eat_ident("else") {
+                if self.at_ident("compile") && self.peek_at(1).is_ident("if") {
+                    // `else compile if (...)` — recurse through this same path.
+                    if let Some(st) = self.try_parse_exec_stmt() {
+                        else_stmts = vec![st];
+                    }
+                } else {
+                    else_stmts = self.parse_exec_body();
+                }
+            }
+            let chosen = if value { then_stmts } else { else_stmts };
+            // The engine has no block node, so a statement group is carried as
+            // an `if (1)` — it runs its body once, exactly as a block does.
+            return Some(ExecStmt::If(Expr::Int(1), chosen, Vec::new()));
         }
         if self.at_ident("if") {
             self.bump();
@@ -2324,40 +2386,7 @@ impl Parser {
         }
         // `override { type A with B; instance p with B; }` (PSS 20.5).
         if self.at_ident("override") && self.peek_at(1).is_punct("{") {
-            self.bump();
-            self.bump();
-            let mut list = Vec::new();
-            while !self.at_punct("}") && !self.at_eof() {
-                if self.eat_punct(";") {
-                    continue;
-                }
-                let is_instance = self.at_ident("instance");
-                if self.at_ident("type") || is_instance {
-                    self.bump();
-                } else {
-                    self.skip_braced_or_semicolon();
-                    continue;
-                }
-                let from = if is_instance {
-                    self.parse_scoped_path()?.segments.join(".")
-                } else {
-                    self.parse_scoped_path()?.leaf().to_string()
-                };
-                if self.eat_ident("with") {
-                    let to = self.parse_scoped_path()?.leaf().to_string();
-                    self.eat_punct(";");
-                    list.push(OverrideDecl {
-                        instance: if is_instance { Some(from.clone()) } else { None },
-                        from: if is_instance { String::new() } else { from },
-                        to,
-                    });
-                } else {
-                    self.skip_to_semicolon();
-                }
-            }
-            self.expect_punct("}")?;
-            self.eat_punct(";");
-            return Ok(CompItem::Override(list));
+            return Ok(CompItem::Override(self.parse_override_list()?));
         }
         // `symbol NAME [(params)] { activity_stmts }` (PSS 12.7, Syntax 43).
         if self.at_ident("symbol") {
@@ -2427,6 +2456,46 @@ impl Parser {
         })
     }
 
+    /// `override { type A with B; instance p with B; }` (PSS 20.5.1) — the
+    /// statement list only, so the component-scope and action-scope forms share
+    /// one parser.
+    fn parse_override_list(&mut self) -> PssResult<Vec<OverrideDecl>> {
+        self.expect_ident_named("override")?;
+        self.expect_punct("{")?;
+        let mut list = Vec::new();
+        while !self.at_punct("}") && !self.at_eof() {
+            if self.eat_punct(";") {
+                continue;
+            }
+            let is_instance = self.at_ident("instance");
+            if self.at_ident("type") || is_instance {
+                self.bump();
+            } else {
+                self.skip_braced_or_semicolon();
+                continue;
+            }
+            let from = if is_instance {
+                self.parse_scoped_path()?.segments.join(".")
+            } else {
+                self.parse_scoped_path()?.leaf().to_string()
+            };
+            if self.eat_ident("with") {
+                let to = self.parse_scoped_path()?.leaf().to_string();
+                self.eat_punct(";");
+                list.push(OverrideDecl {
+                    instance: if is_instance { Some(from.clone()) } else { None },
+                    from: if is_instance { String::new() } else { from },
+                    to,
+                });
+            } else {
+                self.skip_to_semicolon();
+            }
+        }
+        self.expect_punct("}")?;
+        self.eat_punct(";");
+        Ok(list)
+    }
+
     // ---- actions -------------------------------------------------------
 
     fn parse_action(&mut self, is_extend: bool) -> PssResult<ActionDecl> {
@@ -2456,6 +2525,8 @@ impl Parser {
             constraints,
             execs,
             activity,
+            symbols,
+            overrides,
         } = body;
         Ok(ActionDecl {
             name,
@@ -2466,6 +2537,8 @@ impl Parser {
             constraints,
             execs,
             activity,
+            symbols,
+            overrides,
             is_extend,
         })
     }
@@ -2528,6 +2601,29 @@ impl Parser {
             }
             if self.at_ident("function") || self.at_ident("task") {
                 self.parse_function()?;
+                continue;
+            }
+            // `symbol NAME [(params)] { activity_stmts }` — an
+            // `action_body_item` (PSS 3.1 Annex B.2, Syntax 53), so a symbol may
+            // be declared directly in an action body. Without this branch the
+            // item parsed as a data member named after the symbol, with no
+            // activity, so `two;` in the activity resolved to nothing.
+            if self.at_ident("symbol") {
+                self.bump();
+                let name = self.expect_ident()?;
+                if self.at_punct("(") {
+                    self.skip_parens();
+                }
+                let fragment = self.parse_activity_block()?;
+                self.eat_punct(";");
+                body.symbols.push((name, fragment));
+                continue;
+            }
+            // `override { type A with B; instance p with B; }` in an action body
+            // (PSS 20.5.1, LRM Example 226). It was skipped whole, so the
+            // override had no effect on the actions the activity traverses.
+            if self.at_ident("override") {
+                body.overrides.extend(self.parse_override_list()?);
                 continue;
             }
             // A declaration that cannot appear in an action body is an error,
@@ -4164,6 +4260,10 @@ struct ActionBody {
     constraints: Vec<ConstraintBlock>,
     execs: Vec<ExecBlock>,
     activity: Option<Activity>,
+    /// `symbol NAME { ... }` items of this body (PSS Annex B.2).
+    symbols: Vec<(String, Activity)>,
+    /// `override { ... }` items of this body (PSS 20.5.1).
+    overrides: Vec<OverrideDecl>,
 }
 
 impl ActionBody {
@@ -4171,6 +4271,8 @@ impl ActionBody {
         self.members.extend(other.members);
         self.constraints.extend(other.constraints);
         self.execs.extend(other.execs);
+        self.symbols.extend(other.symbols);
+        self.overrides.extend(other.overrides);
         if other.activity.is_some() {
             self.activity = other.activity;
         }

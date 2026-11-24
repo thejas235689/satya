@@ -13,6 +13,34 @@ approximated.
 
 ---
 
+## 0.78.0 — 2026-11-24
+
+The held patch is merged: rows 43, 80, 100, 103
+
+`fix-ast-gaps` had been held since v0.76.0 because it changes the `dispatch`
+signature and overlaps two already-merged patches. A 3-way merge on a clean tree
+left **exactly two conflicts**, both resolvable in a minute:
+
+- a `dispatch` call inside the handle-array `foreach` — keeps the loop's `local`
+  scope rather than the outer `ctx`, because the loop variable must be visible
+- the new `lookup_symbol` helper, which the merge had dropped
+
+```
+43  symbol in an action body      PASS
+80  action-scope override         PASS
+100 randomize … with              PASS
+103 compile if in an exec body    PASS
+```
+
+Proof: **138 → 142 pass, 20 → 20 fail** — wait, 138/24 → 142/20.
+
+Worth recording what the earlier attempt got wrong: `git apply --3way` failed
+with "does not match index" because the index was dirty from other patches.
+Running it on a clean tree is what made this a two-minute job instead of the
+multi-hunk refactor I had assumed it would be.
+
+**Verification:** 162 integration tests; proof 142 pass / 20 fail.
+
 ## 0.77.1 — 2026-11-17
 
 The bundle no longer writes an uncompilable `test.c`

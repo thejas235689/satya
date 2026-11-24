@@ -167,6 +167,32 @@ component c {
     };
 };
 EOF
+cat > m103_exec.pss <<'EOF'
+component c {
+    action test {
+        int a;
+        exec post_solve {
+            compile if (0) { a = 1; } else { a = 2; }
+        }
+    };
+};
+EOF
+cat > m103_exec_decl.pss <<'EOF'
+component c {
+    action test {
+        int a;
+        exec post_solve {
+            compile if (1) {
+                int t;
+                t = 7;
+                a = t;
+            } else {
+                a = 99;
+            }
+        }
+    };
+};
+EOF
 cat > m103_pkg.pss <<'EOF'
 package p {
     compile if (0) {
@@ -194,9 +220,22 @@ run solve --action inner_a m103_nest.pss
 [ "$RC" = 0 ] || R="$R nested: declaration inner_a from the enabled nested branch lost;"
 run solve --action test m103_body.pss
 [ "$RC" = 0 ] || R="$R action body: the action no longer solves;"
-if [ "$(solved_val "$OUT" kept)" != 0 ]; then
-    R="$R action body: declaration kept from the enabled branch was lost (and its neighbour v with it);"
+# `kept` is an unconstrained `rand int`, so its *value* carries no information;
+# what the selected branch must produce is the declaration itself — present when
+# the branch is taken, with `gone` from the disabled branch absent.
+if [ -z "$(solved_val "$OUT" kept)" ]; then
+    R="$R action body: declaration kept from the enabled branch was lost;"
 fi
+if [ -n "$(solved_val "$OUT" gone)" ]; then
+    R="$R action body: declaration gone from the disabled branch survived;"
+fi
+[ "$(solved_val "$OUT" v)" = 1 ] || R="$R action body: the neighbouring declaration v was lost;"
+run solve --action test m103_exec.pss
+[ "$(solved_val "$OUT" a)" = 2 ] \
+    || R="$R exec body: the enabled else branch did not run (a=$(solved_val "$OUT" a), expected 2);"
+run solve --action test m103_exec_decl.pss
+[ "$(solved_val "$OUT" a)" = 7 ] \
+    || R="$R exec body: the enabled branch's statements did not run (a=$(solved_val "$OUT" a), expected 7);"
 run solve --action test m103_pkg.pss
 B=$(solved_val "$OUT" b)
 [ "$B" = 22 ] || R="$R package scope: p::B from the enabled branch is not 22 (got ${B:-<absent>});"

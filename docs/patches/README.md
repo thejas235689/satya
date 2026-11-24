@@ -20,21 +20,19 @@ is a subset; the rest are staged here.
 | `fix-forall-template.patch` | 58, 25 | merged |
 | `fix-unsigned.patch` | 9 | merged |
 
+## Merged in v0.78.0
+
+`fix-ast-gaps.patch` — rows 43, 80, 100, 103. Held since v0.76.0 because it
+changed the `dispatch` signature and overlapped two merged patches. Resolved by
+hand: a 3-way merge left exactly two conflicts — a `dispatch` call inside the
+handle-array `foreach` that keeps the loop's `local` scope, and the new
+`lookup_symbol` helper. Proof 138 → **142 pass, 20 fail**.
+
 ## Held — verified by their author, NOT merged
 
-### `fix-ast-gaps.patch` — rows 43, 80, 100, 103
+### Rows 43 and 103 — findings worth keeping
 
-All four were verified passing against `c92d8d2` by the agent that wrote it. It
-does not apply on top of the merged tree: it changes `dispatch` to take a `ctx`
-parameter and adds `symbol_scopes` / `override_scopes` to the engine, which
-overlaps the dispatch changes in `fix-engine-constructs` and `fix-symbols`.
-
-The conflict is structural, not textual — resolving it means re-deriving the
-`dispatch` signature in the current `src/engine.rs`, not re-running `git apply`.
-`src/engine.rs.rej` from the failed attempt is not kept; the hunk contents are in
-the patch itself.
-
-Note recorded by that agent, and worth keeping: **row 43's fixture was correct**.
+Recorded by the agent that did the work., and worth keeping: **row 43's fixture was correct**.
 PSS 3.1 Annex B.2 lists `symbol_declaration` under `action_body_item`, so a
 `symbol` inside an action body is legal PSS — the grammar was widened, the
 fixture was not bent. Row 103's real defect was a broken assertion

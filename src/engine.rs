@@ -215,6 +215,13 @@ struct Engine<'a> {
     in_cover: bool,
     /// The action whose `exec` block is running, so `randomize` can re-solve it.
     exec_action: Option<crate::ir::Action>,
+    /// `symbol` fragments declared in the body of each enclosing action,
+    /// innermost last. A symbol traversal resolves against these first, then
+    /// against the component's symbols (PSS Annex B.2, Syntax 53).
+    symbol_scopes: Vec<HashMap<String, crate::ast::Activity>>,
+    /// `override` statements in the body of each enclosing action, innermost
+    /// last (PSS 20.5.1, LRM Example 226).
+    override_scopes: Vec<Vec<crate::ast::OverrideDecl>>,
     /// The component whose `exec` block is running, so an unqualified function
     /// name is resolved against that component's imports (PSS 22.2).
     exec_component: Option<String>,
@@ -238,6 +245,81 @@ struct Engine<'a> {
     monitor_hits: BTreeMap<String, usize>,
     /// Declared bins per coverpoint, for coverage against the declaration.
     coverage_bins: BTreeMap<String, Vec<Vec<i64>>>,
+}
+
+/// The replacement an override list names for `action` traversed at
+/// `full_path`, if any (PSS 20.5.1). A `type A with B;` item matches by action
+/// name; an `instance p with B;` item matches the handle path.
+fn match_override(
+    list: &[crate::ast::OverrideDecl],
+    full_path: &str,
+    action: &str,
+) -> Option<String> {
+    for ov in list {
+        let hit = match &ov.instance {
+            Some(inst) => inst == full_path || full_path.ends_with(&format!(".{}", inst)),
+            None => ov.from == action,
+        };
+        if hit {
+            return Some(ov.to.clone());
+        }
+    }
+    None
+}
+
+/// The values a `with` clause suggests for `key`: the constant it is compared
+/// against and that constant's neighbours, plus the bounds of a range and the
+/// members of a set. Used to pick a value for a local the solver has no domain
+/// for (see `Engine::randomize_local`).
+fn clause_candidates(
+    e: &Expr,
+    key: &str,
+    ctx: &BTreeMap<String, i64>,
+    model: &Model,
+    seed: u64,
+    out: &mut Vec<i64>,
+) {
+    let is_key = |x: &Expr| matches!(x, Expr::Path(p) if p.segments.join(".") == key);
+    match e {
+        Expr::Binary(_, l, r) => {
+            if is_key(l) {
+                if let Some(v) = eval_value(r, ctx, model, seed) {
+                    out.extend([v - 1, v, v + 1]);
+                }
+            }
+            if is_key(r) {
+                if let Some(v) = eval_value(l, ctx, model, seed) {
+                    out.extend([v - 1, v, v + 1]);
+                }
+            }
+            clause_candidates(l, key, ctx, model, seed, out);
+            clause_candidates(r, key, ctx, model, seed, out);
+        }
+        Expr::InRange(sub, lo, hi) => {
+            if is_key(sub) {
+                if let (Some(lo), Some(hi)) = (
+                    eval_value(lo, ctx, model, seed),
+                    eval_value(hi, ctx, model, seed),
+                ) {
+                    out.extend([lo, hi, lo + (hi - lo) / 2]);
+                }
+            }
+            clause_candidates(sub, key, ctx, model, seed, out);
+        }
+        Expr::InSet(sub, items) => {
+            if is_key(sub) {
+                for i in items {
+                    if let Some(v) = eval_value(i, ctx, model, seed) {
+                        out.push(v);
+                    }
+                }
+            }
+            clause_candidates(sub, key, ctx, model, seed, out);
+        }
+        Expr::Unary(_, inner) => clause_candidates(inner, key, ctx, model, seed, out),
+        Expr::Cast(_, inner) => clause_candidates(inner, key, ctx, model, seed, out),
+        _ => {}
+    }
 }
 
 /// Peel any `Labeled` wrappers off a statement, returning the inner statement
@@ -321,6 +403,8 @@ pub fn run_scenario(model: &Model, root_action: &str, seed: u64) -> Scenario {
         messages: Vec::new(),
         globals: BTreeMap::new(),
         exec_action: None,
+        symbol_scopes: Vec::new(),
+        override_scopes: Vec::new(),
         exec_component: None,
         handle_seq: 0,
         claim_cursor: Vec::new(),
@@ -478,7 +562,13 @@ impl<'a> Engine<'a> {
             let handle_arrays = self.handle_arrays_of(action, &component);
             self.handle_scopes.push(handles);
             self.handle_array_scopes.push(handle_arrays);
+            // Symbols and overrides declared in this action's body apply to the
+            // actions its activity traverses (PSS Annex B.2, 20.5.1).
+            self.symbol_scopes.push(action.symbols.clone());
+            self.override_scopes.push(action.overrides.clone());
             self.walk_activity(act, component, depth + 1, mode, group, &ctx);
+            self.override_scopes.pop();
+            self.symbol_scopes.pop();
             self.handle_array_scopes.pop();
             self.handle_scopes.pop();
             // `exec post_solve` and `exec pre_body` of the composite action run
@@ -1079,11 +1169,7 @@ impl<'a> Engine<'a> {
             // activity is walked in place, so it has the same effect as writing
             // the fragment inline.
             ActivityStmt::SymbolCall(name, _args) => {
-                let body = self
-                    .model
-                    .components
-                    .get(component)
-                    .and_then(|c| c.symbols.get(name).cloned());
+                let body = self.lookup_symbol(component, name);
                 match body {
                     Some(b) => {
                         self.walk_activity(&b, component.to_string(), depth, mode, group, ctx)
@@ -1135,22 +1221,35 @@ impl<'a> Engine<'a> {
     /// Apply `override` statements (PSS 20.5): a type override replaces every
     /// instance of the named type, an instance override replaces one path.
     fn apply_override(&self, comp: &str, full_path: &str, action: &str) -> String {
+        // An `override` in the enclosing action's body comes first: it is the
+        // innermost declaration and applies to the actions this activity
+        // traverses (PSS 20.5.1, LRM Example 226).
+        for scope in self.override_scopes.iter().rev() {
+            if let Some(to) = match_override(scope, full_path, action) {
+                return to;
+            }
+        }
         let list = match self.model.components.get(comp) {
             Some(c) => c.overrides.clone(),
             None => return action.to_string(),
         };
-        for ov in list {
-            let hit = match &ov.instance {
-                Some(inst) => {
-                    inst == full_path || full_path.ends_with(&format!(".{}", inst))
-                }
-                None => ov.from == action,
-            };
-            if hit {
-                return ov.to;
-            }
-        }
-        action.to_string()
+        match_override(&list, full_path, action).unwrap_or_else(|| action.to_string())
+    }
+
+    /// The activity of `symbol name` visible from `component`: the innermost
+    /// action-body declaration first, then the component's own symbols (PSS
+    /// Annex B.2 — a `symbol_declaration` is an `action_body_item` — and 11.7).
+    fn lookup_symbol(&self, component: &str, name: &str) -> Option<crate::ast::Activity> {
+        self.symbol_scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).cloned())
+            .or_else(|| {
+                self.model
+                    .components
+                    .get(component)
+                    .and_then(|c| c.symbols.get(name).cloned())
+            })
     }
 
     fn dispatch(
@@ -1187,14 +1286,22 @@ impl<'a> Engine<'a> {
         }
         match self.model.find_action(Some(&comp), &action_name).cloned() {
             Some(act) => self.walk_action(&act, comp, depth, mode, group, false),
-            None => match self.resolve_handle(&action_name) {
-                Some((hcomp, hact)) => {
-                    match self.model.find_action(Some(&hcomp), &hact).cloned() {
-                        Some(act) => self.walk_action(&act, hcomp, depth, mode, group, false),
-                        None => self.push_unresolved(&action_name, comp, path, depth, mode, group),
-                    }
+            None => match self.lookup_symbol(&comp, &action_name) {
+                // `two;` — a traversal that names a `symbol` rather than an
+                // action (PSS 11.7). The fragment is walked in place, so it has
+                // the same effect as writing its statements inline.
+                Some(fragment) => {
+                    self.walk_activity(&fragment, comp, depth, mode, group, ctx)
                 }
-                None => self.push_unresolved(&action_name, comp, path, depth, mode, group),
+                None => match self.resolve_handle(&action_name) {
+                    Some((hcomp, hact)) => {
+                        match self.model.find_action(Some(&hcomp), &hact).cloned() {
+                            Some(act) => self.walk_action(&act, hcomp, depth, mode, group, false),
+                            None => self.push_unresolved(&action_name, comp, path, depth, mode, group),
+                        }
+                    }
+                    None => self.push_unresolved(&action_name, comp, path, depth, mode, group),
+                },
             },
         }
     }
@@ -1391,6 +1498,104 @@ impl<'a> Engine<'a> {
             self.exec_component = saved;
             self.globals = g;
         }
+    }
+
+    /// `randomize(target, ...) [with { ... }];` (PSS Syntax 100).
+    ///
+    /// An action attribute is re-randomised by re-solving the action with the
+    /// clause in force, so the clause narrows the re-solve instead of being
+    /// dropped. A target that is a local — a variable declared in the `exec`
+    /// body or a `function` — has no domain in the action solve, so the values
+    /// the clause allows are searched; if the search finds none the statement
+    /// says so rather than leaving a value the clause forbids.
+    fn exec_randomize(&mut self, stmt: &crate::ast::RandomizeStmt, values: &mut BTreeMap<String, i64>) {
+        let with: Vec<Expr> = stmt.constraints.iter().map(|c| c.expr.clone()).collect();
+        let act = self.exec_action.clone();
+        let mut attr_targets: Vec<String> = Vec::new();
+        for p in &stmt.targets {
+            let key = p.segments.join(".");
+            if act.as_ref().and_then(|a| a.field(&key)).is_some() {
+                attr_targets.push(key);
+            }
+        }
+        // `randomize()` with no target re-randomises the action itself.
+        let whole_action = stmt.targets.is_empty() && !with.is_empty();
+        if let Some(act) = act.as_ref() {
+            if !attr_targets.is_empty() || whole_action {
+                let report = crate::solver::solve_with(
+                    self.model,
+                    act,
+                    self.seed ^ (values.len() as u64) ^ 0x9E37_79B9,
+                    &with,
+                    &BTreeMap::new(),
+                );
+                if whole_action {
+                    for (k, v) in &report.assignment.values {
+                        values.insert(k.clone(), *v);
+                    }
+                } else {
+                    for key in &attr_targets {
+                        if let Some(v) = report.assignment.values.get(key) {
+                            values.insert(key.clone(), *v);
+                        }
+                    }
+                }
+                if !report.unsupported.is_empty() {
+                    self.warnings.push(format!(
+                        "randomize: the `with` clause could not be satisfied for `{}` ({})",
+                        attr_targets.join(", "),
+                        report.unsupported.join("; ")
+                    ));
+                }
+            }
+        }
+        for p in &stmt.targets {
+            let key = p.segments.join(".");
+            if act.as_ref().and_then(|a| a.field(&key)).is_some() {
+                continue;
+            }
+            if with.is_empty() {
+                // `randomize(x);` on a local with no clause: nothing constrains
+                // the value, so the current one is kept rather than invented.
+                continue;
+            }
+            match self.randomize_local(&key, &with, values) {
+                Some(v) => {
+                    values.insert(key, v);
+                }
+                None => self.warnings.push(format!(
+                    "randomize: no value of `{}` satisfies its `with` clause",
+                    key
+                )),
+            }
+        }
+    }
+
+    /// The value a `with` clause permits for a local: the values the clause
+    /// names — the constants it compares the target against, the bounds of any
+    /// range, the members of any set — then a seeded sample, in that order.
+    fn randomize_local(
+        &self,
+        key: &str,
+        with: &[Expr],
+        values: &BTreeMap<String, i64>,
+    ) -> Option<i64> {
+        let mut candidates: Vec<i64> = vec![0];
+        for e in with {
+            clause_candidates(e, key, values, self.model, self.seed, &mut candidates);
+        }
+        // A seeded sample, so `randomize res with { res >= 0; }` does not always
+        // hand back the first value in the list.
+        let mut rng = crate::solver::Rng::seeded(self.seed ^ 0xC0FF_EE00 ^ (key.len() as u64));
+        for _ in 0..256 {
+            candidates.push((rng.next_u64() % 4096) as i64);
+        }
+        candidates.into_iter().find(|c| {
+            let mut ctx = values.clone();
+            ctx.insert(key.to_string(), *c);
+            with.iter()
+                .all(|e| eval_condition_opt(e, &ctx, self.model, self.seed) != Some(false))
+        })
     }
 
     /// Execute `exec` statements against an instance's values (PSS 10.4,
@@ -2077,24 +2282,8 @@ impl<'a> Engine<'a> {
                     .and_then(|x| eval_value(x, values, self.model, self.seed));
                 Flow::Return
             }
-            ExecStmt::Randomize(targets) => {
-                // Re-randomise the named attributes within their domains by
-                // re-solving the action they belong to.
-                if let Some(act) = self.exec_action.clone() {
-                    let report = crate::solver::solve_with(
-                        self.model,
-                        &act,
-                        self.seed ^ (values.len() as u64) ^ 0x9E37_79B9,
-                        &[],
-                        &BTreeMap::new(),
-                    );
-                    for p in targets {
-                        let key = p.segments.join(".");
-                        if let Some(v) = report.assignment.values.get(&key) {
-                            values.insert(key, *v);
-                        }
-                    }
-                }
+            ExecStmt::Randomize(stmt) => {
+                self.exec_randomize(stmt, values);
                 Flow::Normal
             }
             ExecStmt::Yield => Flow::Normal,

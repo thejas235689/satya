@@ -154,6 +154,17 @@ pub struct ExecBlock {
     pub stmts: Vec<ExecStmt>,
 }
 
+/// A `randomize` statement (PSS Syntax 100).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RandomizeStmt {
+    /// The attributes, handles or locals the statement re-randomises.
+    pub targets: Vec<Path>,
+    /// The `with { ... }` clause. Its constraints hold for the re-solve; with
+    /// no slot for them the clause was parsed and dropped, so the statement
+    /// re-randomised as if the clause were not written.
+    pub constraints: Vec<ConstraintBlock>,
+}
+
 /// A statement inside an `exec` body that Satya understands structurally.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExecStmt {
@@ -187,8 +198,8 @@ pub enum ExecStmt {
     Continue,
     /// `return [e];` (Syntax 93)
     Return(Option<Expr>),
-    /// `randomize(x, y);` (Syntax 100)
-    Randomize(Vec<Path>),
+    /// `randomize(x, y) [with { ... }];` (Syntax 100)
+    Randomize(RandomizeStmt),
     /// `yield;` (Syntax 101) — no-op outside a coroutine.
     Yield,
     /// Anything else, kept as text.
@@ -220,6 +231,13 @@ pub struct ActionDecl {
     pub constraints: Vec<ConstraintBlock>,
     pub execs: Vec<ExecBlock>,
     pub activity: Option<Activity>,
+    /// `symbol NAME { ... }` declared in this action's body. A
+    /// `symbol_declaration` is an `action_body_item` (PSS 3.1 Annex B.2), so it
+    /// belongs to the action, not to its component.
+    pub symbols: Vec<(String, Activity)>,
+    /// `override { type A with B; }` in this action's body (PSS 20.5.1, LRM
+    /// Example 226). It applies to the actions this action's activity traverses.
+    pub overrides: Vec<OverrideDecl>,
     pub is_extend: bool,
 }
 

@@ -202,6 +202,13 @@ pub struct Action {
     pub constraints: Vec<Constraint>,
     pub execs: Vec<ExecBlock>,
     pub activity: Option<Activity>,
+    /// `symbol` fragments declared in this action's body (PSS Annex B.2,
+    /// Syntax 53). An action-body symbol is visible in this action's activity
+    /// and is looked up before the component's own symbols.
+    pub symbols: HashMap<String, Activity>,
+    /// `override` statements in this action's body (PSS 20.5.1, LRM Example
+    /// 226). They apply to the actions this action's activity traverses.
+    pub overrides: Vec<crate::ast::OverrideDecl>,
     /// Leaf name of the component that declared this action, if any.
     pub owner: Option<String>,
     /// Covergroups instantiated by this action (`cg inst1 (x);`), with the
@@ -957,6 +964,8 @@ impl Lowerer {
             e.decl.members.extend(a.members.iter().cloned());
             e.decl.constraints.extend(a.constraints.iter().cloned());
             e.decl.execs.extend(a.execs.iter().cloned());
+            e.decl.symbols.extend(a.symbols.iter().cloned());
+            e.decl.overrides.extend(a.overrides.iter().cloned());
             if a.base.is_some() {
                 e.decl.base = a.base.clone();
             }
@@ -1625,6 +1634,8 @@ impl Lowerer {
             constraints,
             execs: a.execs.clone(),
             activity: a.activity.clone(),
+            symbols: a.symbols.iter().cloned().collect(),
+            overrides: a.overrides.clone(),
             owner,
             covergroup_instances,
         }

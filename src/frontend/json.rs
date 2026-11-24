@@ -197,6 +197,8 @@ pub fn model_from_json(src: &str) -> PssResult<Model> {
                             constraints,
                             execs: Vec::new(),
                             activity,
+                            symbols: std::collections::HashMap::new(),
+                            overrides: Vec::new(),
                             owner: Some(name.clone()),
                             covergroup_instances: Vec::new(),
                         },
