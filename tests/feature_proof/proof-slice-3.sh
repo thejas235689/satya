@@ -50,8 +50,78 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 # ---------------------------------------------------------------- helpers ---
 run() { "$BIN" solve "$TMP/$1.pss" --action "$2" --seed "$3" 2>&1; }
 
-# vals <model> <action> <seed> <"k1 k2 ..."> — the solved values, one line,
-# "-" for a field that was not reported. One binary run, one awk.
+# ------------------------------------------------------------ batched sweeps
+# A sweep over seeds used to be one `solve --seed S` per seed. `solve --seeds N`
+# runs seeds 1..=N in ONE process and separates the runs with a
+# `--- seed N ---` marker, so a sweep is now one invocation — and a parser of
+# that output must split on the marker rather than assume one run per
+# invocation. Splitting per seed is not enough on its own either, since pulling
+# a value out still costs a process per seed; `_sweep_table` therefore splits
+# the sweep ONCE, with a single awk, into a flat `<seed> <v1> <v2> ...` table
+# that the caller's loop walks with shell builtins only. The table holds exactly
+# what `vals` would have returned for that seed (the last `solved:` line wins,
+# `-` when a field was not reported), so a loop reading it reaches the verdict a
+# per-seed sweep reached.
+SWEEP_CACHE="$TMP/.sweeps"
+
+# _sweep_table MODEL ACTION N KEYS — one `solve --seeds N` run, one awk pass.
+# Writes the per-seed table and echoes its path.
+_sweep_table() {
+    _slug=""
+    for _w in $4; do _slug="$_slug.$_w"; done
+    _f="$SWEEP_CACHE/$1.$2$_slug.tab"
+    if [ -f "$_f" ]; then echo "$_f"; return 0; fi
+    mkdir -p "$SWEEP_CACHE" || return 1
+    if "$BIN" solve "$TMP/$1.pss" --action "$2" --seeds "$3" \
+        >"$SWEEP_CACHE/$1.$2.tmp" 2>/dev/null; then
+        awk -v keys="$4" '
+            function emit(  j, line) {
+                if (seed == "") return
+                line = seed
+                for (j = 1; j <= nk; j++)
+                    line = line " " ((K[j] in v) ? v[K[j]] : "-")
+                print line
+            }
+            BEGIN { nk = split(keys, K, " ") }
+            /^--- seed [0-9]+ ---$/ {
+                emit()
+                seed = $3
+                split("", v)
+                next
+            }
+            /solved: / {
+                sub(/.*solved: /, "")
+                m = split($0, t, " ")
+                for (i = 1; i <= m; i++) {
+                    p = index(t[i], "=")
+                    if (p > 0) v[substr(t[i], 1, p - 1)] = substr(t[i], p + 1)
+                }
+            }
+            END { emit() }
+        ' "$SWEEP_CACHE/$1.$2.tmp" >"$_f"
+        rm -f "$SWEEP_CACHE/$1.$2.tmp"
+        echo "$_f"
+        return 0
+    fi
+    # The tool refused the model. Fall back to one run per seed; `vals` reports
+    # every key as `-` there, which is what this table then holds.
+    rm -f "$SWEEP_CACHE/$1.$2.tmp"
+    : >"$_f"
+    _s=1
+    while [ "$_s" -le "$3" ]; do
+        _line="$_s"
+        for _w in $4; do _line="$_line -"; done
+        printf '%s\n' "$_line" >>"$_f"
+        _s=$((_s + 1))
+    done
+    echo "$_f"
+    return 0
+}
+
+# vals <model> <action> <seed> <"k1 k2 ..."> — the solved values of ONE seed, one
+# line, "-" for a field that was not reported. One binary run, one awk. Loops
+# over seeds do not use this: they read a `_sweep_table` built from a single
+# `--seeds N` invocation.
 vals() {
     run "$1" "$2" "$3" | awk -v keys="$4" '
         BEGIN { n = split(keys, k, " ") }
@@ -634,40 +704,38 @@ verdict 52 "Static bind directives" "$R"
 # ------------------------------------------------------------ construct 53 ---
 R=""
 bad=0
-for s in $(seq 1 40); do
-    v=$(vals m53 top_a "$s" 'p.size n')
-    set -- $v
-    { [ "$1" != "-" ] && [ "$1" -ge 4 ] && [ "$1" -le 6 ]; } || bad=$((bad + 1))
-    { [ "$2" != "-" ] && [ "$2" -ge 0 ] && [ "$2" -le 15 ]; } || bad=$((bad + 1))
-    v=$(vals m53 named_a "$s" 'a')
-    { [ "$v" != "- " ] && [ "${v% }" -ge 3 ] && [ "${v% }" -le 5 ]; } || bad=$((bad + 1))
-done
+_tab=$(_sweep_table m53 top_a 40 'p.size n')
+while read -r s psz n; do
+    { [ "$psz" != "-" ] && [ "$psz" -ge 4 ] && [ "$psz" -le 6 ]; } || bad=$((bad + 1))
+    { [ "$n" != "-" ] && [ "$n" -ge 0 ] && [ "$n" -le 15 ]; } || bad=$((bad + 1))
+done <"$_tab"
+_tab=$(_sweep_table m53 named_a 40 'a')
+while read -r s a; do
+    { [ "$a" != "-" ] && [ "$a" -ge 3 ] && [ "$a" -le 5 ]; } || bad=$((bad + 1))
+done <"$_tab"
 [ "$bad" = 0 ] || add "$bad of 120 samples escaped the member constraints (p.size must stay in 4..6, named a in 3..5)"
 verdict 53 "Member constraint declaration" "$R"
 
 # ------------------------------------------------------------ construct 54 ---
 R=""
 bad=0
-for s in $(seq 1 40); do
-    v=$(vals m54 expr_a "$s" 'a b')
-    set -- $v
-    if [ "$1" = "-" ] || [ "$2" = "-" ] || [ $(( $1 + $2 )) -ne 10 ] || [ $(( $1 * $2 )) -gt 20 ] || [ "$1" -ge "$2" ]; then
+_tab=$(_sweep_table m54 expr_a 40 'a b')
+while read -r s a b; do
+    if [ "$a" = "-" ] || [ "$b" = "-" ] || [ $(( a + b )) -ne 10 ] || [ $(( a * b )) -gt 20 ] || [ "$a" -ge "$b" ]; then
         bad=$((bad + 1))
     fi
-done
+done <"$_tab"
 [ "$bad" = 0 ] || add "expr_a violates a+b==10 / a*b<=20 / a<b on $bad of 40 seeds"
 bad=0
-for s in $(seq 1 40); do
-    v=$(vals m54 prod_a "$s" 'a b')
-    set -- $v
-    if [ "$1" = "-" ] || [ "$2" = "-" ] || [ $(( $1 * $2 )) -gt 20 ]; then bad=$((bad + 1)); fi
-done
+_tab=$(_sweep_table m54 prod_a 40 'a b')
+while read -r s a b; do
+    if [ "$a" = "-" ] || [ "$b" = "-" ] || [ $(( a * b )) -gt 20 ]; then bad=$((bad + 1)); fi
+done <"$_tab"
 [ "$bad" = 0 ] || add "prod_a violates a*b<=20 on $bad of 40 seeds"
 # mixed open_range_list: every member must be REACHABLE, not merely legal
 : > "$TMP/or.txt"
-for s in $(seq 1 200); do
-    vals m54b top_a "$s" 'z' >> "$TMP/or.txt"
-done
+_tab=$(_sweep_table m54b top_a 200 'z')
+while read -r s z; do printf '%s\n' "$z" >> "$TMP/or.txt"; done <"$_tab"
 missing=$(awk '
     { v = $1 + 0; if ($1 != "-") { seen[v] = 1; n++ } }
     END {
@@ -685,17 +753,15 @@ verdict 54 "Expression constraint" "$R"
 # ------------------------------------------------------------ construct 55 ---
 R=""
 bad=0; nk=0
-for s in $(seq 1 50); do
-    v=$(vals m55 impl_a "$s" 'kind burst len')
-    set -- $v
-    k=$1; b=$2; l=$3
+_tab=$(_sweep_table m55 impl_a 50 'kind burst len')
+while read -r s k b l; do
     [ "$k" = "-" ] || nk=$((nk + 1))
     if [ "$k" = "-" ] || [ "$b" = "-" ] || [ "$l" = "-" ]; then bad=$((bad + 1)); continue; fi
     [ "$k" = 1 ] && { [ "$b" -ge 2 ] && [ "$b" -le 8 ] || bad=$((bad + 1)); }
     [ "$k" = 0 ] && { [ "$b" = 0 ] || bad=$((bad + 1)); }
     [ "$l" -gt 32 ] && { [ "$b" -le 4 ] || bad=$((bad + 1)); }
     { [ "$l" -ge 1 ] && [ "$l" -le 64 ]; } || bad=$((bad + 1))
-done
+done <"$_tab"
 [ "$nk" = 50 ] || add "implication model did not solve on every seed"
 [ "$bad" = 0 ] || add "implication violated on $bad of 50 seeds (WRITE->2..8, READ->0, len>32->burst<=4)"
 verdict 55 "Implication constraint" "$R"
@@ -703,10 +769,8 @@ verdict 55 "Implication constraint" "$R"
 # ------------------------------------------------------------ construct 56 ---
 R=""
 bad=0; lo=0; hi=0
-for s in $(seq 1 50); do
-    v=$(vals m56 cond_a "$s" 'len burst')
-    set -- $v
-    l=$1; b=$2
+_tab=$(_sweep_table m56 cond_a 50 'len burst')
+while read -r s l b; do
     if [ "$l" = "-" ] || [ "$b" = "-" ]; then bad=$((bad + 1)); continue; fi
     if [ "$l" -gt 32 ]; then hi=$((hi + 1)); else lo=$((lo + 1)); fi
     if [ "$l" -gt 32 ]; then
@@ -714,7 +778,7 @@ for s in $(seq 1 50); do
     else
         { [ "$b" -ge 10 ] && [ "$b" -le 20 ]; } || bad=$((bad + 1))
     fi
-done
+done <"$_tab"
 [ "$lo" -gt 0 ] && [ "$hi" -gt 0 ] || add "only one branch reachable (len>32 on $hi seeds, len<=32 on $lo)"
 [ "$bad" = 0 ] || add "conditional branch value wrong on $bad of 50 seeds"
 verdict 56 "Conditional constraint" "$R"
@@ -722,16 +786,16 @@ verdict 56 "Conditional constraint" "$R"
 # ------------------------------------------------------------ construct 57 ---
 R=""
 bad=0; sz=0
-for s in $(seq 1 40); do
-    v=$(vals m57 fe_a "$s" 'payload.size payload[0] payload[1] payload[2] payload[3] payload[4] payload[5] payload[6] payload[7]')
-    [ "${v%% *}" = 8 ] || sz=$((sz + 1))
-    set -- $v; shift
-    inrange "$*" 0 15 || bad=$((bad + 1))
-    v=$(vals m57 fe_bound_a "$s" 'ids.size ids[0] ids[1] ids[2] ids[3] ids[4] ids[5]')
-    [ "${v%% *}" = 6 ] || sz=$((sz + 1))
-    set -- $v; shift
-    inrange "$*" 100 110 || bad=$((bad + 1))
-done
+_tab=$(_sweep_table m57 fe_a 40 'payload.size payload[0] payload[1] payload[2] payload[3] payload[4] payload[5] payload[6] payload[7]')
+while read -r s psz p0 p1 p2 p3 p4 p5 p6 p7; do
+    [ "$psz" = 8 ] || sz=$((sz + 1))
+    inrange "$p0 $p1 $p2 $p3 $p4 $p5 $p6 $p7" 0 15 || bad=$((bad + 1))
+done <"$_tab"
+_tab=$(_sweep_table m57 fe_bound_a 40 'ids.size ids[0] ids[1] ids[2] ids[3] ids[4] ids[5]')
+while read -r s isz i0 i1 i2 i3 i4 i5; do
+    [ "$isz" = 6 ] || sz=$((sz + 1))
+    inrange "$i0 $i1 $i2 $i3 $i4 $i5" 100 110 || bad=$((bad + 1))
+done <"$_tab"
 [ "$sz" = 0 ] || add "array extent wrong on $sz runs (expected payload[8] and ids[6])"
 [ "$bad" = 0 ] || add "foreach element outside its range on $bad of 80 runs"
 verdict 57 "foreach constraint" "$R"
@@ -745,14 +809,15 @@ verdict 57 "foreach constraint" "$R"
 # on all 20 seeds, which no enforced forall can satisfy — the contradiction
 # recorded in docs/proposed/README.md.)
 R=""
-bad=0; bites=0
-for s in $(seq 1 20); do
-    va=$(vals m58 fa_a "$s" 'e.size')
-    vb=$(vals m58 fa_b "$s" 'e.size')
-    [ "${va% }" = "-" ] && bad=$((bad + 1))
-    [ "${va% }" != "${vb% }" ] && bites=$((bites + 1))
-    { [ "${va% }" != "-" ] && [ "${va% }" -lt 5 ]; } || bad=$((bad + 1))
-done
+bad=0; same=0
+_tab=$(_sweep_table m58 fa_a 20 'e.size')
+_tab2=$(_sweep_table m58 fa_b 20 'e.size')
+while read -r s va <&3 && read -r s2 vb <&4; do
+    [ "$va" = "-" ] && bad=$((bad + 1))
+    [ "$va" = "$vb" ] && same=$((same + 1))
+    { [ "$va" != "-" ] && [ "$va" -lt 5 ]; } || bad=$((bad + 1))
+done 3<"$_tab" 4<"$_tab2"
+bites=$((20 - same))
 [ "$bad" = 0 ] || add "forall (it : elem_s) { it.size < 5; } not expanded: e.size >= 5 on $bad of 20 seeds"
 # fa_b is unconstrained over 0..100, so an enforced body must differ from it on
 # nearly every seed; agreeing on most seeds means the body was dropped.
@@ -762,10 +827,14 @@ verdict 58 "forall constraint" "$R"
 # ------------------------------------------------------------ construct 59 ---
 R=""
 bad=0
-for s in $(seq 1 60); do
-    uniqok "$(vals m59 arr_a "$s" 'ids[0] ids[1] ids[2] ids[3]')" || bad=$((bad + 1))
-    uniqok "$(vals m59 scalars_a "$s" 'x y z')" || bad=$((bad + 1))
-done
+_tab=$(_sweep_table m59 arr_a 60 'ids[0] ids[1] ids[2] ids[3]')
+while read -r s i0 i1 i2 i3; do
+    uniqok "$i0 $i1 $i2 $i3" || bad=$((bad + 1))
+done <"$_tab"
+_tab=$(_sweep_table m59 scalars_a 60 'x y z')
+while read -r s x y z; do
+    uniqok "$x $y $z" || bad=$((bad + 1))
+done <"$_tab"
 [ "$bad" = 0 ] || add "unique not enforced on $bad of 120 runs (duplicate values)"
 o=$(run m59 impossible_a 1)
 sat=$(printf '%s\n' "$o" | sed -n 's/.*constraints: \([0-9][0-9]*\)\/\([0-9][0-9]*\).*/\1 \2/p' | head -1)
@@ -779,24 +848,22 @@ verdict 59 "unique constraint" "$R"
 # ------------------------------------------------------------ construct 60 ---
 R=""
 bad=0
-for s in $(seq 1 40); do
-    v=$(vals m60 my_action "$s" 's1.attr1 s2.attr1 s3.attr1 s1.attr2 s2.attr2 s3.attr2')
-    set -- $v
-    if [ "$1" = "-" ] || [ "$2" = "-" ] || [ "$3" = "-" ]; then bad=$((bad + 1)); continue; fi
-    [ "$1" = 0 ] || bad=$((bad + 1))
-    [ "$2" = 2 ] || bad=$((bad + 1))
-    { [ "$3" -ge 1 ] && [ "$3" -le 2 ]; } || bad=$((bad + 1))
-    { [ "$1" -lt "$4" ] && [ "$2" -lt "$5" ] && [ "$3" -lt "$6" ]; } || bad=$((bad + 1))
-done
+_tab=$(_sweep_table m60 my_action 40 's1.attr1 s2.attr1 s3.attr1 s1.attr2 s2.attr2 s3.attr2')
+while read -r s a1 a2 a3 b1 b2 b3; do
+    if [ "$a1" = "-" ] || [ "$a2" = "-" ] || [ "$a3" = "-" ]; then bad=$((bad + 1)); continue; fi
+    [ "$a1" = 0 ] || bad=$((bad + 1))
+    [ "$a2" = 2 ] || bad=$((bad + 1))
+    { [ "$a3" -ge 1 ] && [ "$a3" -le 2 ]; } || bad=$((bad + 1))
+    { [ "$a1" -lt "$b1" ] && [ "$a2" -lt "$b2" ] && [ "$a3" -lt "$b3" ]; } || bad=$((bad + 1))
+done <"$_tab"
 [ "$bad" = 0 ] || add "default-constraint expectations violated on $bad of 40 seeds (want s1.attr1=0, s2.attr1=2, s3.attr1 in 1..2, attr1<attr2)"
 verdict 60 "Default constraints" "$R"
 
 # ------------------------------------------------------------ construct 61 ---
 R=""
 : > "$TMP/dist.txt"
-for s in $(seq 1 200); do
-    vals m61 dist_a "$s" 'pick' >> "$TMP/dist.txt"
-done
+_tab=$(_sweep_table m61 dist_a 200 'pick')
+while read -r s pick; do printf '%s\n' "$pick" >> "$TMP/dist.txt"; done <"$_tab"
 d=$(awk '
     { if ($1 == "-") { n++; bad = 1; next } c[$1 + 0]++; n++ }
     END {
@@ -894,17 +961,36 @@ o=$(run m70 t_t 1)
 [ "$(monhits "$o" by_type)" = 1 ] || add "type traversal (do a;) did not match (hits=$(monhits "$o" by_type))"
 [ "$(bins "$o" cg.av)" = "1/1" ] || add "type traversal matched but did not sample its covergroup"
 wm=0; tm=0
-for s in $(seq 1 12); do
-    o=$(run m70 t_w "$s")
-    a=$(vals m70 t_w "$s" 'av' | tr -d ' ')
+# One `--seeds 12` run for the whole loop. The marker splits the seeds; each
+# seed's own solved `av` and its `with_two` monitor hit count are read off in a
+# single awk pass, so the loop body costs no process at all.
+_tab="$SWEEP_CACHE/m70.t_w.avmon.tab"
+if [ ! -f "$_tab" ]; then
+    mkdir -p "$SWEEP_CACHE"
+    "$BIN" solve "$TMP/m70.pss" --action t_w --seeds 12 \
+        >"$SWEEP_CACHE/m70.t_w.tmp" 2>/dev/null &&
+    awk '
+        function emit() { if (seed == "") return; print seed, av, hits }
+        /^--- seed [0-9]+ ---$/ { emit(); seed = $3; av = "-"; hits = 0; m = 0; next }
+        /solved: / {
+            n = split($0, t, " ")
+            for (i = 1; i <= n; i++)
+                if (index(t[i], "av=") == 1) av = substr(t[i], 4)
+        }
+        $1 == "monitor" && $2 == "with_two" && !m { hits = $3; m = 1 }
+        END { emit() }
+    ' "$SWEEP_CACHE/m70.t_w.tmp" >"$_tab"
+    rm -f "$SWEEP_CACHE/m70.t_w.tmp"
+fi
+while read -r s a hits; do
     [ "$a" = "-" ] && { tm=$((tm + 1)); continue; }
-    if [ "$(monhits "$o" with_two)" = 1 ]; then
+    if [ "$hits" = 1 ]; then
         wm=$((wm + 1))
         [ "$a" = 2 ] || tm=$((tm + 1))
     else
         [ "$a" != 2 ] || tm=$((tm + 1))
     fi
-done
+done <"$_tab"
 [ "$tm" = 0 ] || add "do a with av == 2 disagreed with the solved av on $tm of 12 seeds"
 [ "$wm" -gt 0 ] || add "do a with av == 2 never matched, even when av was 2"
 verdict 70 "Action traversal statement" "$R"

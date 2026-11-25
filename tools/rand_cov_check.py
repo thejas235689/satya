@@ -37,6 +37,47 @@ def run(binary, model, action, seed):
     return r.stdout + r.stderr
 
 
+# `satya solve --seeds N` runs seeds 1..=N in one process, separating the runs
+# with a `--- seed N ---` marker. Process startup (~22 ms) dominated these
+# sweeps, so each one asks for its whole range in a single invocation and splits
+# the marker; a parser of swept output must split rather than assume one run per
+# invocation.
+SEED_MARK = re.compile(r"^--- seed (\d+) ---$", re.M)
+_SWEEPS = {}
+
+
+def split_seeds(text):
+    """{seed: that seed's own output} from one `--seeds` run."""
+    out = {}
+    marks = list(SEED_MARK.finditer(text))
+    for i, m in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+        out[int(m.group(1))] = text[m.end() + 1:end]
+    return out
+
+
+def sweep(binary, model, action, n):
+    """seed -> output for seeds 1..n, from ONE invocation.
+
+    Falls back to one run per seed when the batch run fails or writes to stderr
+    (a diagnostic belongs to one seed, not to the sweep), so the error path is
+    exactly what it was.
+    """
+    key = (binary, model, action, n)
+    if key not in _SWEEPS:
+        r = subprocess.run(
+            [binary, "solve", model, "--action", action, "--seeds", str(n)],
+            capture_output=True,
+            text=True,
+            timeout=120 * n,
+        )
+        if r.returncode != 0 or r.stderr.strip():
+            _SWEEPS[key] = {s: run(binary, model, action, s) for s in range(1, n + 1)}
+        else:
+            _SWEEPS[key] = split_seeds(r.stdout)
+    return _SWEEPS[key]
+
+
 def solved(out):
     """The `solved: k=v k=v` map of the first step."""
     for line in out.split("\n"):
@@ -114,8 +155,9 @@ def check_dist(binary, seeds, failures):
     expected = {0: 0.1, 1: 0.3, 10: 0.2, 11: 0.2, 12: 0.2}
     observed = collections.Counter()
     bad = 0
+    traces = sweep(binary, model, "dist_a", seeds)
     for s in range(1, seeds + 1):
-        v = solved(run(binary, model, "dist_a", s)).get("pick")
+        v = solved(traces[s]).get("pick")
         if v is None:
             bad += 1
             continue
@@ -236,8 +278,9 @@ def check_constraints(binary, seeds, failures):
             mdl = agg_model
         else:
             mdl = model
+        traces = sweep(binary, mdl, action, seeds)
         for s in range(1, seeds + 1):
-            out = run(binary, mdl, action, s)
+            out = traces[s]
             f = solved(out)
             errs = checker(f)
             if errs:
@@ -309,8 +352,9 @@ def check_coverage(binary, seeds, failures):
             mdl = agg_model
         else:
             mdl = model
+        traces = sweep(binary, mdl, action, seeds)
         for s in range(1, seeds + 1):
-            out = run(binary, mdl, action, s)
+            out = traces[s]
             f = solved(out)
             v = f.get(field)
             if v is not None:

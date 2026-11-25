@@ -74,6 +74,20 @@ solved_val() {
 
 has() { printf '%s\n' "$1" | grep -q -- "$2"; }
 
+# seed_slice <output of a --seeds run> <seed> — that seed's own trace. `--seeds`
+# separates runs with a `--- seed N ---` marker, so a parser of a swept run must
+# split on it rather than assume one run per invocation.
+seed_slice() {
+    printf '%s\n' "$1" | awk -v want="$2" '
+        /^--- seed [0-9]+ ---$/ {
+            s = $0
+            sub(/^--- seed /, "", s); sub(/ ---$/, "", s)
+            on = ((s + 0) == want)
+            next
+        }
+        on { print }'
+}
+
 # eq <got> <want> <label> — echoes a complaint, or nothing
 eq() { [ "$1" = "$2" ] || printf '%s expected %s, got %s; ' "$3" "$2" "${1:-<absent>}"; }
 
@@ -410,11 +424,14 @@ EOF
 R=""
 SEEN=""
 BAD=""
+# One `--seeds 8` run instead of eight startups; the sweeps are separated by a
+# `--- seed N ---` marker, so split on it and check each seed's own trace.
+run solve --seeds 8 m111.pss
 for s in 1 2 3 4 5 6 7 8; do
-    run solve --seed "$s" m111.pss
-    r=$(solved_val "$OUT" r)
-    u1=$(solved_val "$OUT" u1)
-    u2=$(solved_val "$OUT" u2)
+    one=$(seed_slice "$OUT" "$s")
+    r=$(solved_val "$one" r)
+    u1=$(solved_val "$one" u1)
+    u2=$(solved_val "$one" u2)
     if [ -z "$r" ]; then BAD="yes"; continue; fi
     if [ "$r" -lt 1 ] || [ "$r" -gt 6 ]; then BAD="yes"; r_out="$r"; fi
     [ "$u1" != "$u2" ] || BAD="yes"

@@ -31,6 +31,48 @@ def run(binary, model, action, seed, limit_mb=400):
     return p.stdout, None
 
 
+# `satya solve --seeds N` runs seeds 1..=N in one process, separating the runs
+# with a `--- seed N ---` marker. Process startup (~22 ms) dominated these
+# sweeps, so the wide ones ask for their whole range in a single invocation and
+# split the marker; a parser of swept output must split rather than assume one
+# run per invocation.
+SEED_MARK = re.compile(r"^--- seed (\d+) ---$", re.M)
+
+
+def split_seeds(text):
+    """{seed: that seed's own output} from one `--seeds` run."""
+    out = {}
+    marks = list(SEED_MARK.finditer(text))
+    for i, m in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+        out[int(m.group(1))] = text[m.end() + 1:end]
+    return out
+
+
+def sweep(binary, model, action, n, limit_mb=400):
+    """seed -> (stdout, error) for seeds 1..n, from ONE invocation.
+
+    Same address-space cap as `run`. Falls back to one run per seed when the
+    batch fails or writes to stderr (a diagnostic belongs to one seed, not to
+    the sweep), so the error path is exactly what it was.
+    """
+    cmd = [binary, "solve", model, "--seeds", str(n)]
+    if action:
+        cmd += ["--action", action]
+    pre = "ulimit -v %d; " % (limit_mb * 1024)
+    try:
+        p = subprocess.run(
+            ["bash", "-c", pre + " ".join("'%s'" % c for c in cmd)],
+            capture_output=True, text=True, timeout=60 * n,
+        )
+    except subprocess.TimeoutExpired:
+        return {s: (None, "timed out") for s in range(1, n + 1)}
+    if p.returncode != 0 or p.stderr.strip():
+        return {s: run(binary, model, action, s, limit_mb) for s in range(1, n + 1)}
+    chunks = split_seeds(p.stdout)
+    return {s: (chunks.get(s), None) for s in range(1, n + 1)}
+
+
 def fields(out):
     m = re.search(r"solved:(.*)", out)
     if not m:
@@ -68,8 +110,9 @@ def main():
     print("-" * 62)
     model = os.path.join(REPRO, "bug2_enum_range.pss")
     vals = []
+    traces = sweep(binary, model, None, 6)
     for seed in range(1, 7):
-        out, err = run(binary, model, None, seed)
+        out, err = traces[seed]
         f = fields(out or "")
         v = next((x for k, x in f.items() if k.endswith("sel")), None)
         if v is None:
@@ -107,8 +150,9 @@ def main():
     model = os.path.join(REPRO, "bug5_set_membership.pss")
     want = {0x40, 0x7F, 0x4000, 0x7FFF}
     seen = set()
+    traces = sweep(binary, model, "c::a", 60)
     for seed in range(1, 61):
-        out, err = run(binary, model, "c::a", seed)
+        out, err = traces[seed]
         f = fields(out or "")
         v = next((x for k, x in f.items() if k == "x"), None)
         if v is None:

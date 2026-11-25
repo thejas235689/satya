@@ -56,6 +56,69 @@ bad() { printf '%s' "$*" > "$TMP/reason"; exit 1; }
 solve() { "$BIN" solve "$1" --seed "${2:-1}" 2>&1; }
 
 # ---------------------------------------------------------------- trace access
+# A seed sweep used to be one `solve --seed S` per seed, and each seed's trace
+# was then walked by `nsteps`/`step_field` — a process per seed on top of the
+# process per seed. `solve --seeds N` runs seeds 1..=N in ONE process and
+# separates the runs with a `--- seed N ---` marker, so a sweep is one
+# invocation; a parser of that output must split on the marker rather than
+# assume one run per invocation. `_sweep_steps` splits the sweep ONCE, with a
+# single awk that applies the same step-record parsing as `steps_norm`, into
+# `<seed> <nsteps> <action@0> <group@0>` — exactly what nsteps/step_field would
+# have returned for that seed, with `-` for an absent field.
+SWEEP_CACHE="$TMP/.sweeps"
+_sweep_steps() {
+    _n=0
+    for _s in $SEEDS; do _n=$((_n + 1)); done
+    _f="$SWEEP_CACHE/$1.$2.steps.tab"
+    if [ -f "$_f" ]; then echo "$_f"; return 0; fi
+    mkdir -p "$SWEEP_CACHE" || return 1
+    # $2 is the action, or empty to keep the tool's own default (`test`, else
+    # the first action) — the same choice a bare `solve MODEL --seed S` made.
+    _act=""
+    [ -n "$2" ] && _act="--action $2"
+    if "$BIN" solve "$TMP/$1.pss" $_act --seeds "$_n" \
+        >"$SWEEP_CACHE/$1.$2.tmp" 2>/dev/null; then
+        awk '
+            function flush() {
+                if (seed == "") return
+                print seed, cnt, (a0 == "" ? "-" : a0), (g0 == "" ? "-" : g0)
+            }
+            function step(  line, p, idx, rest, at, act, br, comp, tail, cl, brack, after, nparts, parts, grp) {
+                line = $0; sub(/^[ \t]+/, "", line)
+                p = index(line, ". "); idx = substr(line, 1, p - 1); rest = substr(line, p + 2)
+                at = index(rest, " @ "); act = substr(rest, 1, at - 1); sub(/[ \t]+$/, "", act)
+                rest = substr(rest, at + 3)
+                br = index(rest, "[")
+                if (br == 0) return
+                comp = substr(rest, 1, br - 1); sub(/[ \t]+$/, "", comp)
+                tail = substr(rest, br); cl = index(tail, "]")
+                brack = substr(tail, 2, cl - 2); after = substr(tail, cl + 1)
+                grp = ""
+                if (brack ~ / g[0-9]+$/) { nparts = split(brack, parts, " "); grp = parts[nparts] }
+                cnt++
+                if (idx + 0 == 0) { a0 = act; g0 = grp }
+            }
+            /^--- seed [0-9]+ ---$/ { flush(); seed = $3; cnt = 0; a0 = ""; g0 = ""; next }
+            /^[ \t]*[0-9]+\. / { step(); next }
+            END { flush() }
+        ' "$SWEEP_CACHE/$1.$2.tmp" >"$_f"
+        rm -f "$SWEEP_CACHE/$1.$2.tmp"
+        echo "$_f"
+        return 0
+    fi
+    # The tool refused the model. Fall back to one run per seed, so the table is
+    # what nsteps/step_field would have reported seed by seed.
+    rm -f "$SWEEP_CACHE/$1.$2.tmp"
+    : >"$_f"
+    for _s in $SEEDS; do
+        _t=$(solve "$TMP/$1.pss" "$_s")
+        printf '%s %s %s %s\n' "$_s" "$(nsteps "$_t")" \
+            "$(step_field "$_t" 0 action)" "$(step_field "$_t" 0 group)" >>"$_f"
+    done
+    echo "$_f"
+    return 0
+}
+
 # Header field, e.g. hdr "$t" "steps" -> 3
 hdr() {
     printf '%s\n' "$1" | awk -v k="$2" '
@@ -669,43 +732,43 @@ c38() {
 }
 
 c39() {
-    local s t n chosen="" first=""
-    for s in $SEEDS; do
-        t=$(solve "$TMP/c39.pss" "$s")
-        n=$(nsteps "$t")
+    local s n a g chosen="" first="" tab
+    tab=$(_sweep_steps c39 "")
+    while read -r s n a g; do
+        [ "$a" = "-" ] && a=""
+        [ "$g" = "-" ] && g=""
         [ "$n" = 1 ] || bad "select over 3 branches chose $n step(s) at seed $s; exactly one branch must run"
-        local a; a=$(step_field "$t" 0 action)
         case "$a" in A|B|C) : ;; *) bad "select chose '$a' at seed $s, which is not one of its branches" ;; esac
-        [ -n "$(step_field "$t" 0 group)" ] || bad "selected branch at seed $s carries no group id"
+        [ -n "$g" ] || bad "selected branch at seed $s carries no group id"
         first=${first:-$a}
         case " $chosen " in *" $a "*) : ;; *) chosen="$chosen $a" ;; esac
-    done
+    done <"$tab"
     local k; k=$(printf '%s\n' $chosen | wc -l | tr -d ' ')
     [ "$k" = 3 ] || bad "over 40 seeds select reached only $k of 3 branches (saw:$chosen)"
     return 0
 }
 
 c40() {
-    local s t seen=""
-    for s in $SEEDS; do
-        t=$(solve "$TMP/c40.pss" "$s")
-        [ "$(nsteps "$t")" = 1 ] || bad "if-else produced $(nsteps "$t") step(s) at seed $s, expected 1"
-        local a; a=$(step_field "$t" 0 action)
+    local s n a g seen="" tab
+    tab=$(_sweep_steps c40 "")
+    while read -r s n a g; do
+        [ "$a" = "-" ] && a=""
+        [ "$n" = 1 ] || bad "if-else produced $n step(s) at seed $s, expected 1"
         case " $seen " in *" $a "*) : ;; *) seen="$seen $a" ;; esac
-    done
+    done <"$tab"
     case " $seen " in *" A "*) : ;; *) bad "if-else never took the then-branch over 40 seeds (saw:$seen)" ;; esac
     case " $seen " in *" B "*) : ;; *) bad "if-else never took the else-branch over 40 seeds (saw:$seen)" ;; esac
     return 0
 }
 
 c41() {
-    local s t seen=""
-    for s in $SEEDS; do
-        t=$(solve "$TMP/c41.pss" "$s")
-        [ "$(nsteps "$t")" = 1 ] || bad "match produced $(nsteps "$t") step(s) at seed $s, expected 1"
-        local a; a=$(step_field "$t" 0 action)
+    local s n a g seen="" tab
+    tab=$(_sweep_steps c41 "")
+    while read -r s n a g; do
+        [ "$a" = "-" ] && a=""
+        [ "$n" = 1 ] || bad "match produced $n step(s) at seed $s, expected 1"
         case " $seen " in *" $a "*) : ;; *) seen="$seen $a" ;; esac
-    done
+    done <"$tab"
     local a
     for a in A B C; do
         case " $seen " in *" $a "*) : ;; *) bad "match arm for $a was never reached over 40 seeds (saw:$seen)" ;; esac

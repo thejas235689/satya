@@ -108,6 +108,88 @@ run() {
         >"$OUT" 2>"$TMP/err.txt"
 }
 
+# ------------------------------------------------------------ batched sweeps
+# A sweep over seeds used to be one `gen --seed S` per seed. `gen --seeds N`
+# runs seeds 1..=N in ONE process and separates the runs with a
+# `/* --- seed N --- */` marker, so a sweep is now one invocation. The marker is
+# what a parser splits on — the output of one invocation is no longer one run.
+#
+# One invocation is not enough on its own: pulling the value out of each seed's
+# run still costs a process per seed. So `_sweep_table` splits the sweep ONCE,
+# with a single awk, into a flat `<seed> <v1> <v2> ...` table that the caller's
+# loop walks with shell builtins only. The table holds exactly what `jget`
+# would have returned for that seed (first match wins, `-` when the field was
+# not reported, `__ERROR__` when the tool refused the model), so a loop reading
+# it reaches the same verdict a per-seed sweep did.
+SWEEP_CACHE="$TMP/.sweeps"
+
+# _sweep_table MODEL ACTION N KEYS — one `gen --seeds N` run, one awk pass.
+# Writes the per-seed table and echoes its path.
+_sweep_table() {
+    _slug=""
+    for _w in $4; do _slug="$_slug.$_w"; done
+    _f="$SWEEP_CACHE/$1.$2$_slug.tab"
+    if [ -f "$_f" ]; then echo "$_f"; return 0; fi
+    mkdir -p "$SWEEP_CACHE" || return 1
+    if "$BIN" gen "$TMP/$1.pss" --backend json --action "$2" --seeds "$3" \
+        >"$SWEEP_CACHE/$1.$2.tmp" 2>/dev/null; then
+        awk -v keys="$4" '
+            function emit(  j, line) {
+                if (seed == "") return
+                line = seed
+                for (j = 1; j <= nk; j++) line = line " " (got[j] ? val[j] : "-")
+                print line
+            }
+            BEGIN { nk = split(keys, K, " ") }
+            /^\/\* --- seed [0-9]+ --- \*\/$/ {
+                emit()
+                s = $0
+                sub(/^\/\* --- seed /, "", s); sub(/ --- \*\/$/, "", s)
+                seed = s
+                for (j = 1; j <= nk; j++) got[j] = 0
+                next
+            }
+            {
+                line = $0; sub(/^[ \t]+/, "", line)
+                if (substr(line, 1, 1) != "\"") next
+                i = index(substr(line, 2), "\"")
+                if (i == 0) next
+                key = substr(line, 2, i - 1)
+                for (j = 1; j <= nk; j++) {
+                    if (key != K[j] || got[j]) continue
+                    rest = substr(line, i + 2)
+                    sub(/^[ \t]*:[ \t]*/, "", rest); sub(/,$/, "", rest)
+                    val[j] = rest; got[j] = 1
+                }
+            }
+            END { emit() }
+        ' "$SWEEP_CACHE/$1.$2.tmp" >"$_f"
+        rm -f "$SWEEP_CACHE/$1.$2.tmp"
+        echo "$_f"
+        return 0
+    fi
+    # The tool refused the model. Fall back to one run per seed so the table —
+    # and therefore the verdict — is exactly what a per-seed sweep produced.
+    rm -f "$SWEEP_CACHE/$1.$2.tmp"
+    : >"$_f"
+    _s=1
+    while [ "$_s" -le "$3" ]; do
+        if run "$1" "$2" "$_s"; then
+            _line="$_s"
+            for _w in $4; do
+                _v=$(jget "$_w")
+                _line="$_line ${_v:--}"
+            done
+        else
+            _line="$_s __ERROR__"
+        fi
+        printf '%s\n' "$_line" >>"$_f"
+        _s=$((_s + 1))
+    done
+    echo "$_f"
+    return 0
+}
+
 # step_field MODEL ACTION SEED KEY -> value, running the model if needed
 solve_get() {
     _m=$1; _a=$2; _s=$3; _k=$4
@@ -139,18 +221,17 @@ eqs() {
 # eq_in KEY SEED ACTION MODEL CANDIDATES... — assert over seeds
 # in_range MODEL ACTION KEY LO HI SEEDS — assert LO <= value <= HI for every seed
 in_range() {
-    _m=$1; _a=$2; _k=$3; _lo=$4; _hi=$5; _n=${6:-$SEEDS}; _bad=""
-    _s=1
-    while [ "$_s" -le "$_n" ]; do
-        _v=$(solve_get "$_m" "$_a" "$_s" "$_k")
+    _m=$1; _a=$2; _k=$3; _lo=$4; _hi=$5; _n=${6:-$SEEDS}; _bad=""; _s=0
+    _tab=$(_sweep_table "$_m" "$_a" "$_n" "$_k")
+    while read -r _s _v; do
+        [ "$_v" = "-" ] && _v=__ABSENT__
         case $_v in
             __ABSENT__|__ERROR__) _bad="$_v"; break ;;
         esac
         if [ "$_v" -lt "$_lo" ] 2>/dev/null || [ "$_v" -gt "$_hi" ] 2>/dev/null; then
             _bad="$_v"; break
         fi
-        _s=$((_s + 1))
-    done
+    done <"$_tab"
     if [ -n "$_bad" ]; then
         fail "$_k=$_bad out of [$_lo..$_hi] at seed $_s"
     fi
@@ -159,16 +240,16 @@ in_range() {
 # in_set MODEL ACTION KEY MEMBERS... — assert the value is one of MEMBERS
 in_set() {
     _m=$1; _a=$2; _k=$3; shift 3
-    _n=${SEEDS}; _s=1; _bad=""
-    while [ "$_s" -le "$_n" ]; do
-        _v=$(solve_get "$_m" "$_a" "$_s" "$_k")
+    _n=${SEEDS}; _s=0; _bad=""
+    _tab=$(_sweep_table "$_m" "$_a" "$_n" "$_k")
+    while read -r _s _v; do
+        [ "$_v" = "-" ] && _v=__ABSENT__
         _ok=0
         for _cand in "$@"; do
             [ "$_v" = "$_cand" ] && _ok=1
         done
         if [ "$_ok" -ne 1 ]; then _bad="$_v"; break; fi
-        _s=$((_s + 1))
-    done
+    done <"$_tab"
     if [ -n "$_bad" ]; then
         _list=$(printf '%s,' "$@" | sed 's/,$//')
         fail "$_k=$_bad not in {$_list} at seed $_s"
@@ -759,11 +840,11 @@ begin 5 "Value list literal"
 in_set m05 a x 1 2 3
 in_set m05 a y 7 11
 _xs=""
-_s=1
-while [ "$_s" -le $SEEDS ]; do
-    _xs="$_xs $(solve_get m05 a "$_s" x)"
-    _s=$((_s + 1))
-done
+_tab=$(_sweep_table m05 a "$SEEDS" x)
+while read -r _s _v; do
+    [ "$_v" = "-" ] && _v=__ABSENT__
+    _xs="$_xs $_v"
+done <"$_tab"
 case " $_xs " in
     *" 2 "*|*" 3 "*) : ;;
     *) fail "x never left 1 across $SEEDS seeds (observed:$_xs)" ;;
@@ -940,23 +1021,21 @@ else
     fail "collection model rejected: $(err1)"
 fi
 # foreach over the array: every element in [0..10] and the sum <= 25, per seed.
-_s=1
-while [ "$_s" -le $SEEDS ]; do
-    if run m15b a "$_s"; then
-        _sum=0; _i=0; _ok=1
-        while [ "$_i" -lt 4 ]; do
-            _v=$(jnum "sizes[$_i]")
-            case $_v in __ABSENT__|__ERROR__|"") _ok=0; break ;; esac
-            if [ "$_v" -lt 0 ] || [ "$_v" -gt 10 ]; then _ok=0; break; fi
-            _sum=$((_sum + _v)); _i=$((_i + 1))
-        done
-        if [ "$_ok" -eq 0 ]; then fail "foreach: sizes[$_i]=$_v outside [0..10] at seed $_s"; break; fi
-        if [ "$_sum" -gt 25 ]; then fail "foreach: element sum $_sum > 25 at seed $_s"; break; fi
-    else
+_tab=$(_sweep_table m15b a "$SEEDS" 'sizes[0] sizes[1] sizes[2] sizes[3]')
+while read -r _s _v0 _v1 _v2 _v3; do
+    if [ "$_v0" = "__ERROR__" ]; then
         fail "foreach model rejected at seed $_s: $(err1)"; break
     fi
-    _s=$((_s + 1))
-done
+    _sum=0; _i=0; _ok=1
+    for _v in "$_v0" "$_v1" "$_v2" "$_v3"; do
+        [ "$_v" = "-" ] && _v=__ABSENT__
+        case $_v in __ABSENT__|"") _ok=0; break ;; esac
+        if [ "$_v" -lt 0 ] || [ "$_v" -gt 10 ]; then _ok=0; break; fi
+        _sum=$((_sum + _v)); _i=$((_i + 1))
+    done
+    if [ "$_ok" -eq 0 ]; then fail "foreach: sizes[$_i]=$_v outside [0..10] at seed $_s"; break; fi
+    if [ "$_sum" -gt 25 ]; then fail "foreach: element sum $_sum > 25 at seed $_s"; break; fi
+done <"$_tab"
 [ -z "$CFAIL" ] || fail "audit: PARTIAL-WORSE"
 end
 

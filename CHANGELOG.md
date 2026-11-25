@@ -13,6 +13,36 @@ approximated.
 
 ---
 
+## 0.79.0 — 2026-11-25
+
+The proof harness is 3x faster
+
+`run_all.sh` **158.4 s → 52.6 s**, with the counts unchanged at 142 pass / 20 fail
+of 162 and byte-identical output.
+
+Every seed sweep in the proof slices and in `conformance_check.py`,
+`rand_cov_check.py`, `repro_check.py` now issues one `--seeds N` call instead of a
+loop of launches: binary invocations dropped 291→43, 151→34, 996→48, 41→34.
+
+**The design detail that matters**, from the agent that did it: its first attempt
+was *slower* (30 s → 41 s) because it spawned a process per seed to split the
+swept output, and in this environment any process costs ~21 ms. What works is
+splitting the sweep **once** into a `<seed> <v1> <v2> …` table and walking it with
+shell builtins — no per-seed process at all.
+
+Error paths are preserved by construction: where the tool refuses a model the
+batch call fails and the code falls back to one run per seed, so exit status and
+the diagnostics the slices assert on are unchanged.
+
+**Merge note:** held since v0.76.0 as "conflicting on a proof fixture". On a clean
+tree the conflict was one block — row 58's loop, where the speedup counts `same`
+and the assertion below uses `bites`. Resolved by deriving `bites=$((20 - same))`.
+That is the second patch I set aside on a conflict that turned out to be a
+five-minute merge, and both times the cause was running the merge on a dirty tree.
+
+**Verification:** 162 integration tests; proof 142 pass / 20 fail; wall clock
+measured before and after.
+
 ## 0.78.0 — 2026-11-24
 
 The held patch is merged: rows 43, 80, 100, 103

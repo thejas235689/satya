@@ -39,7 +39,15 @@ fixture was not bent. Row 103's real defect was a broken assertion
 (`m103_body` required an unconstrained `rand int kept` to equal 0, which no seed
 satisfies), not the exec-body gap originally diagnosed.
 
-### `sweep-speed.patch` — no rows, 3.1x on a full proof run
+### Merged in v0.79.0
+
+`sweep-speed.patch` — no rows, **158.4 s → 52.6 s** on a full proof run with the
+counts unchanged at 142/20. Held since v0.76.0 because it conflicted on
+`proof-slice-3.sh`; the conflict was one block (row 58's loop, where the speedup
+counts `same` and the assertion uses `bites`), resolved by deriving
+`bites=$((20 - same))`.
+
+Original note, kept because the lesson is the interesting part:
 
 `run_all.sh` 158.4 s → 50.3 s with byte-identical output and the counts
 unchanged. Conflicts on `tests/feature_proof/proof-slice-3.sh` because the proof
