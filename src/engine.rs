@@ -1025,10 +1025,14 @@ impl<'a> Engine<'a> {
                 is_replicate,
                 while_cond,
             } => {
-                // A `while` condition on an activity loop is recorded, but the
-                // engine has no state the condition could observe, so the body
-                // is traversed `count` times (once for the count-less form).
-                let _ = while_cond;
+                // A `while` condition is re-evaluated after each traversal, so
+                // `repeat { do A; } while (k < 2)` keeps going while it holds.
+                // It used to be discarded outright — the body ran `count` times
+                // (once, for the count-less form) whatever the condition said,
+                // which is a silent wrong answer rather than a slow one. The
+                // condition observes the enclosing action's fields through `ctx`,
+                // and `MAX_REPEAT` bounds a condition that never turns false.
+                let while_test = while_cond.as_ref();
                 let n = eval_count(count, self.model, ctx).unwrap_or(1);
                 let kind = if *is_replicate { "replicate" } else { "repeat" };
                 if n > MAX_REPEAT {
@@ -1039,7 +1043,8 @@ impl<'a> Engine<'a> {
                 // each of which is a distinct activity statement.
                 let saved_rep = self.current_replicated;
                 self.current_replicated = *is_replicate;
-                for k in 0..n.min(MAX_REPEAT) {
+                let limit = if while_test.is_some() { MAX_REPEAT } else { n.min(MAX_REPEAT) };
+                for k in 0..limit {
                     let mut local = ctx.clone();
                     if let Some(name) = index {
                         local.insert(name.clone(), k);
@@ -1050,6 +1055,15 @@ impl<'a> Engine<'a> {
                         local.insert("__replicate_index".to_string(), k);
                     }
                     self.walk_activity(body, component.to_string(), depth, mode, group, &local);
+                    // Do-while: the body runs once before the test, then again
+                    // only while the condition still holds.
+                    if let Some(cond) = while_test {
+                        let live = eval_condition_opt(cond, &local, self.model, self.seed)
+                            .unwrap_or(false);
+                        if !live {
+                            break;
+                        }
+                    }
                 }
                 self.current_replicated = saved_rep;
             }

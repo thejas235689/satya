@@ -13,6 +13,36 @@ approximated.
 
 ---
 
+## 0.81.0 — 2026-11-25
+
+`repeat … while` re-evaluates its condition
+
+Row 37. The activity form discarded the condition outright:
+
+```rust
+// A `while` condition on an activity loop is recorded, but the
+// engine has no state the condition could observe...
+let _ = while_cond;
+```
+
+That comment was wrong — the condition observes the enclosing action's fields
+through `ctx`, which is exactly what `repeat { do A; } while (k < 2)` with `k`
+pinned to 0 needs. The body ran `count` times (once, for the count-less form)
+whatever the condition said.
+
+It is now a do-while: the body runs once, then repeats only while the condition
+still holds, bounded by `MAX_REPEAT` so a condition that never turns false cannot
+hang the engine.
+
+```
+repeat { do A; } while (k < 2), k = 0   →  more than one traversal  (was 1)
+repeat { do A; } while (k > 2), k = 0   →  exactly one              (do-while)
+```
+
+Proof: **142 → 143 pass, 19 fail.**
+
+**Verification:** 164 tests (1 new, both directions); proof 143 pass / 19 fail.
+
 ## 0.80.0 — 2026-11-25
 
 `forall` in a constraint block now binds

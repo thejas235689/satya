@@ -4008,3 +4008,34 @@ component c {
         assert!(v < 5, "seed {}: e.size={} violates the forall body", seed, v);
     }
 }
+
+#[test]
+fn an_activity_repeat_while_re_evaluates_its_condition() {
+    // `repeat { do A; } while (k < 2)` with k pinned to 0 must keep going. The
+    // condition was discarded outright, so the body ran once whatever it said.
+    let m = compile_pss(r#"
+component pss_top {
+  action A { rand int a; }
+  action test {
+    rand int k in [0..0];
+    activity { repeat { do A; } while (k < 2); }
+  };
+};
+"#).unwrap();
+    let s = engine::run_scenario(&m, "test", 1);
+    assert!(s.steps.len() > 1, "body traversed {} time(s); the condition was ignored", s.steps.len());
+
+    // A condition that is false at the first test still runs the body once
+    // (do-while), not zero times.
+    let m = compile_pss(r#"
+component pss_top {
+  action A { rand int a; }
+  action test {
+    rand int k in [0..0];
+    activity { repeat { do A; } while (k > 2); }
+  };
+};
+"#).unwrap();
+    let s = engine::run_scenario(&m, "test", 1);
+    assert_eq!(s.steps.len(), 1, "do-while must enter the body once");
+}
