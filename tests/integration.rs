@@ -4039,3 +4039,32 @@ component pss_top {
     let s = engine::run_scenario(&m, "test", 1);
     assert_eq!(s.steps.len(), 1, "do-while must enter the body once");
 }
+
+#[test]
+fn a_covergroup_may_have_a_name_and_no_ports() {
+    // LRM Syntax 63: `covergroup NAME { … }`. The name was only taken when the
+    // token after it was not `{`, so the ordinary no-port form failed to parse.
+    let m = compile_pss(r#"
+component c {
+  rand int x;
+  covergroup cg_addr { coverpoint x { bins r = {[1..100]}; } }
+  action a { exec body { } }
+};
+"#).unwrap();
+    let cg = m.covergroups.iter().find(|g| g.name == "cg_addr");
+    assert!(cg.is_some(), "the covergroup name was not preserved");
+    assert!(cg.unwrap().params.is_empty(), "no port list was declared");
+}
+
+#[test]
+fn a_package_scope_action_reaches_the_model() {
+    // PSS declares tests as actions, and a package is where they go. A
+    // package body was parsed with `top = false`, so every `action` took the
+    // defensive skip path and vanished — `actions: 0`, `top: <none>`.
+    let m = compile_pss("package p { action test { activity { repeat (3) { } } } }").unwrap();
+    assert!(m.actions.contains_key("test"), "the package-scope action was dropped");
+    assert_eq!(m.top.as_deref(), Some("test"), "the sole test action should be the top");
+
+    // File scope stays rejected: a component owns an action (12.3).
+    assert!(compile_pss("action test { activity { } }").is_err());
+}

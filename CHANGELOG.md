@@ -13,6 +13,49 @@ approximated.
 
 ---
 
+## 0.82.0 — 2026-11-25
+
+Two defects from a user bug report
+
+Both reproduced on v0.81.0 before being touched, and both block the LRM form of
+a real model.
+
+### D1 — `covergroup NAME { … }` was rejected (Syntax 63)
+
+The name was only taken when the token after it was **not** `{`:
+
+```rust
+if matches!(peek, Ident) && !self.peek_at(1).is_punct("{") { name = … }
+```
+
+The guard protects the in-line form `covergroup { items } NAME;`, but it also
+suppressed the ordinary no-port form, so `covergroup cg_addr {` failed with
+`expected '{', found 'cg_addr'`. The in-line form starts with `{` and cannot be
+confused with it, so the guard is gone.
+
+### D2 — package-scope `action` was silently dropped
+
+`parse_package` called `parse_items(false)`, and with `top = false` every
+`action` took the defensive "skip a chunk and carry on" path. A package of test
+actions therefore parsed to `actions: 0, top: <none>` — and on the reporter's
+model, a *component* was presented as the top action.
+
+Two further pieces were needed: `action` is now accepted where its own error
+message already listed it as expected, and `pick_top` falls back to a
+top-level action when the model has no component.
+
+File scope still rejects `action` — a component owns an action (12.3) — so the
+existing `declarations_in_the_wrong_scope_are_rejected` test still holds.
+
+**Verification:** 166 tests (2 new); proof unchanged at 143 pass / 19 fail.
+
+### Reported and not yet fixed
+
+D3 (struct-scope constraints silently ignored), D4 (`||` reported not-evaluated
+but stimulus still emitted), D5 (`do field.action` collapses to the field), D6
+(field initialisers and exec-body writes do not persist across steps), D7 (no
+command reports coverage). Each reproduces on this build and none is fixed here.
+
 ## 0.81.0 — 2026-11-25
 
 `repeat … while` re-evaluates its condition

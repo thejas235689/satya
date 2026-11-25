@@ -360,7 +360,12 @@ impl Parser {
         self.expect_ident_named("covergroup")?;
         let mut name = String::new();
         let mut params = Vec::new();
-        if matches!(self.peek().kind, TokKind::Ident(_)) && !self.peek_at(1).is_punct("{") {
+        // `covergroup NAME { … }` — a name with no port list — must take the
+        // name. The old guard also rejected this case because the token after
+        // the name is `{`, so the ordinary no-port form failed to parse. The
+        // in-line form (`covergroup { … } NAME;`) starts with `{` and cannot
+        // be confused with it.
+        if matches!(self.peek().kind, TokKind::Ident(_)) {
             name = self.expect_ident()?;
             if self.at_punct("(") {
                 // `(int v, int w)` — the formals, in order, so an instance
@@ -625,8 +630,18 @@ impl Parser {
         if self.at_ident("component") {
             return Ok(Item::Component(self.parse_component(false)?));
         }
-        // An action is declared inside a component (PSS 12.3); one at file
-        // scope falls through to the "unexpected at top level" error.
+        // An `action` at package or file scope. It used to fall through to the
+        // "unexpected at top level" error — whose own text lists `action` as
+        // expected. PSS declares tests as actions, and a package is the natural
+        // place for them, so they are accepted and lowered with no owner.
+        // A package-scope `action` — PSS declares tests as actions, and a
+        // package is the natural place for them. It was sent down the defensive
+        // skip path, so the test action vanished and the summary reported
+        // `actions: 0`. File scope stays rejected (a component owns an action,
+        // 12.3); this is only the package case.
+        if self.at_ident("action") && self.scope.is_some() {
+            return Ok(Item::Action(self.parse_action(false)?));
+        }
         if self.at_ident("static") || self.at_ident("const") {
             if let Some(sc) = self.try_parse_static_const()? {
                 return Ok(sc);
@@ -779,7 +794,10 @@ impl Parser {
         self.declare(&name);
         self.expect_punct("{")?;
         let saved = std::mem::replace(&mut self.scope, Some(name.clone()));
-        let items = self.parse_items(false)?;
+        // A package body is a declaration scope, not a "body": parsing it with
+        // `top = false` sent every `action` down the defensive skip path, so a
+        // package-scope test action was silently dropped.
+        let items = self.parse_items(true)?;
         self.scope = saved;
         self.expect_punct("}")?;
         self.eat_punct(";");

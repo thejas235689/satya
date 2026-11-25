@@ -1081,6 +1081,17 @@ impl Lowerer {
         if self.model.components.contains_key("pss_top") {
             return Some("pss_top".to_string());
         }
+        // A model of package-scope test actions has no component at all, so the
+        // top is the action. Without this the summary reported `top: <none>`
+        // for a model whose only declaration was a test.
+        if self.model.components.is_empty() {
+            return self
+                .model
+                .actions
+                .values()
+                .find(|a| a.owner.is_none())
+                .map(|a| a.name.clone());
+        }
         // Otherwise the component with the most sub-components.
         self.model
             .components
