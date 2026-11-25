@@ -19,6 +19,11 @@ pub struct Parser {
     /// `typedef <type> <name>;` aliases (PSS 12.2), resolved when the alias is
     /// used. Without this an aliased field had no type and no width.
     typedefs: std::collections::HashMap<String, crate::ast::TypeRef>,
+    /// A `forall (it : T)` found *inside* a constraint set. The set parser
+    /// returns only an expression, so the binding is parked here for
+    /// `parse_constraint` to attach. Without it the quantifier was silently
+    /// dropped and its body became a plain constraint on a free variable.
+    pending_forall: Option<(String, crate::ast::TypeRef)>,
     /// `function` / `task` bodies collected so a call can run them.
     functions: Vec<crate::ast::Function>,
     /// The package or component currently being parsed, so a `function`
@@ -51,6 +56,7 @@ impl Parser {
             covergroups: Vec::new(),
             monitors: Vec::new(),
             typedefs: std::collections::HashMap::new(),
+            pending_forall: None,
             functions: Vec::new(),
             scope: None,
             exec_err: None,
@@ -1403,6 +1409,7 @@ impl Parser {
         }
         let mut is_forall = false;
         let mut forall_binding = None;
+        self.pending_forall = None;
         if self.eat_ident("forall") {
             is_forall = true;
             self.expect_punct("(")?;
@@ -1433,6 +1440,14 @@ impl Parser {
             e
         };
 
+        // A `forall` written inside the block (`constraint { forall (it : T) … }`)
+        // binds here rather than being dropped.
+        if !is_forall {
+            if let Some(b) = self.pending_forall.take() {
+                is_forall = true;
+                forall_binding = Some(b);
+            }
+        }
         Ok(ConstraintBlock {
             name,
             is_default,
@@ -1468,11 +1483,15 @@ impl Parser {
         if self.at_ident("forall") && self.peek_at(1).is_punct("(") {
             self.bump();
             self.expect_punct("(")?;
-            let _var = self.expect_ident()?;
+            let var = self.expect_ident()?;
             self.expect_punct(":")?;
-            let _ty = self.parse_type_ref()?;
+            let ty = self.parse_type_ref()?;
             self.expect_punct(")")?;
             let inner = self.parse_constraint_set()?;
+            // Park the binding; `parse_constraint` attaches it to the block.
+            if self.pending_forall.is_none() {
+                self.pending_forall = Some((var, ty));
+            }
             return Ok(inner);
         }
         if self.at_punct("{") {
@@ -1489,12 +1508,18 @@ impl Parser {
                 if self.at_ident("forall") && self.peek_at(1).is_punct("(") {
                     self.bump();
                     self.expect_punct("(")?;
-                    let _var = self.expect_ident()?;
+                    let var = self.expect_ident()?;
                     self.expect_punct(":")?;
-                    let _ty = self.parse_type_ref()?;
+                    let ty = self.parse_type_ref()?;
                     self.expect_punct(")")?;
                     let inner = self.parse_constraint_set()?;
                     self.eat_punct(";");
+                    // Park the binding so `parse_constraint` can attach it.
+                    // Discarding it made `constraint { forall (it : T) … }`
+                    // silently behave as an unquantified constraint.
+                    if self.pending_forall.is_none() {
+                        self.pending_forall = Some((var, ty));
+                    }
                     exprs.push(inner);
                     continue;
                 }

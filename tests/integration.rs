@@ -3980,3 +3980,31 @@ package p {
     // `int arr[N]` with N = 4 is a four-element array, so element 3 exists.
     assert_eq!(get("small.arr[3]"), Some(0), "the extent N must be substituted");
 }
+
+#[test]
+fn forall_in_a_constraint_block_binds_its_variable() {
+    // `constraint { forall (it : T) { … } }` — the block form. The binding was
+    // parsed and discarded, so the body became a plain constraint on a free
+    // variable and was silently satisfied by everything.
+    let m = compile_pss(r#"
+struct elem_s { rand int size in [0..100]; }
+component c {
+  action a { rand elem_s e; constraint { forall (it : elem_s) { it.size < 5; } } }
+};
+"#).unwrap();
+    let act = m.find_action(Some("c"), "a").unwrap().clone();
+    assert!(
+        act.constraints.iter().any(|c| c.is_forall),
+        "the block-form forall was not recorded as a quantifier"
+    );
+    for seed in 1..=10u64 {
+        let s = engine::run_scenario(&m, "a", seed);
+        let v = s.steps[0]
+            .fields
+            .iter()
+            .find(|(k, _)| k == "e.size")
+            .map(|(_, v)| *v)
+            .unwrap_or_else(|| panic!("seed {}: e.size absent", seed));
+        assert!(v < 5, "seed {}: e.size={} violates the forall body", seed, v);
+    }
+}

@@ -13,6 +13,36 @@ approximated.
 
 ---
 
+## 0.80.0 — 2026-11-25
+
+`forall` in a constraint block now binds
+
+The block form was the last silent-pass quantifier:
+
+```pss
+constraint { forall (it : elem_s) { it.size < 5; } }
+```
+
+`it` was parsed and **discarded**, so the body became a plain constraint on a
+free variable and was satisfied by everything — `e.size` gave 58, 44, 62, 71
+while the trace reported the constraint satisfied. The statement form
+(`constraint forall (it : T) { … }`) already worked.
+
+**Two places had to change, and the first was not enough.** The `forall` branch
+at the top of `parse_constraint_set` never runs for the block form, because
+`{ … }` is parsed by a separate item loop that calls `parse_constraint_body_item`
+directly. Fixing only that branch left the behaviour unchanged — the symptom was
+identical, which is what row 79 taught me to watch for. The binding is now parked
+on the parser and attached by `parse_constraint`.
+
+```
+before:  e.size = 58, 44, 62, 71, 51     (unconstrained 0..100)
+after:   e.size = 3, 1, 3, 4, 4          (body enforced)
+```
+
+**Verification:** 163 tests (1 new: the block-form forall is recorded as a
+quantifier and its body holds on 10 seeds); proof unchanged at 142 pass / 20 fail.
+
 ## 0.79.0 — 2026-11-25
 
 The proof harness is 3x faster
